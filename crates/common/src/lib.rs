@@ -10,6 +10,7 @@ pub enum Command {
     Run { wasm_path: String, memory_max_mb: u64, fuel: u64, epoch_ms: u64 },
     StatusQuery,
     ApplyManifest(SignedManifest),
+    UpgradeAgent(AgentUpgrade),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +63,16 @@ pub struct SignedManifest {
     pub version: u64,               // monotonic
     pub manifest_toml: String,      // raw TOML bytes as UTF-8
     pub signature_b64: String,      // base64 signature over manifest bytes
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentUpgrade {
+    pub alg: String,            // "ed25519"
+    pub owner_pub_bs58: String, // "ed25519:BASE58..."
+    pub version: u64,           // monotonic
+    pub binary_sha256_hex: String,
+    pub binary_b64: String,     // base64 of agent binary
+    pub signature_b64: String,  // base64 signature over raw binary bytes
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

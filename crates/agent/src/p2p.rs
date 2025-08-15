@@ -11,10 +11,10 @@ use libp2p::{
     Multiaddr, PeerId, SwarmBuilder,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::runner::run_wasm_module_with_limits;
-use common::{deserialize_message, serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, Status, SignedManifest, verify_bytes_ed25519, Manifest, sha256_hex};
+use common::{deserialize_message, serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, Status, SignedManifest, AgentUpgrade, verify_bytes_ed25519, Manifest, sha256_hex};
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct NodeBehaviour {
@@ -57,7 +57,12 @@ fn save_trusted_owner(pub_bs58: &str) {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct AgentState { last_version: u64 }
+struct AgentState {
+    #[serde(default, rename = "last_version")]
+    manifest_version: u64,
+    #[serde(default)]
+    agent_version: u64,
+}
 
 fn load_state() -> AgentState {
     if let Ok(bytes) = fs::read(state_path()) {
@@ -185,6 +190,11 @@ pub async fn run_agent(
                                             handle_apply_manifest(tx2, signed).await;
                                         });
                                     }
+                                    Command::UpgradeAgent(pkg) => {
+                                        tokio::spawn(async move {
+                                            handle_upgrade(pkg).await;
+                                        });
+                                    }
                                     Command::StatusQuery => {
                                         let msg = Status { node_id: local_peer_id.to_string(), msg: "ok".into() };
                                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
@@ -223,8 +233,8 @@ async fn handle_apply_manifest(
     } else { save_trusted_owner(&signed.owner_pub_bs58); }
     // Monotonic version
     let state = load_state();
-    if state.last_version >= signed.version {
-        let _ = tx.send(Err(format!("manifest rejected (stale v{} <= v{})", signed.version, state.last_version)));
+    if state.manifest_version >= signed.version {
+        let _ = tx.send(Err(format!("manifest rejected (stale v{} <= v{})", signed.version, state.manifest_version)));
         return;
     }
     // Verify and stage artifacts, then launch and persist version
@@ -234,11 +244,52 @@ async fn handle_apply_manifest(
                 let _ = tx.send(Err(format!("launch error: {}", e))); return;
             }
             let mut state2 = load_state();
-            state2.last_version = signed.version;
+            state2.manifest_version = signed.version;
             save_state(&state2);
             let _ = tx.send(Ok(format!("manifest accepted v{}", signed.version)));
         }
         Err(e) => { let _ = tx.send(Err(format!("manifest rejected (digest): {}", e))); }
+    }
+}
+
+async fn handle_upgrade(pkg: AgentUpgrade) {
+    use base64::Engine;
+    use std::os::unix::fs::PermissionsExt;
+
+    let sig = match base64::engine::general_purpose::STANDARD.decode(&pkg.signature_b64) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let bin_bytes = match base64::engine::general_purpose::STANDARD.decode(&pkg.binary_b64) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    // Verify signature and owner
+    if verify_bytes_ed25519(&pkg.owner_pub_bs58, &bin_bytes, &sig).unwrap_or(false) {
+        if let Some(trusted) = load_trusted_owner() {
+            if trusted != pkg.owner_pub_bs58 { return; }
+        } else {
+            save_trusted_owner(&pkg.owner_pub_bs58);
+        }
+    } else { return; }
+
+    let digest = sha256_hex(&bin_bytes);
+    if digest != pkg.binary_sha256_hex { return; }
+
+    let mut state = load_state();
+    if pkg.version <= state.agent_version { return; }
+
+    if let Ok(cur) = std::env::current_exe() {
+        let tmp = cur.with_extension("new");
+        if tokio::fs::write(&tmp, &bin_bytes).await.is_ok() {
+            let _ = tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).await;
+            if tokio::fs::rename(&tmp, &cur).await.is_ok() {
+                state.agent_version = pkg.version;
+                save_state(&state);
+                let _ = std::process::Command::new(&cur).args(std::env::args().skip(1)).spawn();
+                std::process::exit(0);
+            }
+        }
     }
 }
 
