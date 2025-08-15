@@ -11,7 +11,7 @@ use libp2p::{
 use tracing_subscriber::EnvFilter;
 use base64::Engine;
 
-use common::{serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, OwnerKeypair, SignedManifest, sign_bytes_ed25519};
+use common::{serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, OwnerKeypair, SignedManifest, AgentUpgrade, sign_bytes_ed25519};
 use common::sha256_hex;
 
 #[derive(Debug, Parser)]
@@ -42,6 +42,21 @@ enum Commands {
     },
     /// Query status from agents and print first reply
     Status,
+    /// Install the agent as a systemd user service
+    Install {
+        /// Path to the agent binary to install
+        #[arg(long)]
+        binary: String,
+    },
+    /// Push an agent binary upgrade to all peers
+    Upgrade {
+        /// Path to agent binary to distribute
+        #[arg(long)]
+        file: String,
+        /// Monotonic version for the agent binary
+        #[arg(long, default_value_t = 1)]
+        version: u64,
+    },
 }
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
@@ -65,6 +80,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::KeyShow => key_show().await,
         Commands::Apply { wasm, file, version } => apply(wasm, file, version).await,
         Commands::Status => status().await,
+        Commands::Install { binary } => install(binary).await,
+        Commands::Upgrade { file, version } => upgrade(file, version).await,
     }
 }
 
@@ -235,4 +252,74 @@ async fn status() -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+async fn install(binary: String) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let bin_dir = dirs::home_dir().context("home dir")?.join(".local/bin");
+    tokio::fs::create_dir_all(&bin_dir).await?;
+    let target = bin_dir.join("realm-agent");
+    tokio::fs::copy(&binary, &target).await?;
+    tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).await?;
+
+    let systemd_dir = dirs::config_dir().context("config dir")?.join("systemd/user");
+    tokio::fs::create_dir_all(&systemd_dir).await?;
+    let service_path = systemd_dir.join("realm-agent.service");
+    let service = format!("[Unit]\nDescription=Realm Agent\n\n[Service]\nExecStart={}\nRestart=always\n\n[Install]\nWantedBy=default.target\n", target.display());
+    tokio::fs::write(&service_path, service).await?;
+
+    if std::process::Command::new("systemctl").args(["--user", "daemon-reload"]).status().is_ok() {
+        let _ = std::process::Command::new("systemctl").args(["--user", "enable", "--now", "realm-agent"]).status();
+        println!("installed and started systemd user service realm-agent");
+    } else {
+        println!("service file written to {}. enable with: systemctl --user enable --now realm-agent", service_path.display());
+    }
+    Ok(())
+}
+
+async fn upgrade(file: String, version: u64) -> anyhow::Result<()> {
+    let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
+    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<Multiaddr>().unwrap())?;
+
+    // mDNS warmup like apply
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_millis(600) {
+        if let Some(event) = swarm.next().await {
+            if let SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(ev)) = event {
+                match ev {
+                    mdns::Event::Discovered(list) => {
+                        for (peer, _addr) in list { swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer); }
+                    }
+                    mdns::Event::Expired(list) => {
+                        for (peer, _addr) in list { swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer); }
+                    }
+                }
+            }
+        }
+    }
+
+    // load owner key
+    let dir = owner_dir()?;
+    let key_path = dir.join("owner.key.json");
+    let bytes = tokio::fs::read(&key_path).await.context("read owner key")?;
+    let kp: OwnerKeypair = serde_json::from_slice(&bytes)?;
+
+    let bin_bytes = tokio::fs::read(&file).await?;
+    let digest = sha256_hex(&bin_bytes);
+    let sig = sign_bytes_ed25519(&kp.private_hex, &bin_bytes)?;
+    let pkg = AgentUpgrade {
+        alg: "ed25519".into(),
+        owner_pub_bs58: kp.public_bs58.clone(),
+        version,
+        binary_sha256_hex: digest,
+        binary_b64: base64::engine::general_purpose::STANDARD.encode(&bin_bytes),
+        signature_b64: base64::engine::general_purpose::STANDARD.encode(sig),
+    };
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .publish(topic_cmd.clone(), serialize_message(&Command::UpgradeAgent(pkg)))?;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Ok(())
 }

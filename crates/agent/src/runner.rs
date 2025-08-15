@@ -88,23 +88,13 @@ pub async fn run_wasm_module_with_limits(
 	let instance = linker.instantiate(&mut store, &component)?;
 	info!(path = %wasm_path, "component instantiated with limits");
 
-	// Try to call the command world's entrypoint: 'run'
-	let mut invoked = false;
-	if let Ok(func) = instance.get_typed_func::<(), ()>(&mut store, "run") {
-		func.call(&mut store, ())?;
-		invoked = true;
-	}
-	if !invoked {
-		if let Ok(func2) = instance.get_typed_func::<(), Result<(), ()>>(&mut store, "run") {
-			let _ = func2.call(&mut store, ());
-			invoked = true;
-		}
-	}
-	if invoked {
-		info!(path = %wasm_path, "component run() completed");
-	} else {
-		info!(path = %wasm_path, "component has no 'run' export or signature mismatch");
-	}
+        // Try to call the command world's entrypoint: 'run'
+        if let Ok(func) = instance.get_typed_func::<(), ()>(&mut store, "run") {
+            func.call(&mut store, ())?;
+            info!(path = %wasm_path, "component run() completed");
+        } else {
+            info!(path = %wasm_path, "component has no 'run' export or signature mismatch");
+        }
 
 	handle.abort();
 	Ok(())
