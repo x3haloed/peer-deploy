@@ -68,12 +68,16 @@ pub async fn run_agent(
     let listen_addr: Multiaddr = "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap();
     Swarm::listen_on(&mut swarm, listen_addr)?;
 
+    // channel for run results to publish status from the main loop
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<String, String>>();
+
     if let Some(path) = wasm_path.clone() {
+        let tx0 = tx.clone();
         tokio::spawn(async move {
-            match run_wasm_module_with_limits(&path, memory_max_mb, fuel, epoch_ms).await {
-                Ok(_) => info!("wasm module finished successfully"),
-                Err(e) => error!(error = %e, "wasm module failed"),
-            }
+            let res = run_wasm_module_with_limits(&path, memory_max_mb, fuel, epoch_ms).await
+                .map(|_| format!("run ok: {}", path))
+                .map_err(|e| format!("run error: {}", e));
+            let _ = tx0.send(res);
         });
     }
 
@@ -83,6 +87,11 @@ pub async fn run_agent(
 
     loop {
         tokio::select! {
+            Some(run_res) = rx.recv() => {
+                let msg = match run_res { Ok(m) => m, Err(m) => m };
+                let status = Status { node_id: local_peer_id.to_string(), msg };
+                let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status));
+            }
             _ = interval.tick() => {
                 let status = Status { node_id: local_peer_id.to_string(), msg: "alive".into() };
                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
@@ -111,10 +120,12 @@ pub async fn run_agent(
                                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
                                     }
                                     Command::Run { wasm_path, memory_max_mb, fuel, epoch_ms } => {
-                                        let _ = tokio::spawn(async move {
-                                            if let Err(e) = run_wasm_module_with_limits(&wasm_path, memory_max_mb, fuel, epoch_ms).await {
-                                                error!(error=%e, path=%wasm_path, "run command failed");
-                                            }
+                                        let tx1 = tx.clone();
+                                        tokio::spawn(async move {
+                                            let res = run_wasm_module_with_limits(&wasm_path, memory_max_mb, fuel, epoch_ms).await
+                                                .map(|_| format!("run ok: {}", wasm_path))
+                                                .map_err(|e| format!("run error: {}", e));
+                                            let _ = tx1.send(res);
                                         });
                                     }
                                     Command::StatusQuery => {

@@ -1,5 +1,5 @@
-use tracing::info;
-use wasmtime::{component::{Component, Linker, ResourceTable}, Config, Engine, ResourceLimiter, Store};
+use tracing::{error, info};
+use wasmtime::{component::{Component, Linker as CLinker, ResourceTable}, Config, Engine, ResourceLimiter, Store};
 
 struct MemoryLimiter {
 	max_bytes: usize,
@@ -39,7 +39,7 @@ impl wasmtime_wasi::WasiView for StoreData {
 pub async fn run_wasm_module_with_limits(
 	wasm_path: &str,
 	memory_max_mb: u64,
-	_fuel: u64,
+	fuel: u64,
 	epoch_ms: u64,
 ) -> anyhow::Result<()> {
 	let wasm = tokio::fs::read(wasm_path).await?;
@@ -47,7 +47,8 @@ pub async fn run_wasm_module_with_limits(
 	let mut cfg = Config::new();
 	cfg.wasm_component_model(true)
 		.wasm_multi_memory(true)
-		.epoch_interruption(true);
+		.epoch_interruption(true)
+		.consume_fuel(true);
 	let engine = Engine::new(&cfg)?;
 
 	let wasi = wasmtime_wasi::WasiCtxBuilder::new()
@@ -65,6 +66,12 @@ pub async fn run_wasm_module_with_limits(
 	);
 
 	store.limiter(|data| &mut data.limiter);
+	if fuel > 0 {
+		if let Err(e) = store.set_fuel(fuel as u64) {
+			error!(error = %e, "failed to set fuel");
+		}
+	}
+	store.set_epoch_deadline(1);
 
 	let engine2 = engine.clone();
 	let handle = tokio::spawn(async move {
@@ -76,11 +83,9 @@ pub async fn run_wasm_module_with_limits(
 	});
 
 	let component = Component::from_binary(&engine, &wasm)?;
-	let mut linker = Linker::<StoreData>::new(&engine);
+	let mut linker = CLinker::<StoreData>::new(&engine);
 	wasmtime_wasi::add_to_linker_sync(&mut linker)?;
-
 	let _instance = linker.instantiate(&mut store, &component)?;
-
 	info!(path = %wasm_path, "component instantiated with limits");
 
 	handle.abort();
