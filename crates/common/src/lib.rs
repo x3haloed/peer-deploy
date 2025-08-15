@@ -53,6 +53,20 @@ pub struct SignedManifest {
     pub signature_b64: String,      // base64 signature over manifest bytes
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Manifest {
+    pub components: std::collections::BTreeMap<String, ComponentSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentSpec {
+    pub source: String,     // e.g., file:/path or http(s):/...
+    pub sha256_hex: String, // pinned digest
+    pub memory_max_mb: Option<u64>,
+    pub fuel: Option<u64>,
+    pub epoch_ms: Option<u64>,
+}
+
 pub fn sign_bytes_ed25519(private_hex: &str, data: &[u8]) -> anyhow::Result<Vec<u8>> {
     use ed25519_dalek::Signer;
     use ed25519_dalek::SigningKey;
@@ -69,6 +83,14 @@ pub fn verify_bytes_ed25519(public_bs58: &str, data: &[u8], signature: &[u8]) ->
     let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("bad pub len"))?)?;
     let sig = Signature::from_bytes(signature.try_into().map_err(|_| anyhow::anyhow!("bad sig len"))?);
     Ok(vk.verify(data, &sig).is_ok())
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    let out = h.finalize();
+    hex::encode(out)
 }
 
 pub fn serialize_message<T: Serialize>(value: &T) -> Vec<u8> {

@@ -9,8 +9,10 @@ use libp2p::{
     Multiaddr, PeerId, SwarmBuilder,
 };
 use tracing_subscriber::EnvFilter;
+use base64::Engine;
 
 use common::{serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, OwnerKeypair, SignedManifest, sign_bytes_ed25519};
+use common::sha256_hex;
 
 #[derive(Debug, Parser)]
 #[command(name = "realm")]
@@ -84,6 +86,20 @@ async fn init() -> anyhow::Result<()> {
     let json = serde_json::to_vec_pretty(&kp)?;
     tokio::fs::write(&key_path, json).await?;
     println!("initialized; owner pub: {}", kp.public_bs58);
+
+    // Generate a sample realm.toml pointing to hello.wasm if present
+    let hello_path = std::path::Path::new("target/wasm32-wasip1/debug/hello.wasm");
+    if hello_path.exists() {
+        let bytes = tokio::fs::read(hello_path).await.unwrap_or_default();
+        let digest = sha256_hex(&bytes);
+        let sample = format!(
+            "[components.hello]\nsource = \"file:{}\"\nsha256_hex = \"{}\"\nmemory_max_mb = 64\nfuel = 5000000\nepoch_ms = 100\n",
+            hello_path.display(), digest
+        );
+        let sample_path = dir.join("realm.sample.toml");
+        tokio::fs::write(&sample_path, sample).await.ok();
+        println!("wrote sample manifest at {}", sample_path.display());
+    }
     Ok(())
 }
 
@@ -168,7 +184,7 @@ async fn apply(wasm: Option<String>, file: Option<String>, version: u64) -> anyh
             owner_pub_bs58: kp.public_bs58.clone(),
             version,
             manifest_toml: toml_str,
-            signature_b64: base64::encode(sig),
+            signature_b64: base64::engine::general_purpose::STANDARD.encode(sig),
         };
         swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::ApplyManifest(signed)))?;
     }

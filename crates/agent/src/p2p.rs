@@ -2,6 +2,7 @@ use std::time::Duration;
 use std::path::PathBuf;
 use std::fs;
 
+use base64::Engine;
 use anyhow::anyhow;
 use futures::StreamExt;
 use libp2p::{
@@ -13,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 use crate::runner::run_wasm_module_with_limits;
-use common::{deserialize_message, serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, Status, SignedManifest, verify_bytes_ed25519};
+use common::{deserialize_message, serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, Status, SignedManifest, verify_bytes_ed25519, Manifest, sha256_hex};
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct NodeBehaviour {
@@ -179,7 +180,10 @@ pub async fn run_agent(
                                         });
                                     }
                                     Command::ApplyManifest(signed) => {
-                                        handle_apply_manifest(&mut swarm, &topic_status, &local_peer_id, signed).await;
+                                        let tx2 = tx.clone();
+                                        tokio::spawn(async move {
+                                            handle_apply_manifest(tx2, signed).await;
+                                        });
                                     }
                                     Command::StatusQuery => {
                                         let msg = Status { node_id: local_peer_id.to_string(), msg: "ok".into() };
@@ -202,47 +206,93 @@ pub async fn run_agent(
 }
 
 async fn handle_apply_manifest(
-    swarm: &mut Swarm<NodeBehaviour>,
-    topic_status: &gossipsub::IdentTopic,
-    local_peer_id: &PeerId,
+    tx: tokio::sync::mpsc::UnboundedSender<Result<String, String>>,
     signed: SignedManifest,
 ) {
-    let sig = match base64::decode(&signed.signature_b64) {
+    // Signature check
+    let sig = match base64::engine::general_purpose::STANDARD.decode(&signed.signature_b64) {
         Ok(s) => s,
-        Err(e) => {
-            let msg = Status { node_id: local_peer_id.to_string(), msg: format!("bad signature_b64: {}", e) };
-            let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
-            return;
-        }
+        Err(e) => { let _ = tx.send(Err(format!("bad signature_b64: {}", e))); return; }
     };
-    // Verify signature
     let ok = verify_bytes_ed25519(&signed.owner_pub_bs58, signed.manifest_toml.as_bytes(), &sig)
         .unwrap_or(false);
-    if !ok {
-        let msg = Status { node_id: local_peer_id.to_string(), msg: "manifest rejected (sig)".into() };
-        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
-        return;
-    }
-    // Enforce TOFU owner trust
+    if !ok { let _ = tx.send(Err("manifest rejected (sig)".into())); return; }
+    // TOFU
     if let Some(trusted) = load_trusted_owner() {
-        if trusted != signed.owner_pub_bs58 {
-            let msg = Status { node_id: local_peer_id.to_string(), msg: "manifest rejected (owner mismatch)".into() };
-            let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
-            return;
-        }
-    } else {
-        save_trusted_owner(&signed.owner_pub_bs58);
-    }
-    // Enforce monotonic version
-    let mut state = load_state();
+        if trusted != signed.owner_pub_bs58 { let _ = tx.send(Err("manifest rejected (owner mismatch)".into())); return; }
+    } else { save_trusted_owner(&signed.owner_pub_bs58); }
+    // Monotonic version
+    let state = load_state();
     if state.last_version >= signed.version {
-        let msg = Status { node_id: local_peer_id.to_string(), msg: format!("manifest rejected (stale v{} <= v{})", signed.version, state.last_version) };
-        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+        let _ = tx.send(Err(format!("manifest rejected (stale v{} <= v{})", signed.version, state.last_version)));
         return;
     }
-    state.last_version = signed.version;
-    save_state(&state);
+    // Verify and stage artifacts, then launch and persist version
+    match verify_and_stage_artifacts(&signed.manifest_toml).await {
+        Ok(staged) => {
+            if let Err(e) = launch_components(staged, &signed.manifest_toml).await {
+                let _ = tx.send(Err(format!("launch error: {}", e))); return;
+            }
+            let mut state2 = load_state();
+            state2.last_version = signed.version;
+            save_state(&state2);
+            let _ = tx.send(Ok(format!("manifest accepted v{}", signed.version)));
+        }
+        Err(e) => { let _ = tx.send(Err(format!("manifest rejected (digest): {}", e))); }
+    }
+}
 
-    let msg = Status { node_id: local_peer_id.to_string(), msg: format!("manifest accepted v{}", signed.version) };
-    let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+async fn fetch_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
+    if let Some(rest) = url.strip_prefix("file:") {
+        let path = std::path::Path::new(rest);
+        return Ok(tokio::fs::read(path).await?);
+    }
+    if url.starts_with("http://") || url.starts_with("https://") {
+        let res = reqwest::get(url).await?;
+        let status = res.status();
+        if !status.is_success() {
+            return Err(anyhow::anyhow!("fetch {}: {}", url, status));
+        }
+        let bytes = res.bytes().await?;
+        return Ok(bytes.to_vec());
+    }
+    Err(anyhow::anyhow!("unsupported source: {}", url))
+}
+
+async fn verify_and_stage_artifacts(manifest_toml: &str) -> anyhow::Result<std::collections::BTreeMap<String, std::path::PathBuf>> {
+    let manifest: Manifest = toml::from_str(manifest_toml)?;
+    let mut staged = std::collections::BTreeMap::new();
+    let stage_dir = agent_data_dir().join("artifacts");
+    tokio::fs::create_dir_all(&stage_dir).await.ok();
+    for (name, comp) in manifest.components.iter() {
+        let bytes = fetch_bytes(&comp.source).await?;
+        let digest = sha256_hex(&bytes);
+        if digest != comp.sha256_hex {
+            return Err(anyhow::anyhow!("component {} digest mismatch", name));
+        }
+        let file_path = stage_dir.join(format!("{}-{}.wasm", name, &digest[..16]));
+        if !file_path.exists() {
+            tokio::fs::write(&file_path, &bytes).await?;
+        }
+        staged.insert(name.clone(), file_path);
+    }
+    Ok(staged)
+}
+
+async fn launch_components(staged: std::collections::BTreeMap<String, std::path::PathBuf>, manifest_toml: &str) -> anyhow::Result<()> {
+    let manifest: Manifest = toml::from_str(manifest_toml)?;
+    for (name, path) in staged {
+        if let Some(spec) = manifest.components.get(&name) {
+            let mem = spec.memory_max_mb.unwrap_or(64);
+            let fuel = spec.fuel.unwrap_or(5_000_000);
+            let epoch = spec.epoch_ms.unwrap_or(100);
+            let p = path.to_string_lossy().to_string();
+            tokio::spawn(async move {
+                if let Err(e) = run_wasm_module_with_limits(&p, mem, fuel, epoch).await {
+                    warn!(component=%name, error=%e, "component run failed");
+                }
+            });
+        }
+    }
+    Ok(())
 }
