@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 pub const REALM_CMD_TOPIC: &str = "realm/cmd/v1";
 pub const REALM_STATUS_TOPIC: &str = "realm/status/v1";
@@ -17,10 +18,20 @@ pub struct Status {
     pub msg: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OwnerKeypair {
     pub public_bs58: String,  // ed25519:BASE58
-    pub private_hex: String,  // hex private for now (step 1 security)
+    #[serde(skip_serializing, default)]
+    pub private_hex: String,  // never serialize; allow default when missing
+}
+
+impl fmt::Debug for OwnerKeypair {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OwnerKeypair")
+            .field("public_bs58", &self.public_bs58)
+            .field("private_hex", &"<redacted>")
+            .finish()
+    }
 }
 
 impl OwnerKeypair {
