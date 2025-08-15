@@ -173,11 +173,11 @@ Selling points
 	•	Portable: any OS/arch where the agent runs.
 
 MVP build plan (ruthlessly small)
-	1.	Week 1
+	1.	Step 1
 	•	Agent: run a single component with mem cap + fuel + epoch.
 	•	P2P: libp2p identity + Kademlia + pubsub. “hello world” command gossip.
 	•	CLI: realm init, realm apply, realm status.
-	2.	Week 2
+	2.	Step 2
 	•	Signed manifests, digest‑pinned artifacts, file:// and http(s):// fetchers.
 	•	Reverse proxy + routing table; scale N replicas per node.
 	•	Metrics endpoint + basic TUI/HTML dashboard.
