@@ -1,4 +1,6 @@
 use std::time::Duration;
+use std::path::PathBuf;
+use std::fs;
 
 use anyhow::anyhow;
 use futures::StreamExt;
@@ -7,6 +9,7 @@ use libp2p::{
     swarm::{Swarm, SwarmEvent},
     Multiaddr, PeerId, SwarmBuilder,
 };
+use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 use crate::runner::run_wasm_module_with_limits;
@@ -34,6 +37,37 @@ fn load_or_create_node_key() -> identity::Keypair {
         let _ = std::fs::write(&path, enc);
     }
     kp
+}
+
+fn agent_data_dir() -> PathBuf {
+    dirs::data_dir().unwrap_or(std::env::temp_dir()).join("realm-agent")
+}
+
+fn trusted_owner_path() -> PathBuf { agent_data_dir().join("owner.pub") }
+fn state_path() -> PathBuf { agent_data_dir().join("state.json") }
+
+fn load_trusted_owner() -> Option<String> {
+    fs::read_to_string(trusted_owner_path()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+fn save_trusted_owner(pub_bs58: &str) {
+    let _ = fs::create_dir_all(agent_data_dir());
+    let _ = fs::write(trusted_owner_path(), pub_bs58.as_bytes());
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AgentState { last_version: u64 }
+
+fn load_state() -> AgentState {
+    if let Ok(bytes) = fs::read(state_path()) {
+        if let Ok(s) = serde_json::from_slice::<AgentState>(&bytes) { return s; }
+    }
+    AgentState::default()
+}
+
+fn save_state(state: &AgentState) {
+    let _ = fs::create_dir_all(agent_data_dir());
+    if let Ok(bytes) = serde_json::to_vec(state) { let _ = fs::write(state_path(), bytes); }
 }
 
 pub async fn run_agent(
@@ -181,14 +215,34 @@ async fn handle_apply_manifest(
             return;
         }
     };
+    // Verify signature
     let ok = verify_bytes_ed25519(&signed.owner_pub_bs58, signed.manifest_toml.as_bytes(), &sig)
         .unwrap_or(false);
-    if ok {
-        let msg = Status { node_id: local_peer_id.to_string(), msg: format!("manifest accepted v{}", signed.version) };
-        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
-        // TODO: persist owner key & desired state in Step 2
-    } else {
+    if !ok {
         let msg = Status { node_id: local_peer_id.to_string(), msg: "manifest rejected (sig)".into() };
         let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+        return;
     }
+    // Enforce TOFU owner trust
+    if let Some(trusted) = load_trusted_owner() {
+        if trusted != signed.owner_pub_bs58 {
+            let msg = Status { node_id: local_peer_id.to_string(), msg: "manifest rejected (owner mismatch)".into() };
+            let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+            return;
+        }
+    } else {
+        save_trusted_owner(&signed.owner_pub_bs58);
+    }
+    // Enforce monotonic version
+    let mut state = load_state();
+    if state.last_version >= signed.version {
+        let msg = Status { node_id: local_peer_id.to_string(), msg: format!("manifest rejected (stale v{} <= v{})", signed.version, state.last_version) };
+        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+        return;
+    }
+    state.last_version = signed.version;
+    save_state(&state);
+
+    let msg = Status { node_id: local_peer_id.to_string(), msg: format!("manifest accepted v{}", signed.version) };
+    let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
 }
