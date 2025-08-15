@@ -10,7 +10,7 @@ use libp2p::{
 };
 use tracing_subscriber::EnvFilter;
 
-use common::{serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC};
+use common::{serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, OwnerKeypair, SignedManifest, sign_bytes_ed25519};
 
 #[derive(Debug, Parser)]
 #[command(name = "realm")]
@@ -22,13 +22,21 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Generate local owner key (placeholder for step 2)
+    /// Generate local owner key
     Init,
-    /// Send a hello to the network
+    /// Display owner public key
+    KeyShow,
+    /// Send a hello to the network or run a wasm
     Apply {
-        /// Optional wasm path to instruct agents to run
+        /// Optional wasm path to instruct agents to run (ad-hoc)
         #[arg(long)]
         wasm: Option<String>,
+        /// Optional path to realm.toml to sign + publish
+        #[arg(long)]
+        file: Option<String>,
+        /// Monotonic version for this manifest
+        #[arg(long, default_value_t = 1)]
+        version: u64,
     },
     /// Query status from agents and print first reply
     Status,
@@ -52,9 +60,40 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Init => init().await,
-        Commands::Apply { wasm } => apply(wasm).await,
+        Commands::KeyShow => key_show().await,
+        Commands::Apply { wasm, file, version } => apply(wasm, file, version).await,
         Commands::Status => status().await,
     }
+}
+
+fn owner_dir() -> anyhow::Result<std::path::PathBuf> {
+    Ok(dirs::config_dir().context("config dir")?.join("realm"))
+}
+
+async fn init() -> anyhow::Result<()> {
+    let dir = owner_dir()?;
+    tokio::fs::create_dir_all(&dir).await?;
+
+    let key_path = dir.join("owner.key.json");
+    if tokio::fs::try_exists(&key_path).await? {
+        println!("owner key already exists at {}", key_path.display());
+        return Ok(());
+    }
+
+    let kp = OwnerKeypair::generate()?;
+    let json = serde_json::to_vec_pretty(&kp)?;
+    tokio::fs::write(&key_path, json).await?;
+    println!("initialized; owner pub: {}", kp.public_bs58);
+    Ok(())
+}
+
+async fn key_show() -> anyhow::Result<()> {
+    let dir = owner_dir()?;
+    let key_path = dir.join("owner.key.json");
+    let bytes = tokio::fs::read(&key_path).await.context("read owner key")?;
+    let kp: OwnerKeypair = serde_json::from_slice(&bytes)?;
+    println!("{}", kp.public_bs58);
+    Ok(())
 }
 
 async fn new_swarm() -> anyhow::Result<(Swarm<NodeBehaviour>, gossipsub::IdentTopic, gossipsub::IdentTopic)> {
@@ -85,18 +124,11 @@ async fn new_swarm() -> anyhow::Result<(Swarm<NodeBehaviour>, gossipsub::IdentTo
     Ok((swarm, topic_cmd, topic_status))
 }
 
-async fn init() -> anyhow::Result<()> {
-    let dir = dirs::config_dir().context("config dir")?.join("realm");
-    tokio::fs::create_dir_all(&dir).await?;
-    println!("initialized at {}", dir.display());
-    Ok(())
-}
-
-async fn apply(wasm: Option<String>) -> anyhow::Result<()> {
+async fn apply(wasm: Option<String>, file: Option<String>, version: u64) -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<Multiaddr>().unwrap())?;
 
-    // Briefly process mDNS to discover peers
+    // Brief mDNS warmup
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_millis(600) {
         if let Some(event) = swarm.next().await {
@@ -113,6 +145,7 @@ async fn apply(wasm: Option<String>) -> anyhow::Result<()> {
         }
     }
 
+    // ad-hoc hello/run path still supported
     let hello = Command::Hello { from: hostname::get().unwrap_or_default().to_string_lossy().into_owned() };
     swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&hello))?;
 
@@ -121,7 +154,25 @@ async fn apply(wasm: Option<String>) -> anyhow::Result<()> {
         swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&run))?;
     }
 
-    // Allow a moment for the messages to propagate
+    if let Some(manifest_path) = file {
+        let toml_bytes = tokio::fs::read(&manifest_path).await?;
+        let toml_str = String::from_utf8(toml_bytes.clone()).context("realm.toml utf8")?;
+        // load owner key
+        let dir = owner_dir()?;
+        let key_path = dir.join("owner.key.json");
+        let bytes = tokio::fs::read(&key_path).await.context("read owner key")?;
+        let kp: OwnerKeypair = serde_json::from_slice(&bytes)?;
+        let sig = sign_bytes_ed25519(&kp.private_hex, toml_bytes.as_slice())?;
+        let signed = SignedManifest {
+            alg: "ed25519".into(),
+            owner_pub_bs58: kp.public_bs58.clone(),
+            version,
+            manifest_toml: toml_str,
+            signature_b64: base64::encode(sig),
+        };
+        swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::ApplyManifest(signed)))?;
+    }
+
     tokio::time::sleep(Duration::from_millis(500)).await;
     Ok(())
 }

@@ -10,7 +10,7 @@ use libp2p::{
 use tracing::{error, info, warn};
 
 use crate::runner::run_wasm_module_with_limits;
-use common::{deserialize_message, serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, Status};
+use common::{deserialize_message, serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, Status, SignedManifest, verify_bytes_ed25519};
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct NodeBehaviour {
@@ -20,13 +20,29 @@ struct NodeBehaviour {
     identify: identify::Behaviour,
 }
 
+fn load_or_create_node_key() -> identity::Keypair {
+    let dir = dirs::data_dir().unwrap_or(std::env::temp_dir()).join("realm-agent");
+    let path = dir.join("node.key");
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(bytes) = std::fs::read(&path) {
+        if let Ok(kp) = identity::Keypair::from_protobuf_encoding(&bytes) {
+            return kp;
+        }
+    }
+    let kp = identity::Keypair::generate_ed25519();
+    if let Ok(enc) = kp.to_protobuf_encoding() {
+        let _ = std::fs::write(&path, enc);
+    }
+    kp
+}
+
 pub async fn run_agent(
     wasm_path: Option<String>,
     memory_max_mb: u64,
     fuel: u64,
     epoch_ms: u64,
 ) -> anyhow::Result<()> {
-    let id_keys = identity::Keypair::generate_ed25519();
+    let id_keys = load_or_create_node_key();
     let local_peer_id = PeerId::from(id_keys.public());
 
     let gossip_config = gossipsub::ConfigBuilder::default().build()?;
@@ -113,7 +129,7 @@ pub async fn run_agent(
                     SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) => {
                         if let gossipsub::Event::Message { propagation_source, message_id, message } = ev {
                             if let Ok(cmd) = deserialize_message::<Command>(&message.data) {
-                                info!(from=%propagation_source, ?message_id, ?cmd, "received command");
+                                info!(from=%propagation_source, ?message_id, "received command");
                                 match cmd {
                                     Command::Hello { from } => {
                                         let msg = Status { node_id: local_peer_id.to_string(), msg: format!("hello, {}", from) };
@@ -127,6 +143,9 @@ pub async fn run_agent(
                                                 .map_err(|e| format!("run error: {}", e));
                                             let _ = tx1.send(res);
                                         });
+                                    }
+                                    Command::ApplyManifest(signed) => {
+                                        handle_apply_manifest(&mut swarm, &topic_status, &local_peer_id, signed).await;
                                     }
                                     Command::StatusQuery => {
                                         let msg = Status { node_id: local_peer_id.to_string(), msg: "ok".into() };
@@ -145,5 +164,31 @@ pub async fn run_agent(
                 }
             }
         }
+    }
+}
+
+async fn handle_apply_manifest(
+    swarm: &mut Swarm<NodeBehaviour>,
+    topic_status: &gossipsub::IdentTopic,
+    local_peer_id: &PeerId,
+    signed: SignedManifest,
+) {
+    let sig = match base64::decode(&signed.signature_b64) {
+        Ok(s) => s,
+        Err(e) => {
+            let msg = Status { node_id: local_peer_id.to_string(), msg: format!("bad signature_b64: {}", e) };
+            let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+            return;
+        }
+    };
+    let ok = verify_bytes_ed25519(&signed.owner_pub_bs58, signed.manifest_toml.as_bytes(), &sig)
+        .unwrap_or(false);
+    if ok {
+        let msg = Status { node_id: local_peer_id.to_string(), msg: format!("manifest accepted v{}", signed.version) };
+        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+        // TODO: persist owner key & desired state in Step 2
+    } else {
+        let msg = Status { node_id: local_peer_id.to_string(), msg: "manifest rejected (sig)".into() };
+        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
     }
 }
