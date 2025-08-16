@@ -180,6 +180,17 @@ pub async fn run_agent(
                     s.refresh_all();
                     let cpu = (s.global_cpu_info().cpu_usage() as u64).min(100);
                     let mem = if s.total_memory() == 0 { 0 } else { ((s.used_memory() as f64 / s.total_memory() as f64) * 100.0) as u64 };
+                    // Memory reporting note:
+                    // - Wasmtime's component API (as of now) does not expose precise per-component
+                    //   memory utilization. Until that lands, we report the agent process RSS using sysinfo,
+                    //   which is still operationally useful to detect leaks and pressure at the node level.
+                    // - When Wasmtime / execution context starts exposing per-store or per-component
+                    //   memory usage, we should switch metrics::set_mem_current_bytes() to that data
+                    //   (and possibly keep process RSS as a separate metric).
+                    if let Some(proc) = s.process(sysinfo::Pid::from_u32(std::process::id())) {
+                        let rss_bytes = proc.memory();
+                        metrics.set_mem_current_bytes(rss_bytes);
+                    }
                     (cpu, mem)
                 };
                 let status = Status {
@@ -206,6 +217,11 @@ pub async fn run_agent(
                     s.refresh_all();
                     let cpu = (s.global_cpu_info().cpu_usage() as u64).min(100);
                     let mem = if s.total_memory() == 0 { 0 } else { ((s.used_memory() as f64 / s.total_memory() as f64) * 100.0) as u64 };
+                    // See note above regarding memory reporting fallback.
+                    if let Some(proc) = s.process(sysinfo::Pid::from_u32(std::process::id())) {
+                        let rss_bytes = proc.memory();
+                        metrics.set_mem_current_bytes(rss_bytes);
+                    }
                     (cpu, mem)
                 };
                 // sample msgs/s
