@@ -3,7 +3,13 @@ use anyhow::Context;
 use common::sha256_hex;
 
 #[cfg(unix)]
-pub async fn install(binary: String, system: bool) -> anyhow::Result<()> {
+pub async fn install(binary: Option<String>, system: bool) -> anyhow::Result<()> {
+    let binary = binary.unwrap_or_else(|| {
+        std::env::current_exe()
+            .unwrap_or_else(|_| std::path::PathBuf::from("realm-agent"))
+            .display()
+            .to_string()
+    });
     use std::os::unix::fs::{PermissionsExt, symlink};
     if system {
         // System-wide install

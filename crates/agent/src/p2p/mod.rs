@@ -335,12 +335,24 @@ pub async fn run_agent(
                                         });
                                     }
                                     Command::UpgradeAgent(pkg) => {
-                                        let tx3 = tx.clone();
-                                        let logs3 = logs.clone();
-                                        tokio::spawn(async move {
-                                            let _ = logs3; // placeholder to wire logs into upgrade path later
-                                            handle_upgrade(tx3, pkg).await;
-                                        });
+                                        // Selection: peer IDs or tags
+                                        let sel_ids = &pkg.target_peer_ids;
+                                        let sel_tags = &pkg.target_tags;
+                                        let mut selected = true;
+                                        if !sel_ids.is_empty() {
+                                            selected = sel_ids.iter().any(|s| s == &local_peer_id.to_string());
+                                        }
+                                        if selected && !sel_tags.is_empty() {
+                                            selected = sel_tags.iter().any(|t| roles.contains(t));
+                                        }
+                                        if selected {
+                                            let tx3 = tx.clone();
+                                            let logs3 = logs.clone();
+                                            tokio::spawn(async move {
+                                                let _ = logs3; // placeholder to wire logs into upgrade path later
+                                                handle_upgrade(tx3, pkg).await;
+                                            });
+                                        }
                                     }
                                     Command::StatusQuery => {
                                         let (cpu_percent, mem_percent) = {

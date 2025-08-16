@@ -30,7 +30,7 @@ pub async fn enroll(token_b64: String, binary: Option<String>, system: bool) -> 
     if let Some(bin) = binary {
         #[cfg(unix)]
         {
-            return super::install::install(bin, system).await;
+            return super::install::install(Some(bin), system).await;
         }
         #[cfg(not(unix))]
         {

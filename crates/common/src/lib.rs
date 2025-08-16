@@ -80,6 +80,8 @@ pub struct AgentUpgrade {
     pub alg: String,            // "ed25519"
     pub owner_pub_bs58: String, // "ed25519:BASE58..."
     pub version: u64,           // monotonic
+    pub target_peer_ids: Vec<String>,
+    pub target_tags: Vec<String>,
     pub binary_sha256_hex: String,
     pub binary_b64: String,     // base64 of agent binary
     pub signature_b64: String,  // base64 signature over raw binary bytes

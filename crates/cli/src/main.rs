@@ -1,9 +1,7 @@
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use realm::tui;
-
-mod cmd;
+use realm::{tui, cmd};
 
 #[derive(Debug, Parser)]
 #[command(name = "realm")]
@@ -33,16 +31,22 @@ enum Commands {
     /// Install the agent as a service (systemd user service by default)
     Install {
         #[arg(long)]
-        binary: String,
+        binary: Option<String>,
         #[arg(long, default_value_t = false)]
         system: bool,
     },
-    /// Push an agent binary upgrade to all peers
+    /// Push an agent binary upgrade to peers
     Upgrade {
         #[arg(long)]
         file: String,
         #[arg(long, default_value_t = 1)]
         version: u64,
+        /// Target specific peers by PeerId (repeatable)
+        #[arg(long = "peer")]
+        target_peers: Vec<String>,
+        /// Target peers with any of these tags/roles (repeatable)
+        #[arg(long = "tag")]
+        target_tags: Vec<String>,
     },
     /// Push a WASI component to selected peers and optionally start it
     Push {
@@ -119,7 +123,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Install { binary, system } => cmd::install(binary, system).await,
         #[cfg(not(unix))]
         Commands::Install { .. } => Err(anyhow::anyhow!("install is only supported on Unix-like systems with systemd")),
-        Commands::Upgrade { file, version } => cmd::upgrade(file, version).await,
+        Commands::Upgrade { file, version, target_peers, target_tags } =>
+            cmd::upgrade(file, version, target_peers, target_tags).await,
         Commands::Invite { bootstrap, realm_id, exp_mins } => cmd::invite(bootstrap, realm_id, exp_mins).await,
         Commands::Enroll { token, binary, system } => cmd::enroll(token, binary, system).await,
         Commands::Configure { owner, bootstrap } => cmd::configure(owner, bootstrap).await,
