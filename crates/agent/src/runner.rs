@@ -1,5 +1,5 @@
 use tracing::{error, info};
-use wasmtime::{component::{Component, Linker as CLinker, ResourceTable}, Config, Engine, ResourceLimiter, Store};
+use wasmtime::{component::{Component, Linker as CLinker, ResourceTable, Val}, Config, Engine, ResourceLimiter, Store};
 
 struct MemoryLimiter {
 	max_bytes: usize,
@@ -89,8 +89,20 @@ pub async fn run_wasm_module_with_limits(
 	info!(path = %wasm_path, "component instantiated with limits");
 
         // Try to call the command world's entrypoint: 'run'
+        let mut invoked = false;
         if let Ok(func) = instance.get_typed_func::<(), ()>(&mut store, "run") {
             func.call(&mut store, ())?;
+            invoked = true;
+        }
+        if !invoked {
+            if let Some(func_any) = instance.get_func(&mut store, "run") {
+                let mut no_results: [Val; 0] = [];
+                if func_any.call(&mut store, &[], &mut no_results).is_ok() {
+                    invoked = true;
+                }
+            }
+        }
+        if invoked {
             info!(path = %wasm_path, "component run() completed");
         } else {
             info!(path = %wasm_path, "component has no 'run' export or signature mismatch");
