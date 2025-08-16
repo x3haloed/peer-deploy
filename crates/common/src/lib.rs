@@ -122,3 +122,18 @@ pub fn serialize_message<T: Serialize>(value: &T) -> Vec<u8> {
 pub fn deserialize_message<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> anyhow::Result<T> {
     Ok(serde_json::from_slice(bytes)?)
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteUnsigned {
+    pub alg: String, // "ed25519"
+    pub owner_pub_bs58: String,
+    pub bootstrap_multiaddrs: Vec<String>,
+    pub realm_id: Option<String>,
+    pub exp_unix: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteToken {
+    pub unsigned: InviteUnsigned,
+    pub signature_b64: String,
+}
