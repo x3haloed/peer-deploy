@@ -69,6 +69,8 @@ pub async fn run_tui() -> anyhow::Result<()> {
         PublishError(String),
         MdnsDiscovered(Vec<(PeerId, Multiaddr)>),
         MdnsExpired(Vec<(PeerId, Multiaddr)>),
+        Metrics(String),
+        Logs(String),
     }
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
@@ -191,6 +193,42 @@ pub async fn run_tui() -> anyhow::Result<()> {
     let mut filter_input: Option<String> = None;
     let mut log_filter: Option<String> = None;
     let mut logs_paused = false;
+    let metrics_url = "http://127.0.0.1:9920/metrics".to_string();
+    let logs_url = "http://127.0.0.1:9920/logs?component=__all__&tail=200".to_string();
+
+    // background fetchers for metrics and logs
+    {
+        let tx_m = tx.clone();
+        let metrics_url = metrics_url.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let mut intv = tokio::time::interval(Duration::from_secs(2));
+            loop {
+                intv.tick().await;
+                if let Ok(resp) = client.get(&metrics_url).send().await {
+                    if let Ok(text) = resp.text().await {
+                        let _ = tx_m.send(AppEvent::Metrics(text));
+                    }
+                }
+            }
+        });
+    }
+    {
+        let tx_l = tx.clone();
+        let logs_url = logs_url.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let mut intv = tokio::time::interval(Duration::from_secs(3));
+            loop {
+                intv.tick().await;
+                if let Ok(resp) = client.get(&logs_url).send().await {
+                    if let Ok(text) = resp.text().await {
+                        let _ = tx_l.send(AppEvent::Logs(text));
+                    }
+                }
+            }
+        });
+    }
 
     loop {
         // handle channel
@@ -339,6 +377,20 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         topo.entry(peer.to_string())
                             .and_modify(|e| e.1 = Instant::now())
                             .or_insert((None, Instant::now()));
+                    }
+                }
+                AppEvent::Metrics(text) => {
+                    if !logs_paused {
+                        events.push_front((Instant::now(), format!("metrics updated ({} bytes)", text.len())));
+                        if events.len() > EVENTS_CAP { events.pop_back(); }
+                    }
+                }
+                AppEvent::Logs(text) => {
+                    if !logs_paused {
+                        if let Some(last) = text.lines().last() {
+                            events.push_front((Instant::now(), format!("logs: {}", last)));
+                            if events.len() > EVENTS_CAP { events.pop_back(); }
+                        }
                     }
                 }
             }

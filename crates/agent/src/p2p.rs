@@ -16,6 +16,22 @@ use tracing::{info, warn};
 
 use crate::runner::run_wasm_module_with_limits;
 use common::{deserialize_message, serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, Status, SignedManifest, AgentUpgrade, verify_bytes_ed25519, Manifest, sha256_hex};
+type SharedLogs = std::sync::Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, std::collections::VecDeque<String>>>>;
+
+const LOGS_CAP: usize = 1000;
+
+async fn push_log(logs: &SharedLogs, name: &str, line: impl Into<String>) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let mut map = logs.lock().await;
+    let buf = map
+        .entry(name.to_string())
+        .or_insert_with(|| std::collections::VecDeque::with_capacity(LOGS_CAP));
+    if buf.len() >= LOGS_CAP {
+        buf.pop_front();
+    }
+    buf.push_back(format!("{} | {}", now, line.into()));
+}
 
 struct Metrics {
     status_published_total: AtomicU64,
@@ -79,7 +95,7 @@ impl Metrics {
     }
 }
 
-async fn serve_metrics(metrics: Arc<Metrics>, bind_addr: &str) {
+async fn serve_metrics(metrics: Arc<Metrics>, logs: SharedLogs, bind_addr: &str) {
     let listener = match tokio::net::TcpListener::bind(bind_addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -92,12 +108,52 @@ async fn serve_metrics(metrics: Arc<Metrics>, bind_addr: &str) {
         match listener.accept().await {
             Ok((mut stream, _)) => {
                 let m = metrics.clone();
+                let logs = logs.clone();
                 tokio::spawn(async move {
-                    let mut buf = vec![0u8; 1024];
+                    let mut buf = vec![0u8; 2048];
                     let _ = tokio::time::timeout(Duration::from_millis(500), tokio::io::AsyncReadExt::read(&mut stream, &mut buf)).await;
-                    let body = m.render_prometheus();
+                    let req = String::from_utf8_lossy(&buf);
+                    let mut path = "/metrics";
+                    if let Some(line) = req.lines().next() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 2 { path = parts[1]; }
+                    }
+
+                    let (status_line, content_type, body) = if path.starts_with("/metrics") {
+                        ("HTTP/1.1 200 OK", "text/plain; version=0.0.4", m.render_prometheus())
+                    } else if path.starts_with("/logs") {
+                        // parse query: /logs?component=name&tail=100
+                        let mut component: Option<String> = None;
+                        let mut tail: usize = 100;
+                        if let Some(q) = path.split('?').nth(1) {
+                            for pair in q.split('&') {
+                                let mut it = pair.split('=');
+                                if let (Some(k), Some(v)) = (it.next(), it.next()) {
+                                    if k == "component" && !v.is_empty() { component = Some(v.to_string()); }
+                                    if k == "tail" { if let Ok(n) = v.parse::<usize>() { tail = n.min(1000); } }
+                                }
+                            }
+                        }
+                        let mut out = String::new();
+                        let map = logs.lock().await;
+                        if let Some(name) = component {
+                            if let Some(buf) = map.get(&name) {
+                                let start = if buf.len() > tail { buf.len() - tail } else { 0 };
+                                for line in buf.iter().skip(start) { out.push_str(line); out.push('\n'); }
+                            } else {
+                                out.push_str("unknown component\n");
+                            }
+                        } else {
+                            out.push_str("components:\n");
+                            for k in map.keys() { out.push_str(k); out.push('\n'); }
+                        }
+                        ("HTTP/1.1 200 OK", "text/plain; charset=utf-8", out)
+                    } else {
+                        ("HTTP/1.1 404 Not Found", "text/plain; charset=utf-8", "not found".to_string())
+                    };
+
                     let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        "{status_line}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                         body.len(), body
                     );
                     let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, resp.as_bytes()).await;
@@ -180,6 +236,7 @@ pub async fn run_agent(
     epoch_ms: u64,
 ) -> anyhow::Result<()> {
     let metrics = Arc::new(Metrics::new());
+    let logs: SharedLogs = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
 
     let id_keys = load_or_create_node_key();
     let local_peer_id = PeerId::from(id_keys.public());
@@ -244,7 +301,7 @@ pub async fn run_agent(
     metrics.set_agent_version(boot_state.agent_version);
 
     // Spawn metrics server
-    tokio::spawn(serve_metrics(metrics.clone(), "127.0.0.1:9920"));
+    tokio::spawn(serve_metrics(metrics.clone(), logs.clone(), "127.0.0.1:9920"));
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
 
@@ -318,13 +375,17 @@ pub async fn run_agent(
                                     }
                                     Command::ApplyManifest(signed) => {
                                         let tx2 = tx.clone();
+                                        let logs2 = logs.clone();
                                         tokio::spawn(async move {
+                                            let _ = logs2; // placeholder to wire logs into manifest path later
                                             handle_apply_manifest(tx2, signed).await;
                                         });
                                     }
                                     Command::UpgradeAgent(pkg) => {
                                         let tx3 = tx.clone();
+                                        let logs3 = logs.clone();
                                         tokio::spawn(async move {
+                                            let _ = logs3; // placeholder to wire logs into upgrade path later
                                             handle_upgrade(tx3, pkg).await;
                                         });
                                     }
@@ -335,6 +396,9 @@ pub async fn run_agent(
                                         } else {
                                             metrics.status_published_total.fetch_add(1, Ordering::Relaxed);
                                         }
+                                    }
+                                    Command::MetricsQuery | Command::LogsQuery { .. } => {
+                                        // these are served over HTTP; no-op here for now
                                     }
                                 }
                             }

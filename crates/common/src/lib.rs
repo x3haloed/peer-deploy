@@ -9,6 +9,8 @@ pub enum Command {
     Hello { from: String },
     Run { wasm_path: String, memory_max_mb: u64, fuel: u64, epoch_ms: u64 },
     StatusQuery,
+    MetricsQuery,
+    LogsQuery { component: Option<String>, tail: u64 },
     ApplyManifest(SignedManifest),
     UpgradeAgent(AgentUpgrade),
 }
