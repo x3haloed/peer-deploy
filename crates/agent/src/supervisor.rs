@@ -44,6 +44,17 @@ impl Supervisor {
         }
     }
 
+    /// Upsert a single desired component specification and trigger reconciliation on next tick.
+    pub async fn upsert_component(&self, desired: DesiredComponent) {
+        let mut d = self.desired.lock().await;
+        let name = desired.name.clone();
+        d.insert(name.clone(), desired);
+        self.metrics.set_components_desired(d.len() as u64);
+        // ensure counter exists
+        let mut counts = self.counts.lock().await;
+        counts.entry(name).or_insert_with(|| Arc::new(AtomicUsize::new(0)));
+    }
+
     pub async fn desired_len(&self) -> usize { self.desired.lock().await.len() }
 
     pub fn spawn_reconcile(self: Arc<Self>) {

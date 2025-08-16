@@ -44,6 +44,30 @@ enum Commands {
         #[arg(long, default_value_t = 1)]
         version: u64,
     },
+    /// Push a WASI component to selected peers and optionally start it
+    Push {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        file: String,
+        #[arg(long, default_value_t = 1)]
+        replicas: u32,
+        #[arg(long, default_value_t = 64)]
+        memory_max_mb: u64,
+        #[arg(long, default_value_t = 5_000_000)]
+        fuel: u64,
+        #[arg(long, default_value_t = 100)]
+        epoch_ms: u64,
+        /// Target specific peers by PeerId (repeatable)
+        #[arg(long = "peer")]
+        target_peers: Vec<String>,
+        /// Target peers with any of these tags/roles (repeatable)
+        #[arg(long = "tag")]
+        target_tags: Vec<String>,
+        /// Stage only; don't start
+        #[arg(long, default_value_t = true)]
+        start: bool,
+    },
     /// Create a signed invite token for bootstrapping a new peer
     Invite {
         #[arg(long)]
@@ -99,6 +123,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Invite { bootstrap, realm_id, exp_mins } => cmd::invite(bootstrap, realm_id, exp_mins).await,
         Commands::Enroll { token, binary, system } => cmd::enroll(token, binary, system).await,
         Commands::Configure { owner, bootstrap } => cmd::configure(owner, bootstrap).await,
+        Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, target_peers, target_tags, start).await,
     }
 }
 

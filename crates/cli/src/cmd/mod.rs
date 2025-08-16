@@ -7,6 +7,7 @@ pub mod upgrade;
 pub mod invite;
 pub mod enroll;
 pub mod configure;
+pub mod push;
 
 pub use init::init;
 pub use init::key_show;
@@ -17,4 +18,5 @@ pub use upgrade::upgrade;
 pub use invite::invite;
 pub use enroll::enroll;
 pub use configure::configure;
+pub use push::push;
 

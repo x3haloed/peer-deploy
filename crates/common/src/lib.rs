@@ -13,6 +13,7 @@ pub enum Command {
     LogsQuery { component: Option<String>, tail: u64 },
     ApplyManifest(SignedManifest),
     UpgradeAgent(AgentUpgrade),
+    PushComponent(PushPackage),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +83,28 @@ pub struct AgentUpgrade {
     pub binary_sha256_hex: String,
     pub binary_b64: String,     // base64 of agent binary
     pub signature_b64: String,  // base64 signature over raw binary bytes
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PushUnsigned {
+    pub alg: String,                // "ed25519"
+    pub owner_pub_bs58: String,     // "ed25519:BASE58..."
+    pub component_name: String,
+    pub target_peer_ids: Vec<String>,
+    pub target_tags: Vec<String>,
+    pub memory_max_mb: Option<u64>,
+    pub fuel: Option<u64>,
+    pub epoch_ms: Option<u64>,
+    pub replicas: u32,
+    pub start: bool,                // start immediately
+    pub binary_sha256_hex: String,  // digest of binary_b64
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PushPackage {
+    pub unsigned: PushUnsigned,
+    pub binary_b64: String,         // base64 of wasm component
+    pub signature_b64: String,      // signature over serde_json(unsigned)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

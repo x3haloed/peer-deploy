@@ -11,6 +11,7 @@ use libp2p::{
     Multiaddr, PeerId, SwarmBuilder,
 };
 use tracing::{info, warn};
+use base64::Engine;
 
 use crate::runner::run_wasm_module_with_limits;
 use common::{
@@ -368,6 +369,76 @@ pub async fn run_agent(
                                     }
                                     Command::MetricsQuery | Command::LogsQuery { .. } => {
                                         // these are served over HTTP; no-op here for now
+                                    }
+                                    Command::PushComponent(pkg) => {
+                                        // Selection: peer IDs or tags
+                                        let sel_ids = &pkg.unsigned.target_peer_ids;
+                                        let sel_tags = &pkg.unsigned.target_tags;
+                                        let mut selected = true;
+                                        if !sel_ids.is_empty() {
+                                            selected = sel_ids.iter().any(|s| s == &local_peer_id.to_string());
+                                        }
+                                        if selected && !sel_tags.is_empty() {
+                                            // require at least one common tag
+                                            selected = sel_tags.iter().any(|t| roles.contains(t));
+                                        }
+                                        if selected {
+                                            // Verify signature and digest
+                                            if let Ok(unsigned_bytes) = serde_json::to_vec(&pkg.unsigned) {
+                                                if let Ok(sig_bytes) = base64::engine::general_purpose::STANDARD.decode(&pkg.signature_b64) {
+                                                    if common::verify_bytes_ed25519(&pkg.unsigned.owner_pub_bs58, &unsigned_bytes, &sig_bytes).unwrap_or(false) {
+                                                        if let Ok(bin_bytes) = base64::engine::general_purpose::STANDARD.decode(&pkg.binary_b64) {
+                                                            let digest = common::sha256_hex(&bin_bytes);
+                                                            if digest == pkg.unsigned.binary_sha256_hex {
+                                                                // TOFU owner trust like other commands
+                                                                if let Some(trusted) = crate::p2p::state::load_trusted_owner() {
+                                                                    if trusted != pkg.unsigned.owner_pub_bs58 {
+                                                                        warn!("push: owner mismatch");
+                                                                    } else {
+                                                                        // Stage artifact
+                                                                        let stage_dir = crate::p2p::state::agent_data_dir().join("artifacts");
+                                                                        if tokio::fs::create_dir_all(&stage_dir).await.is_ok() {
+                                                                            let file_path = stage_dir.join(format!("{}-{}.wasm", pkg.unsigned.component_name, &digest[..16]));
+                                                                            if !file_path.exists() {
+                                                                                if tokio::fs::write(&file_path, &bin_bytes).await.is_err() {
+                                                                                    warn!("push: write failed");
+                                                                                }
+                                                                            }
+                                                                            push_log(&logs, &pkg.unsigned.component_name, format!("pushed {} bytes (sha256={})", bin_bytes.len(), &digest[..16])).await;
+                                                                            if pkg.unsigned.start {
+                                                                                let spec = common::ComponentSpec {
+                                                                                    source: format!("file:{}", file_path.display()),
+                                                                                    sha256_hex: pkg.unsigned.binary_sha256_hex.clone(),
+                                                                                    memory_max_mb: pkg.unsigned.memory_max_mb,
+                                                                                    fuel: pkg.unsigned.fuel,
+                                                                                    epoch_ms: pkg.unsigned.epoch_ms,
+                                                                                    replicas: Some(pkg.unsigned.replicas),
+                                                                                };
+                                                                                let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec };
+                                                                                supervisor.upsert_component(desired).await;
+                                                                                push_log(&logs, &pkg.unsigned.component_name, "scheduled (upsert)" ).await;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                } else {
+                                                                    crate::p2p::state::save_trusted_owner(&pkg.unsigned.owner_pub_bs58);
+                                                                }
+                                                            } else {
+                                                                warn!("push: digest mismatch");
+                                                            }
+                                                        } else {
+                                                            warn!("push: bad binary_b64");
+                                                        }
+                                                    } else {
+                                                        warn!("push: signature verify failed");
+                                                    }
+                                                } else {
+                                                    warn!("push: bad signature_b64");
+                                                }
+                                            } else {
+                                                warn!("push: unsigned serialize err");
+                                            }
+                                        }
                                     }
                                 }
                             }
