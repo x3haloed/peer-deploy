@@ -1,5 +1,6 @@
 mod p2p;
 mod runner;
+mod supervisor;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;

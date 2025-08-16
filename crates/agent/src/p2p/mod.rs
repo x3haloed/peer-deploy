@@ -24,6 +24,7 @@ mod state;
 use handlers::{handle_apply_manifest, handle_upgrade};
 use metrics::{push_log, serve_metrics, Metrics, SharedLogs};
 use state::load_state;
+use crate::supervisor::Supervisor;
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct NodeBehaviour {
@@ -61,6 +62,10 @@ pub async fn run_agent(
     let logs: SharedLogs =
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
     let sys = std::sync::Arc::new(tokio::sync::Mutex::new(sysinfo::System::new_all()));
+
+    // Start supervisor loop
+    let supervisor = std::sync::Arc::new(Supervisor::new(logs.clone(), metrics.clone()));
+    supervisor.clone().spawn_reconcile();
 
     let id_keys = load_or_create_node_key();
     let local_peer_id = PeerId::from(id_keys.public());
@@ -181,6 +186,7 @@ pub async fn run_agent(
                     cpu_percent,
                     mem_percent,
                     tags: vec![],
+                    drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                 };
                 if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -205,6 +211,7 @@ pub async fn run_agent(
                     cpu_percent,
                     mem_percent,
                     tags: vec![],
+                    drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                 };
                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     warn!(error=%e, "failed to publish heartbeat status");
@@ -248,6 +255,7 @@ pub async fn run_agent(
                                             cpu_percent,
                                             mem_percent,
                                             tags: vec![],
+                                            drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                                         };
                                         if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                                             metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -304,6 +312,7 @@ pub async fn run_agent(
                                             cpu_percent,
                                             mem_percent,
                                             tags: vec![],
+                                            drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                                         };
                                         if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                                             metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);

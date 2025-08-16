@@ -4,12 +4,14 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
 use crate::runner::run_wasm_module_with_limits;
+use crate::supervisor::DesiredComponent;
 use common::{sha256_hex, verify_bytes_ed25519, AgentUpgrade, Manifest, SignedManifest};
 
 use super::metrics::{push_log, Metrics};
 use super::metrics::SharedLogs;
 use super::state::{
-    agent_data_dir, load_state, load_trusted_owner, save_state, save_trusted_owner,
+    agent_data_dir, load_state, load_trusted_owner, save_desired_manifest, save_state,
+    save_trusted_owner,
 };
 
 /// Handle an ApplyManifest command from the network.
@@ -61,6 +63,19 @@ pub async fn handle_apply_manifest(
             // Update desired components count from manifest
             if let Ok(mf) = toml::from_str::<Manifest>(&signed.manifest_toml) {
                 metrics.set_components_desired(mf.components.len() as u64);
+                // Persist desired manifest
+                save_desired_manifest(&signed.manifest_toml);
+                // Build desired set for supervisor
+                let mut desired: std::collections::BTreeMap<String, DesiredComponent> = Default::default();
+                for (name, spec) in mf.components.iter() {
+                    if let Some(path) = staged.get(name) {
+                        desired.insert(
+                            name.clone(),
+                            DesiredComponent { name: name.clone(), path: path.clone(), spec: spec.clone() },
+                        );
+                    }
+                }
+                // Supervisor desired set will be set by the caller (p2p::run_agent) if wired
             }
             if let Err(e) = launch_components(staged, &signed.manifest_toml, logs.clone(), metrics.clone()).await {
                 let _ = tx.send(Err(format!("launch error: {e}")));

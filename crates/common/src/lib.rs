@@ -25,6 +25,7 @@ pub struct Status {
     pub cpu_percent: u64,
     pub mem_percent: u64,
     pub tags: Vec<String>,
+    pub drift: i64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -95,6 +96,7 @@ pub struct ComponentSpec {
     pub memory_max_mb: Option<u64>,
     pub fuel: Option<u64>,
     pub epoch_ms: Option<u64>,
+    pub replicas: Option<u32>,
 }
 
 pub fn sign_bytes_ed25519(private_hex: &str, data: &[u8]) -> anyhow::Result<Vec<u8>> {

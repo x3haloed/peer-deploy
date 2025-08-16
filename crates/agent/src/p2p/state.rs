@@ -16,6 +16,10 @@ fn state_path() -> PathBuf {
     agent_data_dir().join("state.json")
 }
 
+fn desired_manifest_path() -> PathBuf {
+    agent_data_dir().join("desired_manifest.toml")
+}
+
 pub fn load_trusted_owner() -> Option<String> {
     fs::read_to_string(trusted_owner_path())
         .ok()
@@ -52,5 +56,16 @@ pub fn save_state(state: &AgentState) {
     if let Ok(bytes) = serde_json::to_vec(state) {
         let _ = fs::write(state_path(), bytes);
     }
+}
+
+/// Persist desired manifest TOML for reconciliation.
+pub fn save_desired_manifest(toml: &str) {
+    let _ = fs::create_dir_all(agent_data_dir());
+    let _ = fs::write(desired_manifest_path(), toml.as_bytes());
+}
+
+/// Load desired manifest TOML if present.
+pub fn load_desired_manifest() -> Option<String> {
+    fs::read_to_string(desired_manifest_path()).ok()
 }
 
