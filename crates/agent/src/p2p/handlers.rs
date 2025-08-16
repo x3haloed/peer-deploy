@@ -11,11 +11,14 @@ use common::{
 use super::state::{
     agent_data_dir, load_state, load_trusted_owner, save_state, save_trusted_owner,
 };
+use super::metrics::SharedLogs;
+use super::metrics::push_log;
 
 /// Handle an ApplyManifest command from the network.
 pub async fn handle_apply_manifest(
     tx: UnboundedSender<Result<String, String>>,
     signed: SignedManifest,
+    logs: SharedLogs,
 ) {
     // Signature check
     let sig = match base64::engine::general_purpose::STANDARD.decode(&signed.signature_b64) {
@@ -60,9 +63,11 @@ pub async fn handle_apply_manifest(
             state2.manifest_version = signed.version;
             save_state(&state2);
             let _ = tx.send(Ok(format!("manifest accepted v{}", signed.version)));
+            push_log(&logs, "apply", format!("manifest accepted v{}", signed.version)).await;
         }
         Err(e) => {
             let _ = tx.send(Err(format!("manifest rejected (digest): {}", e)));
+            push_log(&logs, "apply", format!("manifest rejected (digest): {}", e)).await;
         }
     }
 }

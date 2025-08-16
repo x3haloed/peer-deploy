@@ -17,7 +17,7 @@ mod metrics;
 mod state;
 mod handlers;
 
-use metrics::{Metrics, SharedLogs, serve_metrics};
+use metrics::{Metrics, SharedLogs, serve_metrics, push_log};
 use state::load_state;
 use handlers::{handle_apply_manifest, handle_upgrade};
 
@@ -101,10 +101,16 @@ pub async fn run_agent(
 
     if let Some(path) = wasm_path.clone() {
         let tx0 = tx.clone();
+        let logs0 = logs.clone();
         tokio::spawn(async move {
+            push_log(&logs0, "adhoc", format!("starting run {}", &path)).await;
             let res = run_wasm_module_with_limits(&path, memory_max_mb, fuel, epoch_ms).await
                 .map(|_| format!("run ok: {}", path))
                 .map_err(|e| format!("run error: {}", e));
+            match &res {
+                Ok(m) => push_log(&logs0, "adhoc", m).await,
+                Err(m) => push_log(&logs0, "adhoc", m).await,
+            }
             let _ = tx0.send(res);
         });
     }
@@ -182,10 +188,16 @@ pub async fn run_agent(
                                     }
                                     Command::Run { wasm_path, memory_max_mb, fuel, epoch_ms } => {
                                         let tx1 = tx.clone();
+                                        let logs1 = logs.clone();
                                         tokio::spawn(async move {
+                                            push_log(&logs1, "adhoc", format!("starting run {}", &wasm_path)).await;
                                             let res = run_wasm_module_with_limits(&wasm_path, memory_max_mb, fuel, epoch_ms).await
                                                 .map(|_| format!("run ok: {}", wasm_path))
                                                 .map_err(|e| format!("run error: {}", e));
+                                            match &res {
+                                                Ok(m) => push_log(&logs1, "adhoc", m).await,
+                                                Err(m) => push_log(&logs1, "adhoc", m).await,
+                                            }
                                             let _ = tx1.send(res);
                                         });
                                     }
@@ -193,8 +205,8 @@ pub async fn run_agent(
                                         let tx2 = tx.clone();
                                         let logs2 = logs.clone();
                                         tokio::spawn(async move {
-                                            let _ = logs2; // placeholder to wire logs into manifest path later
-                                            handle_apply_manifest(tx2, signed).await;
+                                            push_log(&logs2, "apply", format!("apply v{}", signed.version)).await;
+                                            handle_apply_manifest(tx2, signed, logs2).await;
                                         });
                                     }
                                     Command::UpgradeAgent(pkg) => {
