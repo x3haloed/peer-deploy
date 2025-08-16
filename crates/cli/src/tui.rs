@@ -67,6 +67,8 @@ pub async fn run_tui() -> anyhow::Result<()> {
         Connected,
         Ping(PeerId, Duration),
         PublishError(String),
+        MdnsDiscovered(Vec<(PeerId, Multiaddr)>),
+        MdnsExpired(Vec<(PeerId, Multiaddr)>),
     }
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
@@ -138,6 +140,12 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         SwarmEvent::Behaviour(NodeBehaviourEvent::Ping(ev)) => {
                             if let Ok(rtt) = ev.result { let _ = tx_swarm.send(AppEvent::Ping(ev.peer, rtt)); }
                         }
+                        SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(ev)) => {
+                            match ev {
+                                mdns::Event::Discovered(list) => { let _ = tx_swarm.send(AppEvent::MdnsDiscovered(list)); }
+                                mdns::Event::Expired(list) => { let _ = tx_swarm.send(AppEvent::MdnsExpired(list)); }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -169,6 +177,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
 
     let mut events: VecDeque<(Instant, String)> = VecDeque::with_capacity(EVENTS_CAP);
     let mut peers: BTreeMap<String, PeerRow> = BTreeMap::new();
+    let mut topo: BTreeMap<String, (Option<String>, Instant)> = BTreeMap::new();
     let mut peers_table_state = TableState::default();
     let mut peer_latency: BTreeMap<String, u128> = BTreeMap::new();
     let mut cpu_hist: Vec<u64> = vec![0; 60];
@@ -316,6 +325,22 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     }
                     overlay_msg = Some((Instant::now(), msg));
                 }
+                AppEvent::MdnsDiscovered(list) => {
+                    for (peer, addr) in list {
+                        topo.insert(
+                            peer.to_string(),
+                            (Some(addr.to_string()), Instant::now()),
+                        );
+                    }
+                }
+                AppEvent::MdnsExpired(list) => {
+                    for (peer, _addr) in list {
+                        // Keep entry but update last seen to now, indicating recent expiry
+                        topo.entry(peer.to_string())
+                            .and_modify(|e| e.1 = Instant::now())
+                            .or_insert((None, Instant::now()));
+                    }
+                }
             }
         }
 
@@ -386,9 +411,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     draw_peers(f, cols[1], &peers, &peer_latency, &mut peers_table_state)
                 }
                 View::Deployments => draw_placeholder(f, cols[1], "Deployments: no data yet"),
-                View::Topology => {
-                    draw_placeholder(f, cols[1], "Topology: discovery via mDNS/bootstrap only")
-                }
+                View::Topology => draw_topology(f, cols[1], &topo),
                 View::Logs => draw_logs(f, cols[1], &events, log_filter.as_deref(), logs_paused),
                 View::Ops => {
                     draw_placeholder(f, cols[1], "Ops: use keybinds A/U/W to perform actions")
@@ -611,6 +634,39 @@ fn draw_placeholder(f: &mut ratatui::Frame<'_>, area: Rect, text: &str) {
     let p = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
     f.render_widget(p, area);
 }
+
+fn draw_topology(
+    f: &mut ratatui::Frame<'_>,
+    area: Rect,
+    topo: &BTreeMap<String, (Option<String>, Instant)>,
+ ) {
+    let cols = ["Peer ID", "Last seen", "Addr"];
+    let header = ratatui::widgets::Row::new(cols.iter().map(|h| {
+        Line::from(*h)
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+    }));
+    let mut rows = Vec::new();
+    for (peer, (addr, last)) in topo.iter() {
+        let secs = last.elapsed().as_secs();
+        rows.push(ratatui::widgets::Row::new(vec![
+            peer.clone(),
+            format!("{}s", secs),
+            addr.clone().unwrap_or_default(),
+        ]));
+    }
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(45),
+            Constraint::Length(10),
+            Constraint::Percentage(45),
+        ],
+    )
+    .header(header)
+    .block(Block::default().borders(Borders::ALL).title("Topology (mDNS)"))
+    .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
+    f.render_widget(table, area);
+ }
 
 fn draw_overlay(f: &mut ratatui::Frame<'_>, area: Rect, text: &str) {
     let popup = Rect {
