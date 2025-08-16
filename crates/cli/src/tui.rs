@@ -12,7 +12,6 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    symbols,
     text::{Line, Span},
     widgets::{
         Block, Borders, List, ListItem, Paragraph, Sparkline, Table, TableState,
@@ -48,7 +47,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<Multiaddr>().unwrap())?;
 
     // mpsc for UI events
-    enum AppEvent { Tick, Key(KeyEvent), Gossip(Status), Connected(usize) }
+    enum AppEvent { Tick, Key(KeyEvent), Gossip(Status), Connected(usize), Ping(PeerId, Duration) }
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
 
     // Tick task
@@ -105,7 +104,9 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 SwarmEvent::NewListenAddr { .. } => {}
                 SwarmEvent::ConnectionEstablished { .. } => { connected = connected.saturating_add(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
                 SwarmEvent::ConnectionClosed { .. } => { connected = connected.saturating_sub(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
-                SwarmEvent::Behaviour(NodeBehaviourEvent::Ping(_ev)) => {}
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Ping(ev)) => {
+                    if let Ok(rtt) = ev.result { let _ = tx_swarm.send(AppEvent::Ping(ev.peer, rtt)); }
+                }
                 _ => {}
             }
         }
@@ -120,6 +121,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
     let mut events: VecDeque<(Instant, String)> = VecDeque::with_capacity(512);
     let mut peers: BTreeMap<String, PeerRow> = BTreeMap::new();
     let mut peers_table_state = TableState::default();
+    let mut peer_latency: BTreeMap<String, u128> = BTreeMap::new();
     let mut cpu_hist: Vec<u64> = vec![0; 60];
     let mut mem_hist: Vec<u64> = vec![0; 60];
     let mut msg_hist: Vec<u64> = vec![0; 60];
@@ -143,6 +145,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 }
                 AppEvent::Tick => {}
                 AppEvent::Connected(_) => {}
+                AppEvent::Ping(peer, rtt) => { peer_latency.insert(peer.to_string(), rtt.as_millis()); }
             }
         }
 
@@ -184,7 +187,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
 
             match view {
                 View::Overview => draw_overview(f, cols[1], &cpu_hist, &mem_hist, &msg_hist, peers.len(), &events),
-                View::Peers => draw_peers(f, cols[1], &peers, &mut peers_table_state),
+                View::Peers => draw_peers(f, cols[1], &peers, &peer_latency, &mut peers_table_state),
                 View::Deployments => draw_placeholder(f, cols[1], "Deployments: no data yet"),
                 View::Topology => draw_placeholder(f, cols[1], "Topology: discovery via mDNS/bootstrap only"),
                 View::Logs => draw_logs(f, cols[1], &events),
@@ -259,16 +262,18 @@ fn draw_peers(
     f: &mut ratatui::Frame<'_>,
     area: Rect,
     peers: &BTreeMap<String, PeerRow>,
+    peer_latency: &BTreeMap<String, u128>,
     state: &mut TableState,
 ) {
-    let cols = ["Peer ID", "Agent", "Last heartbeat", "Tags"];
+    let cols = ["Peer ID", "Agent", "RTT(ms)", "Last hb", "Tags"];
     let header = ratatui::widgets::Row::new(cols.iter().map(|h| Line::from(*h).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))));
     let mut rows = Vec::new();
     for (id, p) in peers.iter() {
         let secs = p.last_msg_at.elapsed().as_secs();
-        rows.push(ratatui::widgets::Row::new(vec![id.clone(), p.agent_version.to_string(), format!("{}s", secs), p.roles.clone()]));
+        let rtt = peer_latency.get(id).cloned().unwrap_or_default();
+        rows.push(ratatui::widgets::Row::new(vec![id.clone(), p.agent_version.to_string(), rtt.to_string(), format!("{}s", secs), p.roles.clone()]));
     }
-    let table = Table::new(rows, [Constraint::Percentage(50), Constraint::Length(8), Constraint::Length(14), Constraint::Percentage(30)])
+    let table = Table::new(rows, [Constraint::Percentage(45), Constraint::Length(8), Constraint::Length(8), Constraint::Length(10), Constraint::Percentage(29)])
         .header(header)
         .block(Block::default().borders(Borders::ALL).title("Peers"))
         .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
