@@ -19,7 +19,7 @@ use common::Command;
 
 use crate::tui::draw::{
     draw_component_logs, draw_footer, draw_header_tabs, draw_logs, draw_overlay,
-    draw_overview, draw_peers, draw_placeholder, draw_topology, get_theme,
+    draw_overview, draw_peers, draw_placeholder, draw_topology, get_theme, draw_deployments,
 };
 use crate::tui::events::handle_event;
 use crate::tui::network::{new_swarm_tui, NodeBehaviourEvent};
@@ -271,7 +271,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     )
                 }
                 View::Peers => draw_peers(f, body, &app.peers, &app.peer_latency, &mut app.peers_table_state, &theme),
-                View::Deployments => draw_placeholder(f, body, "Application deployments and management will be available here. Use the Actions tab to deploy new components.", &theme),
+                View::Deployments => draw_deployments(f, body, &app.peers, &mut app.peers_table_state, &theme),
                 View::Topology => draw_topology(f, body, &app.topo, &theme),
                 View::Events => draw_logs(f, body, &app.events, app.log_filter.as_deref(), app.logs_paused, &theme),
                 View::Logs => draw_component_logs(f, body, &app.log_components, &mut app.logs_list_state, &app.log_lines, &theme),

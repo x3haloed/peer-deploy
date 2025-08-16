@@ -138,7 +138,7 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                                 _ => {
                                     let yes = input_val.to_lowercase();
                                     wiz.start = yes == "y" || yes == "yes" || yes.is_empty();
-                                    let target_peer: Option<String> = if app.view == View::Peers {
+                                    let target_peer: Option<String> = if matches!(app.view, View::Peers | View::Deployments) {
                                         app.peers_table_state
                                             .selected()
                                             .and_then(|idx| app.peers.keys().nth(idx).cloned())
