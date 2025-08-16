@@ -236,17 +236,6 @@ pub async fn run_tui() -> anyhow::Result<()> {
 
     // App state
     let mut view = View::Overview;
-    let mut nav_collapsed = false;
-    let mut selected_nav = 0usize;
-    let nav_items = [
-        "Overview",
-        "Peers",
-        "Deployments",
-        "Topology",
-        "Events",
-        "Logs",
-        "Ops",
-    ];
 
     let mut events: VecDeque<(Instant, String)> = VecDeque::with_capacity(EVENTS_CAP);
     let mut peers: BTreeMap<String, PeerRow> = BTreeMap::new();
@@ -354,7 +343,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 let input_val = buf.trim().to_string();
                                 if install_wizard == Some(InstallWizard::AgentPath) {
                                     if input_val.is_empty() {
-                                        overlay_msg = Some((Instant::now(), "file required".into()));
+                                        overlay_msg = Some((Instant::now(), "🚨 Error: File path required".into()));
                                         filter_input = Some(String::new());
                                         continue;
                                     }
@@ -363,15 +352,15 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                     #[cfg(unix)]
                                     tokio::spawn(async move {
                                         match crate::cmd::install(Some(path), false).await {
-                                            Ok(_) => { let _ = tx_evt.send(AppEvent::PublishError("install: agent done".into())); }
-                                            Err(e) => { let _ = tx_evt.send(AppEvent::PublishError(format!("install: agent {e}"))); }
+                                            Ok(_) => { let _ = tx_evt.send(AppEvent::PublishError("✅ Install: Agent installation completed".into())); }
+                                            Err(e) => { let _ = tx_evt.send(AppEvent::PublishError(format!("❌ Install: Agent failed - {e}"))); }
                                         }
                                     });
                                     #[cfg(not(unix))]
                                     {
-                                        let _ = tx.send(AppEvent::PublishError("install: unsupported".into()));
+                                        let _ = tx.send(AppEvent::PublishError("❌ Install: Unsupported platform".into()));
                                     }
-                                    overlay_msg = Some((Instant::now(), "install: agent sent".into()));
+                                    overlay_msg = Some((Instant::now(), "🚀 Install: Agent installation started".into()));
                                     install_wizard = None;
                                     filter_input = None;
                                     continue;
@@ -380,17 +369,17 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                     match wiz.step {
                                         0 => {
                                             if input_val.is_empty() {
-                                                overlay_msg = Some((Instant::now(), "file required".into()));
+                                                overlay_msg = Some((Instant::now(), "🚨 Error: File path required".into()));
                                                 filter_input = Some(String::new());
                                                 continue;
                                             }
-                                            wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "push: replicas (default 1)".into())); filter_input = Some(String::new());
+                                            wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "🔢 Deploy: Number of replicas (default: 1)".into())); filter_input = Some(String::new());
                                         }
-                                        1 => { if !input_val.is_empty() { wiz.replicas = input_val.parse().unwrap_or(1); } wiz.step = 2; overlay_msg = Some((Instant::now(), "push: memory_mb (default 64)".into())); filter_input = Some(String::new()); }
-                                        2 => { if !input_val.is_empty() { wiz.memory_max_mb = input_val.parse().unwrap_or(64); } wiz.step = 3; overlay_msg = Some((Instant::now(), "push: fuel (default 5000000)".into())); filter_input = Some(String::new()); }
-                                        3 => { if !input_val.is_empty() { wiz.fuel = input_val.parse().unwrap_or(5_000_000); } wiz.step = 4; overlay_msg = Some((Instant::now(), "push: epoch_ms (default 100)".into())); filter_input = Some(String::new()); }
-                                        4 => { if !input_val.is_empty() { wiz.epoch_ms = input_val.parse().unwrap_or(100); } wiz.step = 5; overlay_msg = Some((Instant::now(), "push: target tags (comma-separated, optional)".into())); filter_input = Some(String::new()); }
-                                        5 => { wiz.tags_csv = input_val; wiz.step = 6; overlay_msg = Some((Instant::now(), "push: start? (y/N)".into())); filter_input = Some(String::new()); }
+                                        1 => { if !input_val.is_empty() { wiz.replicas = input_val.parse().unwrap_or(1); } wiz.step = 2; overlay_msg = Some((Instant::now(), "💾 Deploy: Memory limit in MB (default: 64)".into())); filter_input = Some(String::new()); }
+                                        2 => { if !input_val.is_empty() { wiz.memory_max_mb = input_val.parse().unwrap_or(64); } wiz.step = 3; overlay_msg = Some((Instant::now(), "⛽ Deploy: Fuel limit (default: 5000000)".into())); filter_input = Some(String::new()); }
+                                        3 => { if !input_val.is_empty() { wiz.fuel = input_val.parse().unwrap_or(5_000_000); } wiz.step = 4; overlay_msg = Some((Instant::now(), "⏱️ Deploy: Epoch time in ms (default: 100)".into())); filter_input = Some(String::new()); }
+                                        4 => { if !input_val.is_empty() { wiz.epoch_ms = input_val.parse().unwrap_or(100); } wiz.step = 5; overlay_msg = Some((Instant::now(), "🏷️ Deploy: Target tags (comma-separated, optional)".into())); filter_input = Some(String::new()); }
+                                        5 => { wiz.tags_csv = input_val; wiz.step = 6; overlay_msg = Some((Instant::now(), "🚀 Deploy: Start immediately? (y/N)".into())); filter_input = Some(String::new()); }
                                         _ => {
                                             let yes = input_val.to_lowercase();
                                             wiz.start = yes == "y" || yes == "yes" || yes.is_empty();
@@ -457,13 +446,13 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                     match wiz.step {
                                         0 => {
                                             if input_val.is_empty() {
-                                                overlay_msg = Some((Instant::now(), "file required".into()));
+                                                overlay_msg = Some((Instant::now(), "🚨 Error: File path required".into()));
                                                 filter_input = Some(String::new());
                                                 continue;
                                             }
-                                            wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "upgrade: version (default 1)".into())); filter_input = Some(String::new());
+                                            wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "🔄 Upgrade: Version number (default: 1)".into())); filter_input = Some(String::new());
                                         }
-                                        1 => { if !input_val.is_empty() { wiz.version = input_val.parse().unwrap_or(1); } wiz.step = 2; overlay_msg = Some((Instant::now(), "upgrade: target tags (comma-separated, optional)".into())); filter_input = Some(String::new()); }
+                                        1 => { if !input_val.is_empty() { wiz.version = input_val.parse().unwrap_or(1); } wiz.step = 2; overlay_msg = Some((Instant::now(), "🏷️ Upgrade: Target tags (comma-separated, optional)".into())); filter_input = Some(String::new()); }
                                         _ => {
                                             wiz.tags_csv = input_val;
                                             let target_peer: Option<String> = if view == View::Peers { peers_table_state.selected().and_then(|idx| peers.keys().nth(idx).cloned()) } else { None };
@@ -573,12 +562,12 @@ pub async fn run_tui() -> anyhow::Result<()> {
                             }
                             KeyCode::Char('u') | KeyCode::Char('U') => {
                                 upgrade_wizard = Some(UpgradeWizard::default());
-                                overlay_msg = Some((Instant::now(), "upgrade: file path".into()));
+                                overlay_msg = Some((Instant::now(), "🔄 Upgrade: Enter agent binary path".into()));
                                 filter_input = Some(String::new());
                             }
                             KeyCode::Char('i') | KeyCode::Char('I') => {
                                 install_wizard = Some(InstallWizard::Choose);
-                                overlay_msg = Some((Instant::now(), "install: choose [c]li or [a]gent".into()));
+                                overlay_msg = Some((Instant::now(), "🔧 Install: Choose [C]LI tool or [A]gent binary".into()));
                                 push_wizard = None;
                                 upgrade_wizard = None;
                             }
@@ -593,7 +582,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 overlay_msg = Some((Instant::now(), "run".to_string()));
                             }
                             KeyCode::Char('/') => { filter_input = Some(String::new()); }
-                            KeyCode::Char('o') | KeyCode::Char('O') => { push_wizard = Some(PushWizard::default()); overlay_msg = Some((Instant::now(), "push: file path".into())); filter_input = Some(String::new()); }
+                            KeyCode::Char('d') | KeyCode::Char('D') => { push_wizard = Some(PushWizard::default()); overlay_msg = Some((Instant::now(), "🚀 Deploy: Enter file path".into())); filter_input = Some(String::new()); }
                             KeyCode::Char('p') => {
                                 logs_paused = !logs_paused;
                                 overlay_msg = Some((
@@ -602,26 +591,26 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 ));
                             }
                             KeyCode::Up | KeyCode::Char('k') => {
-                                if on_key(
-                                    key,
-                                    &mut view,
-                                    &mut nav_collapsed,
-                                    &mut selected_nav,
-                                    &mut peers_table_state,
-                                )? {
+                                if on_key(key, &mut view, &mut peers_table_state)? {
                                     break;
                                 }
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
-                                if on_key(
-                                    key,
-                                    &mut view,
-                                    &mut nav_collapsed,
-                                    &mut selected_nav,
-                                    &mut peers_table_state,
-                                )? {
+                                if on_key(key, &mut view, &mut peers_table_state)? {
                                     break;
                                 }
+                            }
+                            KeyCode::Tab => {
+                                // Tab navigation through views
+                                view = match view {
+                                    View::Overview => View::Peers,
+                                    View::Peers => View::Deployments,
+                                    View::Deployments => View::Topology,
+                                    View::Topology => View::Events,
+                                    View::Events => View::Logs,
+                                    View::Logs => View::Ops,
+                                    View::Ops => View::Overview,
+                                };
                             }
                             KeyCode::PageUp => {
                                 if view == View::Logs {
@@ -675,25 +664,19 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                         }
                                         KeyCode::Char('a') | KeyCode::Char('A') => {
                                             install_wizard = Some(InstallWizard::AgentPath);
-                                            overlay_msg = Some((Instant::now(), "install agent: file path".into()));
+                                            overlay_msg = Some((Instant::now(), "🔧 Install Agent: Enter binary file path".into()));
                                             filter_input = Some(String::new());
                                             break;
                                         }
                                         KeyCode::Esc => {
                                             install_wizard = None;
-                                            overlay_msg = Some((Instant::now(), "install: canceled".into()));
+                                            overlay_msg = Some((Instant::now(), "❌ Install: Canceled".into()));
                                             break;
                                         }
                                         _ => {}
                                     }
                                 }
-                                if on_key(
-                                    key,
-                                    &mut view,
-                                    &mut nav_collapsed,
-                                    &mut selected_nav,
-                                    &mut peers_table_state,
-                                )? {
+                                if on_key(key, &mut view, &mut peers_table_state)? {
                                     break;
                                 }
                             }
@@ -866,32 +849,19 @@ pub async fn run_tui() -> anyhow::Result<()> {
         // draw
         terminal.draw(|f| {
             let area = f.size();
-            let (top_h, footer_h) = (1, 1);
+            let (header_h, footer_h) = (2, 2);  // Header now has 2 lines, footer has 2 for better spacing
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(top_h),
+                    Constraint::Length(header_h),
                     Constraint::Min(1),
                     Constraint::Length(footer_h),
                 ])
                 .split(area);
 
-            draw_top(f, chunks[0], &view, peers.len(), link_count, &local_peer_id);
+            draw_header_tabs(f, chunks[0], &view, peers.len(), link_count, &local_peer_id);
 
             let body = chunks[1];
-            let left_w = if nav_collapsed || body.width < 60 {
-                0
-            } else {
-                18
-            };
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(left_w), Constraint::Min(1)])
-                .split(body);
-
-            if left_w > 0 {
-                draw_nav(f, cols[0], &nav_items, selected_nav);
-            }
 
             match view {
                 View::Overview => {
@@ -906,7 +876,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     );
                     draw_overview(
                         f,
-                        cols[1],
+                        body,
                         &cpu_hist,
                         &mem_hist,
                         &msg_hist,
@@ -922,20 +892,20 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     )
                 }
                 View::Peers => {
-                    draw_peers(f, cols[1], &peers, &peer_latency, &mut peers_table_state)
+                    draw_peers(f, body, &peers, &peer_latency, &mut peers_table_state)
                 }
-                View::Deployments => draw_placeholder(f, cols[1], "Deployments: no data yet"),
-                View::Topology => draw_topology(f, cols[1], &topo),
-                View::Events => draw_logs(f, cols[1], &events, log_filter.as_deref(), logs_paused),
+                View::Deployments => draw_placeholder(f, body, "Application deployments and management will be available here. Use the Actions tab to deploy new components."),
+                View::Topology => draw_topology(f, body, &topo),
+                View::Events => draw_logs(f, body, &events, log_filter.as_deref(), logs_paused),
                 View::Logs => draw_component_logs(
                     f,
-                    cols[1],
+                    body,
                     &log_components,
                     &mut logs_list_state,
                     &log_lines,
                 ),
                 View::Ops => {
-                    draw_placeholder(f, cols[1], "Ops: use keybinds A/U/W to perform actions")
+                    draw_placeholder(f, body, "⚙️ Actions Panel\n\nUse keyboard shortcuts to perform operations:\n• A - Apply manifest\n• D - Deploy component\n• U - Upgrade agent\n• I - Install tools")
                 }
             }
 
@@ -956,9 +926,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
 fn on_key(
     key: KeyEvent,
     view: &mut View,
-    nav_collapsed: &mut bool,
-    selected_nav: &mut usize,
-    _peers_table_state: &mut TableState,
+    peers_table_state: &mut TableState,
 ) -> anyhow::Result<bool> {
     match key.code {
         KeyCode::Char('q') => {
@@ -968,64 +936,42 @@ fn on_key(
             execute!(stdout, LeaveAlternateScreen)?;
             return Ok(true);
         }
-        KeyCode::Char('c') => {
-            *nav_collapsed = !*nav_collapsed;
-        }
         KeyCode::Char('1') => {
             *view = View::Overview;
-            *selected_nav = 0;
         }
         KeyCode::Char('2') => {
             *view = View::Peers;
-            *selected_nav = 1;
         }
         KeyCode::Char('3') => {
             *view = View::Deployments;
-            *selected_nav = 2;
         }
         KeyCode::Char('4') => {
             *view = View::Topology;
-            *selected_nav = 3;
         }
         KeyCode::Char('5') => {
             *view = View::Events;
-            *selected_nav = 4;
         }
         KeyCode::Char('6') => {
             *view = View::Logs;
-            *selected_nav = 5;
         }
         KeyCode::Char('7') => {
             *view = View::Ops;
-            *selected_nav = 6;
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if *selected_nav > 0 {
-                *selected_nav -= 1;
+            // Navigation within views (e.g., table selection)
+            if *view == View::Peers {
+                let current = peers_table_state.selected().unwrap_or(0);
+                if current > 0 {
+                    peers_table_state.select(Some(current - 1));
+                }
             }
-            *view = match *selected_nav {
-                0 => View::Overview,
-                1 => View::Peers,
-                2 => View::Deployments,
-                3 => View::Topology,
-                4 => View::Events,
-                5 => View::Logs,
-                _ => View::Ops,
-            };
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if *selected_nav < 6 {
-                *selected_nav += 1;
+            // Navigation within views (e.g., table selection)
+            if *view == View::Peers {
+                let current = peers_table_state.selected().unwrap_or(0);
+                peers_table_state.select(Some(current + 1));
             }
-            *view = match *selected_nav {
-                0 => View::Overview,
-                1 => View::Peers,
-                2 => View::Deployments,
-                3 => View::Topology,
-                4 => View::Events,
-                5 => View::Logs,
-                _ => View::Ops,
-            };
         }
         _ => {}
     }
