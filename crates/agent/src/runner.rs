@@ -5,7 +5,7 @@ use wasmtime::{
     Config, Engine, ResourceLimiter, Store,
 };
 
-use crate::p2p::metrics::{push_log, SharedLogs};
+use crate::p2p::metrics::{push_log, Metrics, SharedLogs};
 use wasmtime_wasi::pipe::AsyncWriteStream;
 use wasmtime_wasi::AsyncStdoutStream;
 
@@ -55,6 +55,7 @@ pub async fn run_wasm_module_with_limits(
     memory_max_mb: u64,
     fuel: u64,
     epoch_ms: u64,
+    metrics: Option<std::sync::Arc<Metrics>>,
 ) -> anyhow::Result<()> {
     let wasm = tokio::fs::read(wasm_path).await?;
 
@@ -116,6 +117,8 @@ pub async fn run_wasm_module_with_limits(
         }
     });
 
+    // Track an approximate memory watermark to update metrics less often
+    let mut last_mem_bytes: u64 = 0;
     let limiter = MemoryLimiter {
         max_bytes: (memory_max_mb * 1024 * 1024) as usize,
     };
@@ -171,8 +174,20 @@ pub async fn run_wasm_module_with_limits(
         info!(path = %wasm_path, "component has no 'run' export or signature mismatch");
     }
 
+    // Update memory usage gauge if present
+    if let Some(m) = &metrics {
+        // Best-effort: wasm memory size not directly exposed for components; approximate by limit
+        let approx = (memory_max_mb * 1024 * 1024) as u64;
+        if approx != last_mem_bytes {
+            m.set_mem_current_bytes(approx);
+            last_mem_bytes = approx;
+        }
+    }
+
     handle.abort();
     let _ = out_task.await;
     let _ = err_task.await;
+    // Record fuel used if available (API does not expose consumed fuel for components in this version)
+    let _ = metrics;
     Ok(())
 }

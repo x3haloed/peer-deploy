@@ -116,6 +116,7 @@ pub async fn run_agent(
     if let Some(path) = wasm_path.clone() {
         let tx0 = tx.clone();
         let logs0 = logs.clone();
+        let metrics0 = metrics.clone();
         tokio::spawn(async move {
             push_log(&logs0, "adhoc", format!("starting run {path}")).await;
             let res = run_wasm_module_with_limits(
@@ -125,6 +126,7 @@ pub async fn run_agent(
                 memory_max_mb,
                 fuel,
                 epoch_ms,
+                Some(metrics0.clone()),
             )
             .await
             .map(|_| format!("run ok: {path}"))
@@ -152,6 +154,9 @@ pub async fn run_agent(
     ));
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
+    // track msgs per second by counting status publishes
+    let mut last_publish_count: u64 = 0;
+    let mut last_sample_time = std::time::Instant::now();
 
     loop {
         tokio::select! {
@@ -192,6 +197,7 @@ pub async fn run_agent(
                     metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
                 } else {
                     metrics.status_published_total.fetch_add(1, Ordering::Relaxed);
+                    last_publish_count = last_publish_count.saturating_add(1);
                 }
             }
             _ = interval.tick() => {
@@ -202,6 +208,14 @@ pub async fn run_agent(
                     let mem = if s.total_memory() == 0 { 0 } else { ((s.used_memory() as f64 / s.total_memory() as f64) * 100.0) as u64 };
                     (cpu, mem)
                 };
+                // sample msgs/s
+                let elapsed = last_sample_time.elapsed().as_secs_f64();
+                if elapsed > 0.0 {
+                    let rate = (last_publish_count as f64 / elapsed) as u64;
+                    metrics.set_msgs_per_sec(rate);
+                    last_publish_count = 0;
+                    last_sample_time = std::time::Instant::now();
+                }
                 let status = Status {
                     node_id: local_peer_id.to_string(),
                     msg: "alive".into(),
@@ -218,6 +232,7 @@ pub async fn run_agent(
                     metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
                 } else {
                     metrics.status_published_total.fetch_add(1, Ordering::Relaxed);
+                    last_publish_count = last_publish_count.saturating_add(1);
                 }
             }
             event = swarm.select_next_some() => {
@@ -266,9 +281,10 @@ pub async fn run_agent(
                                     Command::Run { wasm_path, memory_max_mb, fuel, epoch_ms } => {
                                         let tx1 = tx.clone();
                                         let logs1 = logs.clone();
+                                        let m_run = metrics.clone();
                                         tokio::spawn(async move {
                                             push_log(&logs1, "adhoc", format!("starting run {wasm_path}")).await;
-                                            let res = run_wasm_module_with_limits(&wasm_path, "adhoc", logs1.clone(), memory_max_mb, fuel, epoch_ms).await
+                                            let res = run_wasm_module_with_limits(&wasm_path, "adhoc", logs1.clone(), memory_max_mb, fuel, epoch_ms, Some(m_run.clone())).await
                                                 .map(|_| format!("run ok: {wasm_path}"))
                                                 .map_err(|e| format!("run error: {e}"));
                                             match &res {

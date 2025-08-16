@@ -103,7 +103,7 @@ impl Metrics {
 
     pub fn set_mem_current_bytes(&self, current: u64) {
         self.mem_current_bytes.store(current, Ordering::Relaxed);
-        let mut peak = self.mem_peak_bytes.load(Ordering::Relaxed);
+        let peak = self.mem_peak_bytes.load(Ordering::Relaxed);
         if current > peak {
             // Single-threaded relax update sufficient for a gauge
             self.mem_peak_bytes.store(current, Ordering::Relaxed);
