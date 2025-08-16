@@ -77,7 +77,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
         Tick,
         Key(KeyEvent),
         Gossip(Status),
-        Connected,
+        Connected(usize),
         Ping(PeerId, Duration),
         PublishError(String),
         MdnsDiscovered(Vec<(PeerId, Multiaddr)>),
@@ -89,6 +89,8 @@ pub async fn run_tui() -> anyhow::Result<()> {
     }
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
+    // dial channel to avoid moving swarm out of task
+    let (dial_tx, mut dial_rx) = mpsc::unbounded_channel::<Multiaddr>();
 
     // Tick task
     let tx_tick = tx.clone();
@@ -154,8 +156,8 @@ pub async fn run_tui() -> anyhow::Result<()> {
                             }
                         }
                         SwarmEvent::NewListenAddr { .. } => {}
-                        SwarmEvent::ConnectionEstablished { .. } => { connected = connected.saturating_add(1); let _ = tx_swarm.send(AppEvent::Connected); }
-                        SwarmEvent::ConnectionClosed { .. } => { connected = connected.saturating_sub(1); let _ = tx_swarm.send(AppEvent::Connected); }
+                        SwarmEvent::ConnectionEstablished { .. } => { connected = connected.saturating_add(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
+                        SwarmEvent::ConnectionClosed { .. } => { connected = connected.saturating_sub(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
                         SwarmEvent::Behaviour(NodeBehaviourEvent::Ping(ev)) => {
                             if let Ok(rtt) = ev.result { let _ = tx_swarm.send(AppEvent::Ping(ev.peer, rtt)); }
                         }
@@ -176,6 +178,9 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     {
                         let _ = tx_swarm.send(AppEvent::PublishError(format!("publish error: {e}")));
                     }
+                }
+                Some(addr) = dial_rx.recv() => {
+                    let _ = libp2p::Swarm::dial(&mut swarm, addr);
                 }
             }
         }
@@ -221,6 +226,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
     let mut logs_list_state = ListState::default();
     logs_list_state.select(Some(0));
     let selected_component = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+    let mut link_count: usize = 0;
 
     // background fetchers for metrics and logs
     {
@@ -296,11 +302,43 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 filter_input = None;
                             }
                             KeyCode::Enter => {
-                                log_filter = if buf.is_empty() {
-                                    None
+                                // If filter_input starts with "+", treat as bootstrap dial entry
+                                if buf.starts_with('+') {
+                                    let addr = buf.trim_start_matches('+').trim().to_string();
+                                    if let Ok(ma) = addr.parse::<Multiaddr>() {
+                                        let _ = dial_tx.send(ma.clone());
+                                        events.push_front((Instant::now(), format!("dialing {ma}")));
+                                        // Persist into agent bootstrap.json for future runs
+                                        tokio::spawn(async move {
+                                            if let Some(mut base) = dirs::data_dir() {
+                                                base.push("realm-agent");
+                                                let _ = tokio::fs::create_dir_all(&base).await;
+                                                base.push("bootstrap.json");
+                                                let mut list: Vec<String> = Vec::new();
+                                                if let Ok(bytes) = tokio::fs::read(&base).await {
+                                                    if let Ok(existing) = serde_json::from_slice::<Vec<String>>(&bytes) {
+                                                        list = existing;
+                                                    }
+                                                }
+                                                let s = addr;
+                                                if !list.iter().any(|x| x == &s) {
+                                                    list.push(s);
+                                                    if let Ok(out) = serde_json::to_vec_pretty(&list) {
+                                                        let _ = tokio::fs::write(&base, out).await;
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    } else {
+                                        events.push_front((Instant::now(), format!("bad multiaddr: {addr}")));
+                                    }
                                 } else {
-                                    Some(buf.clone())
-                                };
+                                    log_filter = if buf.is_empty() {
+                                        None
+                                    } else {
+                                        Some(buf.clone())
+                                    };
+                                }
                                 filter_input = None;
                             }
                             KeyCode::Char(c) => {
@@ -451,7 +489,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     last_msg_count += 1;
                 }
                 AppEvent::Tick => {}
-                AppEvent::Connected => {}
+                AppEvent::Connected(n) => { link_count = n; }
                 AppEvent::Ping(peer, rtt) => {
                     peer_latency.insert(peer.to_string(), rtt.as_millis());
                     peers
@@ -599,7 +637,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 ])
                 .split(area);
 
-            draw_top(f, chunks[0], &view, peers.len(), &local_peer_id);
+            draw_top(f, chunks[0], &view, peers.len(), link_count, &local_peer_id);
 
             let body = chunks[1];
             let left_w = if nav_collapsed || body.width < 60 {

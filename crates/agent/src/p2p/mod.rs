@@ -16,6 +16,7 @@ use crate::runner::run_wasm_module_with_limits;
 use common::{
     deserialize_message, serialize_message, Command, Status, REALM_CMD_TOPIC, REALM_STATUS_TOPIC,
 };
+use state::{load_bootstrap_addrs, load_state};
 
 mod handlers;
 pub mod metrics;
@@ -23,7 +24,6 @@ mod state;
 
 use handlers::{handle_apply_manifest, handle_upgrade};
 use metrics::{push_log, serve_metrics, Metrics, SharedLogs};
-use state::load_state;
 use crate::supervisor::Supervisor;
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
@@ -57,6 +57,7 @@ pub async fn run_agent(
     memory_max_mb: u64,
     fuel: u64,
     epoch_ms: u64,
+    roles: Vec<String>,
 ) -> anyhow::Result<()> {
     let metrics = Arc::new(Metrics::new());
     let logs: SharedLogs =
@@ -88,10 +89,16 @@ pub async fn run_agent(
 
     let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer_id)?;
 
-    let identify = identify::Behaviour::new(identify::Config::new(
-        "peer-deploy/0.1".into(),
-        id_keys.public(),
-    ));
+    // Advertise agent version and roles via identify
+    let boot = load_state();
+    let mut id_cfg = identify::Config::new("peer-deploy/0.1".into(), id_keys.public());
+    let roles_str = if roles.is_empty() {
+        String::new()
+    } else {
+        format!(" roles={}", roles.join(","))
+    };
+    id_cfg.agent_version = format!("realm-agent v{}{}", boot.agent_version, roles_str);
+    let identify = identify::Behaviour::new(id_cfg);
 
     let behaviour = NodeBehaviour {
         gossipsub,
@@ -109,6 +116,12 @@ pub async fn run_agent(
 
     let listen_addr: Multiaddr = "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap();
     Swarm::listen_on(&mut swarm, listen_addr)?;
+    // Dial configured bootstrap peers
+    for addr in load_bootstrap_addrs().into_iter() {
+        if let Ok(ma) = addr.parse::<Multiaddr>() {
+            let _ = libp2p::Swarm::dial(&mut swarm, ma);
+        }
+    }
 
     // channel for run results to publish status from the main loop
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<String, String>>();
@@ -201,7 +214,7 @@ pub async fn run_agent(
                     components_running: metrics.components_running.load(Ordering::Relaxed),
                     cpu_percent,
                     mem_percent,
-                    tags: vec![],
+                    tags: roles.clone(),
                     drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                 };
                 if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
@@ -240,7 +253,7 @@ pub async fn run_agent(
                     components_running: metrics.components_running.load(Ordering::Relaxed),
                     cpu_percent,
                     mem_percent,
-                    tags: vec![],
+                    tags: roles.clone(),
                     drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                 };
                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
@@ -285,7 +298,7 @@ pub async fn run_agent(
                                             components_running: metrics.components_running.load(Ordering::Relaxed),
                                             cpu_percent,
                                             mem_percent,
-                                            tags: vec![],
+                                            tags: roles.clone(),
                                             drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                                         };
                                         if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
@@ -344,7 +357,7 @@ pub async fn run_agent(
                                             components_running: metrics.components_running.load(Ordering::Relaxed),
                                             cpu_percent,
                                             mem_percent,
-                                            tags: vec![],
+                                            tags: roles.clone(),
                                             drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                                         };
                                         if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {

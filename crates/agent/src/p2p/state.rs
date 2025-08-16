@@ -20,6 +20,10 @@ fn desired_manifest_path() -> PathBuf {
     agent_data_dir().join("desired_manifest.toml")
 }
 
+fn bootstrap_path() -> PathBuf {
+    agent_data_dir().join("bootstrap.json")
+}
+
 pub fn load_trusted_owner() -> Option<String> {
     fs::read_to_string(trusted_owner_path())
         .ok()
@@ -67,5 +71,15 @@ pub fn save_desired_manifest(toml: &str) {
 /// Load desired manifest TOML if present.
 pub fn load_desired_manifest() -> Option<String> {
     fs::read_to_string(desired_manifest_path()).ok()
+}
+
+/// Load bootstrap multiaddrs if present.
+pub fn load_bootstrap_addrs() -> Vec<String> {
+    if let Ok(bytes) = fs::read(bootstrap_path()) {
+        if let Ok(list) = serde_json::from_slice::<Vec<String>>(&bytes) {
+            return list;
+        }
+    }
+    Vec::new()
 }
 

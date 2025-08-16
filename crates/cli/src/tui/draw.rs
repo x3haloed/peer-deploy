@@ -18,11 +18,12 @@ pub fn draw_top(
     area: Rect,
     view: &View,
     peer_count: usize,
+    link_count: usize,
     local_peer_id: &PeerId,
 ) {
     let time = chrono::Local::now().format("%H:%M:%S");
     let title = format!(
-        " realm | {} | peers:{} | {} | {} ",
+        " realm | {} | peers:{} | links:{} | {} | {} ",
         match view {
             View::Overview => "overview",
             View::Peers => "peers",
@@ -33,6 +34,7 @@ pub fn draw_top(
             View::Ops => "ops",
         },
         peer_count,
+        link_count,
         local_peer_id,
         time
     );
@@ -67,7 +69,7 @@ pub fn draw_nav(f: &mut ratatui::Frame<'_>, area: Rect, items: &[&str], selected
 
 pub fn draw_footer(f: &mut ratatui::Frame<'_>, area: Rect) {
     let help =
-        "q quit  ↑/↓ or j/k tabs  1..7 jump  c collapse  A apply  U upgrade  W run  / filter  p pause";
+        "q quit  ↑/↓ or j/k tabs  1..7 jump  c collapse  A apply  U upgrade  W run  / filter (+addr to dial)  p pause";
     let p = Paragraph::new(Line::from(help))
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray));

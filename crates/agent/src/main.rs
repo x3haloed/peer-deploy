@@ -22,6 +22,10 @@ struct Args {
     /// Epoch deadline interval in milliseconds
     #[arg(long, default_value_t = 100)]
     epoch_ms: u64,
+
+    /// Roles/tags this agent advertises (repeat flag for multiple)
+    #[arg(long = "role")]
+    roles: Vec<String>,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -34,5 +38,12 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    p2p::run_agent(args.wasm, args.memory_max_mb, args.fuel, args.epoch_ms).await
+    p2p::run_agent(
+        args.wasm,
+        args.memory_max_mb,
+        args.fuel,
+        args.epoch_ms,
+        args.roles,
+    )
+    .await
 }
