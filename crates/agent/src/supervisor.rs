@@ -95,6 +95,7 @@ impl Supervisor {
             if let Err(e) = &res { warn!(component=%name_run, error=%e, "replica crashed"); }
             // restart on crash by decrementing and letting next reconcile add back
             metrics.dec_components_running();
+            metrics.inc_restarts_total();
             count.fetch_sub(1, Ordering::Relaxed);
         });
         info!(component=%name, "replica started");

@@ -84,6 +84,11 @@ pub fn draw_overview(
     events: &VecDeque<(Instant, String)>,
     components_desired_total: u64,
     components_running_total: u64,
+    restarts_total: u64,
+    publish_errors_total: u64,
+    fuel_used_total: u64,
+    mem_current_bytes: u64,
+    mem_peak_bytes: u64,
 ) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -102,6 +107,7 @@ pub fn draw_overview(
             Constraint::Length(18),
             Constraint::Length(18),
             Constraint::Length(26),
+            Constraint::Length(34),
             Constraint::Min(1),
         ])
         .split(rows[0]);
@@ -147,6 +153,17 @@ pub fn draw_overview(
     .style(tile_style)
     .block(Block::default().borders(Borders::ALL).title("Components"));
     f.render_widget(comps, tiles[4]);
+
+    // Stats tile: restarts, publish errors, fuel, mem
+    let mem_cur_mb = mem_current_bytes / (1024 * 1024);
+    let mem_peak_mb = mem_peak_bytes / (1024 * 1024);
+    let stats = Paragraph::new(format!(
+        "Restarts: {}  PubErr: {}\nFuel: {}  Mem: {} / {} MB",
+        restarts_total, publish_errors_total, fuel_used_total, mem_cur_mb, mem_peak_mb
+    ))
+    .style(tile_style)
+    .block(Block::default().borders(Borders::ALL).title("Stats"));
+    f.render_widget(stats, tiles[5]);
 
     let list_items: Vec<ListItem> = events
         .iter()

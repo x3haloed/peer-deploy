@@ -28,6 +28,14 @@ use draw::*;
 
 const EVENTS_CAP: usize = 500;
 
+thread_local! {
+    static LAST_RESTARTS: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    static LAST_PUBERR: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    static LAST_FUEL: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    static LAST_MEM_CUR: std::cell::Cell<u64> = std::cell::Cell::new(0);
+    static LAST_MEM_PEAK: std::cell::Cell<u64> = std::cell::Cell::new(0);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum View {
     Overview,
@@ -485,15 +493,36 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     }
                 }
                 AppEvent::Metrics(text) => {
-                    if !logs_paused {
-                        events.push_front((
-                            Instant::now(),
-                            format!("metrics updated ({} bytes)", text.len()),
-                        ));
-                        if events.len() > EVENTS_CAP {
-                            events.pop_back();
+                    // Parse a few gauges/counters for Overview
+                    fn parse_metric(text: &str, key: &str) -> Option<u64> {
+                        for line in text.lines() {
+                            if let Some(rest) = line.strip_prefix(key) {
+                                let v = rest.trim().split_whitespace().last()?;
+                                if let Ok(n) = v.parse::<u64>() { return Some(n); }
+                            }
                         }
+                        None
                     }
+                    let msgs = parse_metric(&text, "agent_msgs_per_sec").unwrap_or(0);
+                    let restarts = parse_metric(&text, "agent_restarts_total").unwrap_or(0);
+                    let puberr = parse_metric(&text, "agent_status_publish_errors_total").unwrap_or(0);
+                    let fuel = parse_metric(&text, "agent_fuel_used_total").unwrap_or(0);
+                    let mem_cur = parse_metric(&text, "agent_mem_current_bytes").unwrap_or(0);
+                    let mem_peak = parse_metric(&text, "agent_mem_peak_bytes").unwrap_or(0);
+                    // update sparkline and store latest for draw
+                    msg_hist.rotate_left(1);
+                    msg_hist[59] = msgs;
+                    // stash as a synthetic event to keep simple (could be stored in dedicated vars)
+                    if !logs_paused {
+                        events.push_front((Instant::now(), format!("metrics msgs/s={msgs} restarts={restarts} puberr={puberr}")));
+                        if events.len() > EVENTS_CAP { events.pop_back(); }
+                    }
+                    // store latest in place via closures capturing outer mut refs
+                    LAST_RESTARTS.with(|c| c.set(restarts));
+                    LAST_PUBERR.with(|c| c.set(puberr));
+                    LAST_FUEL.with(|c| c.set(fuel));
+                    LAST_MEM_CUR.with(|c| c.set(mem_cur));
+                    LAST_MEM_PEAK.with(|c| c.set(mem_peak));
                 }
                 AppEvent::Logs(text) => {
                     if !logs_paused {
@@ -591,6 +620,13 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 View::Overview => {
                     let components_desired_total: u64 = peers.values().map(|p| p.desired_components).sum();
                     let components_running_total: u64 = peers.values().map(|p| p.running_components).sum();
+                    let (restarts_total, publish_errors_total, fuel_used_total, mem_current_bytes, mem_peak_bytes) = (
+                        LAST_RESTARTS.with(|c| c.get()),
+                        LAST_PUBERR.with(|c| c.get()),
+                        LAST_FUEL.with(|c| c.get()),
+                        LAST_MEM_CUR.with(|c| c.get()),
+                        LAST_MEM_PEAK.with(|c| c.get()),
+                    );
                     draw_overview(
                         f,
                         cols[1],
@@ -601,6 +637,11 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         &events,
                         components_desired_total,
                         components_running_total,
+                        restarts_total,
+                        publish_errors_total,
+                        fuel_used_total,
+                        mem_current_bytes,
+                        mem_peak_bytes,
                     )
                 }
                 View::Peers => {

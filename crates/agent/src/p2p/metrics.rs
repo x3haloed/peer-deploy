@@ -44,6 +44,11 @@ pub struct Metrics {
     pub manifest_version: AtomicU64,
     pub components_running: AtomicU64,
     pub components_desired: AtomicU64,
+    pub restarts_total: AtomicU64,
+    pub fuel_used_total: AtomicU64,
+    pub mem_current_bytes: AtomicU64,
+    pub mem_peak_bytes: AtomicU64,
+    pub msgs_per_sec: AtomicU64,
 }
 
 impl Metrics {
@@ -62,6 +67,11 @@ impl Metrics {
             manifest_version: AtomicU64::new(0),
             components_running: AtomicU64::new(0),
             components_desired: AtomicU64::new(0),
+            restarts_total: AtomicU64::new(0),
+            fuel_used_total: AtomicU64::new(0),
+            mem_current_bytes: AtomicU64::new(0),
+            mem_peak_bytes: AtomicU64::new(0),
+            msgs_per_sec: AtomicU64::new(0),
         }
     }
 
@@ -81,6 +91,27 @@ impl Metrics {
     }
     pub fn dec_components_running(&self) {
         self.components_running.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| Some(x.saturating_sub(1))).ok();
+    }
+
+    pub fn inc_restarts_total(&self) {
+        self.restarts_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn add_fuel_used(&self, used: u64) {
+        self.fuel_used_total.fetch_add(used, Ordering::Relaxed);
+    }
+
+    pub fn set_mem_current_bytes(&self, current: u64) {
+        self.mem_current_bytes.store(current, Ordering::Relaxed);
+        let mut peak = self.mem_peak_bytes.load(Ordering::Relaxed);
+        if current > peak {
+            // Single-threaded relax update sufficient for a gauge
+            self.mem_peak_bytes.store(current, Ordering::Relaxed);
+        }
+    }
+
+    pub fn set_msgs_per_sec(&self, rate: u64) {
+        self.msgs_per_sec.store(rate, Ordering::Relaxed);
     }
 
     pub fn render_prometheus(&self) -> String {
@@ -156,6 +187,32 @@ impl Metrics {
             .saturating_sub(self.components_running.load(Ordering::Relaxed));
         out.push_str("# TYPE components_drift gauge\n");
         out.push_str(&format!("components_drift {}\n", drift));
+
+        out.push_str("# TYPE agent_restarts_total counter\n");
+        out.push_str(&format!(
+            "agent_restarts_total {}\n",
+            self.restarts_total.load(Ordering::Relaxed)
+        ));
+        out.push_str("# TYPE agent_fuel_used_total counter\n");
+        out.push_str(&format!(
+            "agent_fuel_used_total {}\n",
+            self.fuel_used_total.load(Ordering::Relaxed)
+        ));
+        out.push_str("# TYPE agent_mem_current_bytes gauge\n");
+        out.push_str(&format!(
+            "agent_mem_current_bytes {}\n",
+            self.mem_current_bytes.load(Ordering::Relaxed)
+        ));
+        out.push_str("# TYPE agent_mem_peak_bytes gauge\n");
+        out.push_str(&format!(
+            "agent_mem_peak_bytes {}\n",
+            self.mem_peak_bytes.load(Ordering::Relaxed)
+        ));
+        out.push_str("# TYPE agent_msgs_per_sec gauge\n");
+        out.push_str(&format!(
+            "agent_msgs_per_sec {}\n",
+            self.msgs_per_sec.load(Ordering::Relaxed)
+        ));
         out
     }
 }
