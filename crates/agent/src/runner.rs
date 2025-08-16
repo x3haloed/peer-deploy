@@ -6,8 +6,10 @@ use wasmtime::{
 };
 
 use crate::p2p::metrics::{push_log, Metrics, SharedLogs};
+use common::MountSpec;
 use wasmtime_wasi::pipe::AsyncWriteStream;
 use wasmtime_wasi::AsyncStdoutStream;
+use wasmtime_wasi::{DirPerms, FilePerms};
 
 struct MemoryLimiter {
     max_bytes: usize,
@@ -56,6 +58,7 @@ pub async fn run_wasm_module_with_limits(
     fuel: u64,
     epoch_ms: u64,
     metrics: Option<std::sync::Arc<Metrics>>,
+    mounts: Option<Vec<MountSpec>>,
 ) -> anyhow::Result<()> {
     let wasm = tokio::fs::read(wasm_path).await?;
 
@@ -68,14 +71,30 @@ pub async fn run_wasm_module_with_limits(
 
     let (stdout_r, stdout_w) = duplex(1024);
     let (stderr_r, stderr_w) = duplex(1024);
-    let wasi = wasmtime_wasi::WasiCtxBuilder::new()
-        .stdout(AsyncStdoutStream::new(AsyncWriteStream::new(
-            1024, stdout_w,
-        )))
-        .stderr(AsyncStdoutStream::new(AsyncWriteStream::new(
-            1024, stderr_w,
-        )))
-        .build();
+    let mut builder = wasmtime_wasi::WasiCtxBuilder::new();
+    builder.stdout(AsyncStdoutStream::new(AsyncWriteStream::new(1024, stdout_w)));
+    builder.stderr(AsyncStdoutStream::new(AsyncWriteStream::new(1024, stderr_w)));
+
+    // Preopen directories as requested in spec (best-effort; logs on failure)
+    if let Some(mounts) = mounts {
+        for m in mounts.into_iter() {
+            let (dperms, fperms) = if m.ro {
+                (DirPerms::READ, FilePerms::READ)
+            } else {
+                (DirPerms::READ | DirPerms::MUTATE, FilePerms::READ | FilePerms::WRITE)
+            };
+            match builder.preopened_dir(&m.host, m.guest.as_str(), dperms, fperms) {
+                Ok(_) => {
+                    if m.ro { push_log(&logs, component_name, format!("mounted {} -> {} (ro)", m.host, m.guest)).await; }
+                    else { push_log(&logs, component_name, format!("mounted {} -> {}", m.host, m.guest)).await; }
+                }
+                Err(e) => {
+                    push_log(&logs, component_name, format!("mount failed {} -> {}: {}", m.host, m.guest, e)).await;
+                }
+            }
+        }
+    }
+    let wasi = builder.build();
 
     // readers for stdout/stderr pushing into ring buffers
     let logs_out = logs.clone();

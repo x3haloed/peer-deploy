@@ -102,7 +102,7 @@ impl Supervisor {
         count.fetch_add(1, Ordering::Relaxed);
         let name_run = name.clone();
         tokio::spawn(async move {
-            let res = run_wasm_module_with_limits(&path, &name_run, logs.clone(), mem, fuel, epoch, Some(metrics.clone())).await;
+            let res = run_wasm_module_with_limits(&path, &name_run, logs.clone(), mem, fuel, epoch, Some(metrics.clone()), desired.spec.mounts.clone()).await;
             if let Err(e) = &res { warn!(component=%name_run, error=%e, "replica crashed"); }
             // restart on crash by decrementing and letting next reconcile add back
             metrics.dec_components_running();

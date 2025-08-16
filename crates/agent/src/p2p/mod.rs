@@ -141,6 +141,7 @@ pub async fn run_agent(
                 fuel,
                 epoch_ms,
                 Some(metrics0.clone()),
+                None,
             )
             .await
             .map(|_| format!("run ok: {path}"))
@@ -314,7 +315,7 @@ pub async fn run_agent(
                                         let m_run = metrics.clone();
                                         tokio::spawn(async move {
                                             push_log(&logs1, "adhoc", format!("starting run {wasm_path}")).await;
-                                            let res = run_wasm_module_with_limits(&wasm_path, "adhoc", logs1.clone(), memory_max_mb, fuel, epoch_ms, Some(m_run.clone())).await
+                                            let res = run_wasm_module_with_limits(&wasm_path, "adhoc", logs1.clone(), memory_max_mb, fuel, epoch_ms, Some(m_run.clone()), None).await
                                                 .map(|_| format!("run ok: {wasm_path}"))
                                                 .map_err(|e| format!("run error: {e}"));
                                             match &res {
@@ -424,6 +425,7 @@ pub async fn run_agent(
                                                                                     fuel: pkg.unsigned.fuel,
                                                                                     epoch_ms: pkg.unsigned.epoch_ms,
                                                                                     replicas: Some(pkg.unsigned.replicas),
+                                                                                    mounts: pkg.unsigned.mounts.clone(),
                                                                                 };
                                                                                 let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec };
                                                                                 supervisor.upsert_component(desired).await;

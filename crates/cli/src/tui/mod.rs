@@ -424,6 +424,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                                                         replicas,
                                                                         start: wiz.start,
                                                                         binary_sha256_hex: digest,
+                                                                        mounts: None,
                                                                     };
                                                                     if let Ok(unsigned_bytes) = serde_json::to_vec(&unsigned) {
                                                                         if let Ok(sig) = sign_bytes_ed25519(&kp.private_hex, &unsigned_bytes) {

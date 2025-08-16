@@ -62,6 +62,9 @@ enum Commands {
         fuel: u64,
         #[arg(long, default_value_t = 100)]
         epoch_ms: u64,
+        /// Preopen mounts (repeatable): host=/abs/path,guest=/www[,ro=true]
+        #[arg(long = "mount")]
+        mounts: Vec<String>,
         /// Target specific peers by PeerId (repeatable)
         #[arg(long = "peer")]
         target_peers: Vec<String>,
@@ -128,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Invite { bootstrap, realm_id, exp_mins } => cmd::invite(bootstrap, realm_id, exp_mins).await,
         Commands::Enroll { token, binary, system } => cmd::enroll(token, binary, system).await,
         Commands::Configure { owner, bootstrap } => cmd::configure(owner, bootstrap).await,
-        Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, target_peers, target_tags, start).await,
+        Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, target_peers, target_tags, start).await,
     }
 }
 

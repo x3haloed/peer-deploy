@@ -1,7 +1,7 @@
 use anyhow::Context;
 use base64::Engine;
 
-use common::{sha256_hex, sign_bytes_ed25519, serialize_message, Command, OwnerKeypair, PushPackage, PushUnsigned};
+use common::{sha256_hex, sign_bytes_ed25519, serialize_message, Command, OwnerKeypair, PushPackage, PushUnsigned, MountSpec};
 
 use super::util::{mdns_warmup, new_swarm, owner_dir};
 
@@ -12,6 +12,7 @@ pub async fn push(
     memory_max_mb: u64,
     fuel: u64,
     epoch_ms: u64,
+    mounts_cli: Vec<String>,
     target_peers: Vec<String>,
     target_tags: Vec<String>,
     start: bool,
@@ -33,6 +34,32 @@ pub async fn push(
     let bin = tokio::fs::read(&file).await.context("read wasm")?;
     let digest = sha256_hex(&bin);
 
+    // Parse mounts from CLI strings host=...,guest=...[,ro=true]
+    let mut mounts: Option<Vec<MountSpec>> = None;
+    if !mounts_cli.is_empty() {
+        let mut list = Vec::new();
+        for m in mounts_cli.iter() {
+            let mut host: Option<String> = None;
+            let mut guest: Option<String> = None;
+            let mut ro = false;
+            for part in m.split(',') {
+                let mut it = part.splitn(2, '=');
+                if let (Some(k), Some(v)) = (it.next(), it.next()) {
+                    match k.trim() {
+                        "host" => host = Some(v.trim().to_string()),
+                        "guest" => guest = Some(v.trim().to_string()),
+                        "ro" => ro = v.trim().eq_ignore_ascii_case("true"),
+                        _ => {}
+                    }
+                }
+            }
+            if let (Some(h), Some(g)) = (host, guest) {
+                list.push(MountSpec { host: h, guest: g, ro });
+            }
+        }
+        if !list.is_empty() { mounts = Some(list); }
+    }
+
     let unsigned = PushUnsigned {
         alg: "ed25519".into(),
         owner_pub_bs58: kp.public_bs58.clone(),
@@ -45,6 +72,7 @@ pub async fn push(
         replicas,
         start,
         binary_sha256_hex: digest,
+        mounts,
     };
     let unsigned_bytes = serde_json::to_vec(&unsigned)?;
     let sig = sign_bytes_ed25519(&kp.private_hex, &unsigned_bytes)?;

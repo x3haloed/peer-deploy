@@ -100,6 +100,7 @@ pub struct PushUnsigned {
     pub replicas: u32,
     pub start: bool,                // start immediately
     pub binary_sha256_hex: String,  // digest of binary_b64
+    pub mounts: Option<Vec<MountSpec>>, // preopened directories for ad-hoc push
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +123,15 @@ pub struct ComponentSpec {
     pub fuel: Option<u64>,
     pub epoch_ms: Option<u64>,
     pub replicas: Option<u32>,
+    pub mounts: Option<Vec<MountSpec>>, // preopened directories
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MountSpec {
+    pub host: String,  // host directory path
+    pub guest: String, // guest path inside WASI sandbox (e.g., "/www")
+    #[serde(default)]
+    pub ro: bool,
 }
 
 pub fn sign_bytes_ed25519(private_hex: &str, data: &[u8]) -> anyhow::Result<Vec<u8>> {
