@@ -349,8 +349,7 @@ pub async fn run_agent(
                                             let tx3 = tx.clone();
                                             let logs3 = logs.clone();
                                             tokio::spawn(async move {
-                                                let _ = logs3; // placeholder to wire logs into upgrade path later
-                                                handle_upgrade(tx3, pkg).await;
+                                                handle_upgrade(tx3, pkg, logs3).await;
                                             });
                                         }
                                     }

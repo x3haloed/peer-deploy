@@ -347,7 +347,14 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 let input_val = buf.trim().to_string();
                                 if let Some(mut wiz) = push_wizard.clone() {
                                     match wiz.step {
-                                        0 => { wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "push: replicas (default 1)".into())); filter_input = Some(String::new()); }
+                                        0 => {
+                                            if input_val.is_empty() {
+                                                overlay_msg = Some((Instant::now(), "file required".into()));
+                                                filter_input = Some(String::new());
+                                                continue;
+                                            }
+                                            wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "push: replicas (default 1)".into())); filter_input = Some(String::new());
+                                        }
                                         1 => { if !input_val.is_empty() { wiz.replicas = input_val.parse().unwrap_or(1); } wiz.step = 2; overlay_msg = Some((Instant::now(), "push: memory_mb (default 64)".into())); filter_input = Some(String::new()); }
                                         2 => { if !input_val.is_empty() { wiz.memory_max_mb = input_val.parse().unwrap_or(64); } wiz.step = 3; overlay_msg = Some((Instant::now(), "push: fuel (default 5000000)".into())); filter_input = Some(String::new()); }
                                         3 => { if !input_val.is_empty() { wiz.fuel = input_val.parse().unwrap_or(5_000_000); } wiz.step = 4; overlay_msg = Some((Instant::now(), "push: epoch_ms (default 100)".into())); filter_input = Some(String::new()); }
@@ -409,13 +416,21 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                             overlay_msg = Some((Instant::now(), "push: sent".into()));
                                             push_wizard = None;
                                             filter_input = None;
+                                            continue;
                                         }
                                     }
                                     push_wizard = Some(wiz);
                                     continue;
                                 } else if let Some(mut wiz) = upgrade_wizard.clone() {
                                     match wiz.step {
-                                        0 => { wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "upgrade: version (default 1)".into())); filter_input = Some(String::new()); }
+                                        0 => {
+                                            if input_val.is_empty() {
+                                                overlay_msg = Some((Instant::now(), "file required".into()));
+                                                filter_input = Some(String::new());
+                                                continue;
+                                            }
+                                            wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "upgrade: version (default 1)".into())); filter_input = Some(String::new());
+                                        }
                                         1 => { if !input_val.is_empty() { wiz.version = input_val.parse().unwrap_or(1); } wiz.step = 2; overlay_msg = Some((Instant::now(), "upgrade: target tags (comma-separated, optional)".into())); filter_input = Some(String::new()); }
                                         _ => {
                                             wiz.tags_csv = input_val;
@@ -460,6 +475,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                             overlay_msg = Some((Instant::now(), "upgrade: sent".into()));
                                             upgrade_wizard = None;
                                             filter_input = None;
+                                            continue;
                                         }
                                     }
                                     upgrade_wizard = Some(wiz);
