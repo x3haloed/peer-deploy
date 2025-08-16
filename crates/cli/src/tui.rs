@@ -24,6 +24,8 @@ use common::{
     REALM_STATUS_TOPIC,
 };
 
+const EVENTS_CAP: usize = 500;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum View {
     Overview,
@@ -36,8 +38,8 @@ enum View {
 
 struct PeerRow {
     last_msg_at: Instant,
+    last_ping: Instant,
     agent_version: u64,
-    alias: String,
     roles: String,
 }
 
@@ -62,8 +64,9 @@ pub async fn run_tui() -> anyhow::Result<()> {
         Tick,
         Key(KeyEvent),
         Gossip(Status),
-        Connected(usize),
+        Connected,
         Ping(PeerId, Duration),
+        PublishError(String),
     }
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
@@ -108,10 +111,12 @@ pub async fn run_tui() -> anyhow::Result<()> {
             }
         }
 
-        let _ = swarm.behaviour_mut().gossipsub.publish(
+        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
             topic_cmd.clone(),
             common::serialize_message(&common::Command::StatusQuery),
-        );
+        ) {
+            let _ = tx_swarm.send(AppEvent::PublishError(format!("publish StatusQuery error: {}", e)));
+        }
 
         let mut connected = 0usize;
         loop {
@@ -128,8 +133,8 @@ pub async fn run_tui() -> anyhow::Result<()> {
                             }
                         }
                         SwarmEvent::NewListenAddr { .. } => {}
-                        SwarmEvent::ConnectionEstablished { .. } => { connected = connected.saturating_add(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
-                        SwarmEvent::ConnectionClosed { .. } => { connected = connected.saturating_sub(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
+                        SwarmEvent::ConnectionEstablished { .. } => { connected = connected.saturating_add(1); let _ = tx_swarm.send(AppEvent::Connected); }
+                        SwarmEvent::ConnectionClosed { .. } => { connected = connected.saturating_sub(1); let _ = tx_swarm.send(AppEvent::Connected); }
                         SwarmEvent::Behaviour(NodeBehaviourEvent::Ping(ev)) => {
                             if let Ok(rtt) = ev.result { let _ = tx_swarm.send(AppEvent::Ping(ev.peer, rtt)); }
                         }
@@ -137,10 +142,13 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     }
                 }
                 Some(cmd) = cmd_rx.recv() => {
-                    let _ = swarm
+                    if let Err(e) = swarm
                         .behaviour_mut()
                         .gossipsub
-                        .publish(topic_cmd.clone(), common::serialize_message(&cmd));
+                        .publish(topic_cmd.clone(), common::serialize_message(&cmd))
+                    {
+                        let _ = tx_swarm.send(AppEvent::PublishError(format!("publish error: {}", e)));
+                    }
                 }
             }
         }
@@ -159,7 +167,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
         "Ops",
     ];
 
-    let mut events: VecDeque<(Instant, String)> = VecDeque::with_capacity(512);
+    let mut events: VecDeque<(Instant, String)> = VecDeque::with_capacity(EVENTS_CAP);
     let mut peers: BTreeMap<String, PeerRow> = BTreeMap::new();
     let mut peers_table_state = TableState::default();
     let mut peer_latency: BTreeMap<String, u128> = BTreeMap::new();
@@ -273,22 +281,40 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         })
                         .or_insert(PeerRow {
                             last_msg_at: Instant::now(),
+                            last_ping: Instant::now(),
                             agent_version: 0,
-                            alias: String::new(),
                             roles: String::new(),
                         });
                     if !logs_paused {
                         events.push_front((Instant::now(), s.msg));
-                        if events.len() > 500 {
+                        if events.len() > EVENTS_CAP {
                             events.pop_back();
                         }
                     }
                     last_msg_count += 1;
                 }
                 AppEvent::Tick => {}
-                AppEvent::Connected(_) => {}
+                AppEvent::Connected => {}
                 AppEvent::Ping(peer, rtt) => {
                     peer_latency.insert(peer.to_string(), rtt.as_millis());
+                    peers
+                        .entry(peer.to_string())
+                        .and_modify(|p| p.last_ping = Instant::now())
+                        .or_insert(PeerRow {
+                            last_msg_at: Instant::now(),
+                            last_ping: Instant::now(),
+                            agent_version: 0,
+                            roles: String::new(),
+                        });
+                }
+                AppEvent::PublishError(msg) => {
+                    if !logs_paused {
+                        events.push_front((Instant::now(), msg.clone()));
+                        if events.len() > EVENTS_CAP {
+                            events.pop_back();
+                        }
+                    }
+                    overlay_msg = Some((Instant::now(), msg));
                 }
             }
         }
@@ -363,7 +389,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 View::Topology => {
                     draw_placeholder(f, cols[1], "Topology: discovery via mDNS/bootstrap only")
                 }
-                View::Logs => draw_logs(f, cols[1], &events, log_filter.as_deref()),
+                View::Logs => draw_logs(f, cols[1], &events, log_filter.as_deref(), logs_paused),
                 View::Ops => {
                     draw_placeholder(f, cols[1], "Ops: use keybinds A/U/W to perform actions")
                 }
@@ -436,7 +462,7 @@ fn draw_nav(f: &mut ratatui::Frame<'_>, area: Rect, items: &[&str], selected: us
 
 fn draw_footer(f: &mut ratatui::Frame<'_>, area: Rect) {
     let help =
-        "q quit  ↑/↓ or j/k tabs  1..6 jump  c collapse  A apply  U upgrade  W run  / filter";
+        "q quit  ↑/↓ or j/k tabs  1..6 jump  c collapse  A apply  U upgrade  W run  / filter  p pause";
     let p = Paragraph::new(Line::from(help))
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray));
@@ -524,7 +550,7 @@ fn draw_peers(
     peer_latency: &BTreeMap<String, u128>,
     state: &mut TableState,
 ) {
-    let cols = ["Peer ID", "Agent", "RTT(ms)", "Last hb", "Tags"];
+    let cols = ["Peer ID", "Agent", "RTT(ms)", "Last ping", "Tags"];
     let header = ratatui::widgets::Row::new(cols.iter().map(|h| {
         Line::from(*h).style(
             Style::default()
@@ -534,7 +560,7 @@ fn draw_peers(
     }));
     let mut rows = Vec::new();
     for (id, p) in peers.iter() {
-        let secs = p.last_msg_at.elapsed().as_secs();
+        let secs = p.last_ping.elapsed().as_secs();
         let rtt = peer_latency.get(id).cloned().unwrap_or_default();
         rows.push(ratatui::widgets::Row::new(vec![
             id.clone(),
@@ -565,13 +591,19 @@ fn draw_logs(
     area: Rect,
     events: &VecDeque<(Instant, String)>,
     filter: Option<&str>,
+    paused: bool,
 ) {
     let items: Vec<ListItem> = events
         .iter()
         .filter(|(_, s)| filter.map_or(true, |f| s.contains(f)))
         .map(|(t, s)| ListItem::new(format!("{:>4}s | {}", t.elapsed().as_secs(), s)))
         .collect();
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Logs"));
+    let title = if paused {
+        format!("Logs [PAUSED] ( {}/{} )", events.len(), EVENTS_CAP)
+    } else {
+        format!("Logs ( {}/{} )", events.len(), EVENTS_CAP)
+    };
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
     f.render_widget(list, area);
 }
 
