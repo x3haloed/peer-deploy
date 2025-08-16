@@ -18,9 +18,10 @@ use ratatui::{
 };
 use tokio::sync::mpsc;
 
+use base64::Engine;
 use common::{
-    deserialize_message, AgentUpgrade, Command, SignedManifest, Status, REALM_CMD_TOPIC,
-    REALM_STATUS_TOPIC,
+    deserialize_message, AgentUpgrade, Command, OwnerKeypair, PushPackage, PushUnsigned,
+    SignedManifest, Status, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, sha256_hex, sign_bytes_ed25519,
 };
 
 mod draw;
@@ -54,6 +55,33 @@ struct PeerRow {
     roles: String,
     desired_components: u64,
     running_components: u64,
+}
+
+#[derive(Clone, Debug)]
+struct PushWizard {
+    step: usize,
+    file: String,
+    replicas: u32,
+    memory_max_mb: u64,
+    fuel: u64,
+    epoch_ms: u64,
+    tags_csv: String,
+    start: bool,
+}
+
+impl Default for PushWizard {
+    fn default() -> Self {
+        Self {
+            step: 0,
+            file: String::new(),
+            replicas: 1,
+            memory_max_mb: 64,
+            fuel: 5_000_000,
+            epoch_ms: 100,
+            tags_csv: String::new(),
+            start: true,
+        }
+    }
 }
 
 pub async fn run_tui() -> anyhow::Result<()> {
@@ -227,6 +255,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
     logs_list_state.select(Some(0));
     let selected_component = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
     let mut link_count: usize = 0;
+    let mut push_wizard: Option<PushWizard> = None;
 
     // background fetchers for metrics and logs
     {
@@ -298,17 +327,84 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 AppEvent::Key(key) => {
                     if let Some(buf) = &mut filter_input {
                         match key.code {
-                            KeyCode::Esc => {
-                                filter_input = None;
-                            }
+                            KeyCode::Esc => { filter_input = None; push_wizard = None; }
                             KeyCode::Enter => {
-                                // If filter_input starts with "+", treat as bootstrap dial entry
+                                let input_val = buf.trim().to_string();
+                                if let Some(mut wiz) = push_wizard.clone() {
+                                    match wiz.step {
+                                        0 => { wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "push: replicas (default 1)".into())); filter_input = Some(String::new()); }
+                                        1 => { if !input_val.is_empty() { wiz.replicas = input_val.parse().unwrap_or(1); } wiz.step = 2; overlay_msg = Some((Instant::now(), "push: memory_mb (default 64)".into())); filter_input = Some(String::new()); }
+                                        2 => { if !input_val.is_empty() { wiz.memory_max_mb = input_val.parse().unwrap_or(64); } wiz.step = 3; overlay_msg = Some((Instant::now(), "push: fuel (default 5000000)".into())); filter_input = Some(String::new()); }
+                                        3 => { if !input_val.is_empty() { wiz.fuel = input_val.parse().unwrap_or(5_000_000); } wiz.step = 4; overlay_msg = Some((Instant::now(), "push: epoch_ms (default 100)".into())); filter_input = Some(String::new()); }
+                                        4 => { if !input_val.is_empty() { wiz.epoch_ms = input_val.parse().unwrap_or(100); } wiz.step = 5; overlay_msg = Some((Instant::now(), "push: target tags (comma-separated, optional)".into())); filter_input = Some(String::new()); }
+                                        5 => { wiz.tags_csv = input_val; wiz.step = 6; overlay_msg = Some((Instant::now(), "push: start? (y/N)".into())); filter_input = Some(String::new()); }
+                                        _ => {
+                                            let yes = input_val.to_lowercase();
+                                            wiz.start = yes == "y" || yes == "yes" || yes.is_empty();
+                                            // finalize send
+                                            let target_peer: Option<String> = if view == View::Peers { peers_table_state.selected().and_then(|idx| peers.keys().nth(idx).cloned()) } else { None };
+                                            let tx_pub = cmd_tx.clone();
+                                            let tx_evt = tx.clone();
+                                            let file = wiz.file.clone();
+                                            let replicas = wiz.replicas;
+                                            let mem = wiz.memory_max_mb;
+                                            let fuel = wiz.fuel;
+                                            let epoch = wiz.epoch_ms;
+                                            let tags: Vec<String> = wiz.tags_csv.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                                            tokio::spawn(async move {
+                                                let key_path = match dirs::config_dir() { Some(mut d) => { d.push("realm"); d.push("owner.key.json"); d }, None => { let _ = tx_evt.send(AppEvent::PublishError("push: owner dir missing".into())); return; } };
+                                                match tokio::fs::read(&key_path).await {
+                                                    Ok(bytes) => {
+                                                        if let Ok(kp) = serde_json::from_slice::<OwnerKeypair>(&bytes) {
+                                                            match tokio::fs::read(&file).await {
+                                                                Ok(bin) => {
+                                                                    let digest = sha256_hex(&bin);
+                                                                    let unsigned = PushUnsigned {
+                                                                        alg: "ed25519".into(),
+                                                                        owner_pub_bs58: kp.public_bs58.clone(),
+                                                                        component_name: std::path::Path::new(&file).file_stem().and_then(|s| s.to_str()).unwrap_or("component").to_string(),
+                                                                        target_peer_ids: target_peer.clone().into_iter().collect(),
+                                                                        target_tags: tags,
+                                                                        memory_max_mb: Some(mem),
+                                                                        fuel: Some(fuel),
+                                                                        epoch_ms: Some(epoch),
+                                                                        replicas,
+                                                                        start: wiz.start,
+                                                                        binary_sha256_hex: digest,
+                                                                    };
+                                                                    if let Ok(unsigned_bytes) = serde_json::to_vec(&unsigned) {
+                                                                        if let Ok(sig) = sign_bytes_ed25519(&kp.private_hex, &unsigned_bytes) {
+                                                                            let pkg = PushPackage {
+                                                                                unsigned,
+                                                                                binary_b64: base64::engine::general_purpose::STANDARD.encode(&bin),
+                                                                                signature_b64: base64::engine::general_purpose::STANDARD.encode(sig),
+                                                                            };
+                                                                            let _ = tx_pub.send(Command::PushComponent(pkg));
+                                                                            let _ = tx_evt.send(AppEvent::PublishError(format!("pushed to {}", target_peer.unwrap_or_else(|| "all".into()))));
+                                                                        }
+                                                                    }
+                                                                }
+                                                                Err(_) => { let _ = tx_evt.send(AppEvent::PublishError("push: read file failed".into())); }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(_) => { let _ = tx_evt.send(AppEvent::PublishError("push: owner key missing; run 'realm init'".into())); }
+                                                }
+                                            });
+                                            overlay_msg = Some((Instant::now(), "push: sent".into()));
+                                            push_wizard = None;
+                                            filter_input = None;
+                                        }
+                                    }
+                                    push_wizard = Some(wiz);
+                                    continue;
+                                }
+                                // original flows
                                 if buf.starts_with('+') {
                                     let addr = buf.trim_start_matches('+').trim().to_string();
                                     if let Ok(ma) = addr.parse::<Multiaddr>() {
                                         let _ = dial_tx.send(ma.clone());
                                         events.push_front((Instant::now(), format!("dialing {ma}")));
-                                        // Persist into agent bootstrap.json for future runs
                                         tokio::spawn(async move {
                                             if let Some(mut base) = dirs::data_dir() {
                                                 base.push("realm-agent");
@@ -333,20 +429,12 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                         events.push_front((Instant::now(), format!("bad multiaddr: {addr}")));
                                     }
                                 } else {
-                                    log_filter = if buf.is_empty() {
-                                        None
-                                    } else {
-                                        Some(buf.clone())
-                                    };
+                                    log_filter = if buf.is_empty() { None } else { Some(buf.clone()) };
                                 }
                                 filter_input = None;
                             }
-                            KeyCode::Char(c) => {
-                                buf.push(c);
-                            }
-                            KeyCode::Backspace => {
-                                buf.pop();
-                            }
+                            KeyCode::Char(c) => { buf.push(c); }
+                            KeyCode::Backspace => { buf.pop(); }
                             _ => {}
                         }
                     } else {
@@ -384,18 +472,13 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 let _ = cmd_tx.send(cmd);
                                 overlay_msg = Some((Instant::now(), "run".to_string()));
                             }
-                            KeyCode::Char('/') => {
-                                filter_input = Some(String::new());
-                            }
+                            KeyCode::Char('/') => { filter_input = Some(String::new()); }
+                            KeyCode::Char('P') => { push_wizard = Some(PushWizard::default()); overlay_msg = Some((Instant::now(), "push: file path".into())); filter_input = Some(String::new()); }
                             KeyCode::Char('p') => {
                                 logs_paused = !logs_paused;
                                 overlay_msg = Some((
                                     Instant::now(),
-                                    if logs_paused {
-                                        "logs paused".into()
-                                    } else {
-                                        "logs resumed".into()
-                                    },
+                                    if logs_paused { "logs paused".into() } else { "logs resumed".into() },
                                 ));
                             }
                             KeyCode::Up | KeyCode::Char('k') => {
