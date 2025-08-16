@@ -84,6 +84,20 @@ impl Default for PushWizard {
     }
 }
 
+#[derive(Clone, Debug)]
+struct UpgradeWizard {
+    step: usize,
+    file: String,
+    version: u64,
+    tags_csv: String,
+}
+
+impl Default for UpgradeWizard {
+    fn default() -> Self {
+        Self { step: 0, file: String::new(), version: 1, tags_csv: String::new() }
+    }
+}
+
 pub async fn run_tui() -> anyhow::Result<()> {
     // Terminal setup
     enable_raw_mode()?;
@@ -256,6 +270,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
     let selected_component = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
     let mut link_count: usize = 0;
     let mut push_wizard: Option<PushWizard> = None;
+    let mut upgrade_wizard: Option<UpgradeWizard> = None;
 
     // background fetchers for metrics and logs
     {
@@ -327,7 +342,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 AppEvent::Key(key) => {
                     if let Some(buf) = &mut filter_input {
                         match key.code {
-                            KeyCode::Esc => { filter_input = None; push_wizard = None; }
+                            KeyCode::Esc => { filter_input = None; push_wizard = None; upgrade_wizard = None; }
                             KeyCode::Enter => {
                                 let input_val = buf.trim().to_string();
                                 if let Some(mut wiz) = push_wizard.clone() {
@@ -398,6 +413,57 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                     }
                                     push_wizard = Some(wiz);
                                     continue;
+                                } else if let Some(mut wiz) = upgrade_wizard.clone() {
+                                    match wiz.step {
+                                        0 => { wiz.file = input_val; wiz.step = 1; overlay_msg = Some((Instant::now(), "upgrade: version (default 1)".into())); filter_input = Some(String::new()); }
+                                        1 => { if !input_val.is_empty() { wiz.version = input_val.parse().unwrap_or(1); } wiz.step = 2; overlay_msg = Some((Instant::now(), "upgrade: target tags (comma-separated, optional)".into())); filter_input = Some(String::new()); }
+                                        _ => {
+                                            wiz.tags_csv = input_val;
+                                            let target_peer: Option<String> = if view == View::Peers { peers_table_state.selected().and_then(|idx| peers.keys().nth(idx).cloned()) } else { None };
+                                            let tx_pub = cmd_tx.clone();
+                                            let tx_evt = tx.clone();
+                                            let file = wiz.file.clone();
+                                            let version = wiz.version;
+                                            let tags: Vec<String> = wiz.tags_csv.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                                            tokio::spawn(async move {
+                                                let key_path = match dirs::config_dir() { Some(mut d) => { d.push("realm"); d.push("owner.key.json"); d }, None => { let _ = tx_evt.send(AppEvent::PublishError("upgrade: owner dir missing".into())); return; } };
+                                                match tokio::fs::read(&key_path).await {
+                                                    Ok(bytes) => {
+                                                        if let Ok(kp) = serde_json::from_slice::<OwnerKeypair>(&bytes) {
+                                                            match tokio::fs::read(&file).await {
+                                                                Ok(bin_bytes) => {
+                                                                    let digest = sha256_hex(&bin_bytes);
+                                                                    let sig = match sign_bytes_ed25519(&kp.private_hex, &bin_bytes) {
+                                                                        Ok(s) => s,
+                                                                        Err(_) => { let _ = tx_evt.send(AppEvent::PublishError("upgrade: sign failed".into())); return; }
+                                                                    };
+                                                                    let pkg = AgentUpgrade {
+                                                                        alg: "ed25519".into(),
+                                                                        owner_pub_bs58: kp.public_bs58.clone(),
+                                                                        version,
+                                                                        target_peer_ids: target_peer.clone().into_iter().collect(),
+                                                                        target_tags: tags,
+                                                                        binary_sha256_hex: digest,
+                                                                        binary_b64: base64::engine::general_purpose::STANDARD.encode(&bin_bytes),
+                                                                        signature_b64: base64::engine::general_purpose::STANDARD.encode(sig),
+                                                                    };
+                                                                    let _ = tx_pub.send(Command::UpgradeAgent(pkg));
+                                                                    let _ = tx_evt.send(AppEvent::PublishError("upgrade: sent".into()));
+                                                                }
+                                                                Err(_) => { let _ = tx_evt.send(AppEvent::PublishError("upgrade: read file failed".into())); }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(_) => { let _ = tx_evt.send(AppEvent::PublishError("upgrade: owner key missing; run 'realm init'".into())); }
+                                                }
+                                            });
+                                            overlay_msg = Some((Instant::now(), "upgrade: sent".into()));
+                                            upgrade_wizard = None;
+                                            filter_input = None;
+                                        }
+                                    }
+                                    upgrade_wizard = Some(wiz);
+                                    continue;
                                 }
                                 // original flows
                                 if buf.starts_with('+') {
@@ -451,16 +517,29 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 overlay_msg = Some((Instant::now(), "apply manifest".to_string()));
                             }
                             KeyCode::Char('u') | KeyCode::Char('U') => {
-                                let cmd = Command::UpgradeAgent(AgentUpgrade {
-                                    alg: String::new(),
-                                    owner_pub_bs58: String::new(),
-                                    version: 0,
-                                    binary_sha256_hex: String::new(),
-                                    binary_b64: String::new(),
-                                    signature_b64: String::new(),
-                                });
-                                let _ = cmd_tx.send(cmd);
-                                overlay_msg = Some((Instant::now(), "upgrade agent".to_string()));
+                                upgrade_wizard = Some(UpgradeWizard::default());
+                                overlay_msg = Some((Instant::now(), "upgrade: file path".into()));
+                                filter_input = Some(String::new());
+                            }
+                            KeyCode::Char('i') | KeyCode::Char('I') => {
+                                #[cfg(unix)]
+                                {
+                                    let tx_evt = tx.clone();
+                                    tokio::spawn(async move {
+                                        let bin = std::env::current_exe()
+                                            .unwrap_or_else(|_| std::path::PathBuf::from("realm-agent"))
+                                            .display()
+                                            .to_string();
+                                        match crate::cmd::install(Some(bin), false).await {
+                                            Ok(_) => { let _ = tx_evt.send(AppEvent::PublishError("install: done".into())); }
+                                            Err(e) => { let _ = tx_evt.send(AppEvent::PublishError(format!("install: {e}"))); }
+                                        }
+                                    });
+                                }
+                                #[cfg(not(unix))]
+                                {
+                                    let _ = tx.send(AppEvent::PublishError("install: unsupported".into()));
+                                }
                             }
                             KeyCode::Char('w') | KeyCode::Char('W') => {
                                 let cmd = Command::Run {

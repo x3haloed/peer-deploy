@@ -7,7 +7,12 @@ use common::{serialize_message, Command, OwnerKeypair, AgentUpgrade, sign_bytes_
 
 use super::util::{new_swarm, mdns_warmup, owner_dir};
 
-pub async fn upgrade(file: String, version: u64) -> anyhow::Result<()> {
+pub async fn upgrade(
+    file: String,
+    version: u64,
+    target_peers: Vec<String>,
+    target_tags: Vec<String>,
+) -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap())?;
 
@@ -26,6 +31,8 @@ pub async fn upgrade(file: String, version: u64) -> anyhow::Result<()> {
         alg: "ed25519".into(),
         owner_pub_bs58: kp.public_bs58.clone(),
         version,
+        target_peer_ids: target_peers,
+        target_tags,
         binary_sha256_hex: digest,
         binary_b64: base64::engine::general_purpose::STANDARD.encode(&bin_bytes),
         signature_b64: base64::engine::general_purpose::STANDARD.encode(sig),
