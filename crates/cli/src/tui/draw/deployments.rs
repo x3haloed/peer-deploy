@@ -67,7 +67,11 @@ pub fn draw_deployments(
         .alignment(Alignment::Center);
     f.render_widget(running_para, totals_layout[1]);
 
-    let drift_color = if drift_total == 0 { theme.success } else { theme.error };
+    let drift_color = if drift_total == 0 {
+        theme.success
+    } else {
+        theme.error
+    };
     let drift_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -144,9 +148,7 @@ pub fn draw_deployments(
     .header(header)
     .block(
         Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(theme.accent))
+            .borders(Borders::NONE)
             .title("🚀 Application Deployments")
             .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
     )
@@ -159,5 +161,3 @@ pub fn draw_deployments(
 
     f.render_stateful_widget(table, layout[1], state);
 }
-
-

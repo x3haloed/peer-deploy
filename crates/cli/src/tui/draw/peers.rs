@@ -181,9 +181,7 @@ pub fn draw_peers(
     .header(header)
     .block(
         Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(theme.primary))
+            .borders(Borders::NONE)
             .title("👥 Peer Details")
             .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
     )
