@@ -19,6 +19,12 @@ pub enum Command {
 pub struct Status {
     pub node_id: String,
     pub msg: String,
+    pub agent_version: u64,
+    pub components_desired: u64,
+    pub components_running: u64,
+    pub cpu_percent: u64,
+    pub mem_percent: u64,
+    pub tags: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

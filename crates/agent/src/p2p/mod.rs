@@ -60,6 +60,7 @@ pub async fn run_agent(
     let metrics = Arc::new(Metrics::new());
     let logs: SharedLogs =
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let sys = std::sync::Arc::new(tokio::sync::Mutex::new(sysinfo::System::new_all()));
 
     let id_keys = load_or_create_node_key();
     let local_peer_id = PeerId::from(id_keys.public());
@@ -164,7 +165,23 @@ pub async fn run_agent(
                     }
                 }
                 let msg = match run_res { Ok(m) => m, Err(m) => m };
-                let status = Status { node_id: local_peer_id.to_string(), msg };
+                let (cpu_percent, mem_percent) = {
+                    let mut s = sys.lock().await;
+                    s.refresh_all();
+                    let cpu = (s.global_cpu_info().cpu_usage() as u64).min(100);
+                    let mem = if s.total_memory() == 0 { 0 } else { ((s.used_memory() as f64 / s.total_memory() as f64) * 100.0) as u64 };
+                    (cpu, mem)
+                };
+                let status = Status {
+                    node_id: local_peer_id.to_string(),
+                    msg,
+                    agent_version: metrics.agent_version.load(Ordering::Relaxed),
+                    components_desired: metrics.components_desired.load(Ordering::Relaxed),
+                    components_running: metrics.components_running.load(Ordering::Relaxed),
+                    cpu_percent,
+                    mem_percent,
+                    tags: vec![],
+                };
                 if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
                 } else {
@@ -172,7 +189,23 @@ pub async fn run_agent(
                 }
             }
             _ = interval.tick() => {
-                let status = Status { node_id: local_peer_id.to_string(), msg: "alive".into() };
+                let (cpu_percent, mem_percent) = {
+                    let mut s = sys.lock().await;
+                    s.refresh_all();
+                    let cpu = (s.global_cpu_info().cpu_usage() as u64).min(100);
+                    let mem = if s.total_memory() == 0 { 0 } else { ((s.used_memory() as f64 / s.total_memory() as f64) * 100.0) as u64 };
+                    (cpu, mem)
+                };
+                let status = Status {
+                    node_id: local_peer_id.to_string(),
+                    msg: "alive".into(),
+                    agent_version: metrics.agent_version.load(Ordering::Relaxed),
+                    components_desired: metrics.components_desired.load(Ordering::Relaxed),
+                    components_running: metrics.components_running.load(Ordering::Relaxed),
+                    cpu_percent,
+                    mem_percent,
+                    tags: vec![],
+                };
                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     warn!(error=%e, "failed to publish heartbeat status");
                     metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -199,8 +232,24 @@ pub async fn run_agent(
                                 metrics.commands_received_total.fetch_add(1, Ordering::Relaxed);
                                 match cmd {
                                     Command::Hello { from } => {
-                    let msg = Status { node_id: local_peer_id.to_string(), msg: format!("hello, {from}") };
-                                        if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg)) {
+                                        let (cpu_percent, mem_percent) = {
+                                            let mut s = sys.lock().await;
+                                            s.refresh_all();
+                                            let cpu = (s.global_cpu_info().cpu_usage() as u64).min(100);
+                                            let mem = if s.total_memory() == 0 { 0 } else { ((s.used_memory() as f64 / s.total_memory() as f64) * 100.0) as u64 };
+                                            (cpu, mem)
+                                        };
+                                        let status = Status {
+                                            node_id: local_peer_id.to_string(),
+                                            msg: format!("hello, {from}"),
+                                            agent_version: metrics.agent_version.load(Ordering::Relaxed),
+                                            components_desired: metrics.components_desired.load(Ordering::Relaxed),
+                                            components_running: metrics.components_running.load(Ordering::Relaxed),
+                                            cpu_percent,
+                                            mem_percent,
+                                            tags: vec![],
+                                        };
+                                        if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                                             metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
                                         } else {
                                             metrics.status_published_total.fetch_add(1, Ordering::Relaxed);
@@ -224,9 +273,10 @@ pub async fn run_agent(
                                     Command::ApplyManifest(signed) => {
                                         let tx2 = tx.clone();
                                         let logs2 = logs.clone();
+                                        let m2 = metrics.clone();
                                         tokio::spawn(async move {
                                             push_log(&logs2, "apply", format!("apply v{}", signed.version)).await;
-                                            handle_apply_manifest(tx2, signed, logs2).await;
+                                            handle_apply_manifest(tx2, signed, logs2, m2).await;
                                         });
                                     }
                                     Command::UpgradeAgent(pkg) => {
@@ -238,8 +288,24 @@ pub async fn run_agent(
                                         });
                                     }
                                     Command::StatusQuery => {
-                                        let msg = Status { node_id: local_peer_id.to_string(), msg: "ok".into() };
-                                        if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg)) {
+                                        let (cpu_percent, mem_percent) = {
+                                            let mut s = sys.lock().await;
+                                            s.refresh_all();
+                                            let cpu = (s.global_cpu_info().cpu_usage() as u64).min(100);
+                                            let mem = if s.total_memory() == 0 { 0 } else { ((s.used_memory() as f64 / s.total_memory() as f64) * 100.0) as u64 };
+                                            (cpu, mem)
+                                        };
+                                        let status = Status {
+                                            node_id: local_peer_id.to_string(),
+                                            msg: "ok".into(),
+                                            agent_version: metrics.agent_version.load(Ordering::Relaxed),
+                                            components_desired: metrics.components_desired.load(Ordering::Relaxed),
+                                            components_running: metrics.components_running.load(Ordering::Relaxed),
+                                            cpu_percent,
+                                            mem_percent,
+                                            tags: vec![],
+                                        };
+                                        if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                                             metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
                                         } else {
                                             metrics.status_published_total.fetch_add(1, Ordering::Relaxed);

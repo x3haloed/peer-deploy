@@ -6,7 +6,7 @@ use tracing::warn;
 use crate::runner::run_wasm_module_with_limits;
 use common::{sha256_hex, verify_bytes_ed25519, AgentUpgrade, Manifest, SignedManifest};
 
-use super::metrics::push_log;
+use super::metrics::{push_log, Metrics};
 use super::metrics::SharedLogs;
 use super::state::{
     agent_data_dir, load_state, load_trusted_owner, save_state, save_trusted_owner,
@@ -17,6 +17,7 @@ pub async fn handle_apply_manifest(
     tx: UnboundedSender<Result<String, String>>,
     signed: SignedManifest,
     logs: SharedLogs,
+    metrics: std::sync::Arc<Metrics>,
 ) {
     // Signature check
     let sig = match base64::engine::general_purpose::STANDARD.decode(&signed.signature_b64) {
@@ -57,7 +58,11 @@ pub async fn handle_apply_manifest(
     // Verify and stage artifacts, then launch and persist version
     match verify_and_stage_artifacts(&signed.manifest_toml).await {
         Ok(staged) => {
-            if let Err(e) = launch_components(staged, &signed.manifest_toml, logs.clone()).await {
+            // Update desired components count from manifest
+            if let Ok(mf) = toml::from_str::<Manifest>(&signed.manifest_toml) {
+                metrics.set_components_desired(mf.components.len() as u64);
+            }
+            if let Err(e) = launch_components(staged, &signed.manifest_toml, logs.clone(), metrics.clone()).await {
                 let _ = tx.send(Err(format!("launch error: {e}")));
                 return;
             }
@@ -250,6 +255,7 @@ async fn launch_components(
     staged: std::collections::BTreeMap<String, std::path::PathBuf>,
     manifest_toml: &str,
     logs: SharedLogs,
+    metrics: std::sync::Arc<Metrics>,
 ) -> anyhow::Result<()> {
     let manifest: Manifest = toml::from_str(manifest_toml)?;
     for (name, path) in staged {
@@ -260,12 +266,14 @@ async fn launch_components(
             let p = path.to_string_lossy().to_string();
             let logs = logs.clone();
             let n = name.clone();
+            let m = metrics.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    run_wasm_module_with_limits(&p, &n, logs.clone(), mem, fuel, epoch).await
-                {
-                    warn!(component=%n, error=%e, "component run failed");
-                }
+                // mark as running while the component task is active
+                m.inc_components_running();
+                let res = run_wasm_module_with_limits(&p, &n, logs.clone(), mem, fuel, epoch).await;
+                if let Err(e) = res { warn!(component=%n, error=%e, "component run failed"); }
+                // decrement when it exits
+                m.dec_components_running();
             });
         }
     }

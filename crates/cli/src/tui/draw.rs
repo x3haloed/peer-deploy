@@ -82,6 +82,8 @@ pub fn draw_overview(
     msgs: &[u64],
     peer_count: usize,
     events: &VecDeque<(Instant, String)>,
+    components_desired_total: u64,
+    components_running_total: u64,
 ) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -99,6 +101,7 @@ pub fn draw_overview(
             Constraint::Length(22),
             Constraint::Length(18),
             Constraint::Length(18),
+            Constraint::Length(26),
             Constraint::Min(1),
         ])
         .split(rows[0]);
@@ -134,6 +137,16 @@ pub fn draw_overview(
     f.render_widget(s_cpu, spark_row[0]);
     f.render_widget(s_mem, spark_row[1]);
     f.render_widget(s_msg, spark_row[2]);
+
+    // Components tile: desired/running/drift
+    let drift = components_desired_total.saturating_sub(components_running_total);
+    let comps = Paragraph::new(format!(
+        "Desired: {}  Running: {}  Drift: {}",
+        components_desired_total, components_running_total, drift
+    ))
+    .style(tile_style)
+    .block(Block::default().borders(Borders::ALL).title("Components"));
+    f.render_widget(comps, tiles[4]);
 
     let list_items: Vec<ListItem> = events
         .iter()

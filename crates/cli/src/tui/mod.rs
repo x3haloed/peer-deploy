@@ -44,6 +44,8 @@ struct PeerRow {
     last_ping: Instant,
     agent_version: u64,
     roles: String,
+    desired_components: u64,
+    running_components: u64,
 }
 
 pub async fn run_tui() -> anyhow::Result<()> {
@@ -193,6 +195,8 @@ pub async fn run_tui() -> anyhow::Result<()> {
     let mut cpu_hist: Vec<u64> = vec![0; 60];
     let mut mem_hist: Vec<u64> = vec![0; 60];
     let mut msg_hist: Vec<u64> = vec![0; 60];
+    let _desired_hist: Vec<u64> = vec![0; 60];
+    let _running_hist: Vec<u64> = vec![0; 60];
     let mut last_msg_count = 0usize;
     let mut last_sample = Instant::now();
     let sys = std::sync::Arc::new(tokio::sync::Mutex::new(sysinfo::System::new_all()));
@@ -409,12 +413,18 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         .entry(pid.clone())
                         .and_modify(|p| {
                             p.last_msg_at = Instant::now();
+                            p.agent_version = s.agent_version;
+                            p.roles = if s.tags.is_empty() { String::new() } else { s.tags.join(",") };
+                            p.desired_components = s.components_desired;
+                            p.running_components = s.components_running;
                         })
                         .or_insert(PeerRow {
                             last_msg_at: Instant::now(),
                             last_ping: Instant::now(),
-                            agent_version: 0,
-                            roles: String::new(),
+                            agent_version: s.agent_version,
+                            roles: if s.tags.is_empty() { String::new() } else { s.tags.join(",") },
+                            desired_components: s.components_desired,
+                            running_components: s.components_running,
                         });
                     if !logs_paused {
                         events.push_front((Instant::now(), s.msg));
@@ -436,6 +446,8 @@ pub async fn run_tui() -> anyhow::Result<()> {
                             last_ping: Instant::now(),
                             agent_version: 0,
                             roles: String::new(),
+                            desired_components: 0,
+                            running_components: 0,
                         });
                 }
                 AppEvent::PublishError(msg) => {
@@ -525,6 +537,8 @@ pub async fn run_tui() -> anyhow::Result<()> {
             mem_hist[59] = mem;
             msg_hist.rotate_left(1);
             msg_hist[59] = last_msg_count as u64;
+            // aggregate desired/running from latest peer rows if available (placeholder: sum unknown -> 0)
+            // desired/running shown from latest peer rows when drawing
             last_msg_count = 0;
             last_sample = Instant::now();
         }
@@ -566,15 +580,21 @@ pub async fn run_tui() -> anyhow::Result<()> {
             }
 
             match view {
-                View::Overview => draw_overview(
-                    f,
-                    cols[1],
-                    &cpu_hist,
-                    &mem_hist,
-                    &msg_hist,
-                    peers.len(),
-                    &events,
-                ),
+                View::Overview => {
+                    let components_desired_total: u64 = peers.values().map(|p| p.desired_components).sum();
+                    let components_running_total: u64 = peers.values().map(|p| p.running_components).sum();
+                    draw_overview(
+                        f,
+                        cols[1],
+                        &cpu_hist,
+                        &mem_hist,
+                        &msg_hist,
+                        peers.len(),
+                        &events,
+                        components_desired_total,
+                        components_running_total,
+                    )
+                }
                 View::Peers => {
                     draw_peers(f, cols[1], &peers, &peer_latency, &mut peers_table_state)
                 }

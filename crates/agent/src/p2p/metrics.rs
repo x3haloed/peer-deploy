@@ -42,6 +42,8 @@ pub struct Metrics {
     pub upgrade_rejected_total: AtomicU64,
     pub agent_version: AtomicU64,
     pub manifest_version: AtomicU64,
+    pub components_running: AtomicU64,
+    pub components_desired: AtomicU64,
 }
 
 impl Metrics {
@@ -58,6 +60,8 @@ impl Metrics {
             upgrade_rejected_total: AtomicU64::new(0),
             agent_version: AtomicU64::new(0),
             manifest_version: AtomicU64::new(0),
+            components_running: AtomicU64::new(0),
+            components_desired: AtomicU64::new(0),
         }
     }
 
@@ -66,6 +70,17 @@ impl Metrics {
     }
     pub fn set_manifest_version(&self, v: u64) {
         self.manifest_version.store(v, Ordering::Relaxed);
+    }
+
+    pub fn set_components_desired(&self, v: u64) {
+        self.components_desired.store(v, Ordering::Relaxed);
+    }
+    // increment/decrement methods are used instead of a direct setter
+    pub fn inc_components_running(&self) {
+        self.components_running.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn dec_components_running(&self) {
+        self.components_running.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| Some(x.saturating_sub(1))).ok();
     }
 
     pub fn render_prometheus(&self) -> String {
@@ -125,6 +140,22 @@ impl Metrics {
             "manifest_version {}\n",
             self.manifest_version.load(Ordering::Relaxed)
         ));
+        out.push_str("# TYPE components_running gauge\n");
+        out.push_str(&format!(
+            "components_running {}\n",
+            self.components_running.load(Ordering::Relaxed)
+        ));
+        out.push_str("# TYPE components_desired gauge\n");
+        out.push_str(&format!(
+            "components_desired {}\n",
+            self.components_desired.load(Ordering::Relaxed)
+        ));
+        let drift = self
+            .components_desired
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.components_running.load(Ordering::Relaxed));
+        out.push_str("# TYPE components_drift gauge\n");
+        out.push_str(&format!("components_drift {}\n", drift));
         out
     }
 }
