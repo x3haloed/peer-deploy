@@ -48,6 +48,12 @@ enum View {
     Ops,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum InstallWizard {
+    Choose,
+    AgentPath,
+}
+
 struct PeerRow {
     last_msg_at: Instant,
     last_ping: Instant,
@@ -271,6 +277,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
     let mut link_count: usize = 0;
     let mut push_wizard: Option<PushWizard> = None;
     let mut upgrade_wizard: Option<UpgradeWizard> = None;
+    let mut install_wizard: Option<InstallWizard> = None;
 
     // background fetchers for metrics and logs
     {
@@ -342,9 +349,33 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 AppEvent::Key(key) => {
                     if let Some(buf) = &mut filter_input {
                         match key.code {
-                            KeyCode::Esc => { filter_input = None; push_wizard = None; upgrade_wizard = None; }
+                            KeyCode::Esc => { filter_input = None; push_wizard = None; upgrade_wizard = None; install_wizard = None; }
                             KeyCode::Enter => {
                                 let input_val = buf.trim().to_string();
+                                if install_wizard == Some(InstallWizard::AgentPath) {
+                                    if input_val.is_empty() {
+                                        overlay_msg = Some((Instant::now(), "file required".into()));
+                                        filter_input = Some(String::new());
+                                        continue;
+                                    }
+                                    let tx_evt = tx.clone();
+                                    let path = input_val.clone();
+                                    #[cfg(unix)]
+                                    tokio::spawn(async move {
+                                        match crate::cmd::install(Some(path), false).await {
+                                            Ok(_) => { let _ = tx_evt.send(AppEvent::PublishError("install: agent done".into())); }
+                                            Err(e) => { let _ = tx_evt.send(AppEvent::PublishError(format!("install: agent {e}"))); }
+                                        }
+                                    });
+                                    #[cfg(not(unix))]
+                                    {
+                                        let _ = tx.send(AppEvent::PublishError("install: unsupported".into()));
+                                    }
+                                    overlay_msg = Some((Instant::now(), "install: agent sent".into()));
+                                    install_wizard = None;
+                                    filter_input = None;
+                                    continue;
+                                }
                                 if let Some(mut wiz) = push_wizard.clone() {
                                     match wiz.step {
                                         0 => {
@@ -522,15 +553,22 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     } else {
                         match key.code {
                             KeyCode::Char('a') | KeyCode::Char('A') => {
-                                let cmd = Command::ApplyManifest(SignedManifest {
-                                    alg: String::new(),
-                                    owner_pub_bs58: String::new(),
-                                    version: 0,
-                                    manifest_toml: String::new(),
-                                    signature_b64: String::new(),
-                                });
-                                let _ = cmd_tx.send(cmd);
-                                overlay_msg = Some((Instant::now(), "apply manifest".to_string()));
+                                if install_wizard == Some(InstallWizard::Choose) {
+                                    // Choose 'agent' in install flow
+                                    install_wizard = Some(InstallWizard::AgentPath);
+                                    overlay_msg = Some((Instant::now(), "install agent: file path".into()));
+                                    filter_input = Some(String::new());
+                                } else {
+                                    let cmd = Command::ApplyManifest(SignedManifest {
+                                        alg: String::new(),
+                                        owner_pub_bs58: String::new(),
+                                        version: 0,
+                                        manifest_toml: String::new(),
+                                        signature_b64: String::new(),
+                                    });
+                                    let _ = cmd_tx.send(cmd);
+                                    overlay_msg = Some((Instant::now(), "apply manifest".to_string()));
+                                }
                             }
                             KeyCode::Char('u') | KeyCode::Char('U') => {
                                 upgrade_wizard = Some(UpgradeWizard::default());
@@ -538,24 +576,10 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 filter_input = Some(String::new());
                             }
                             KeyCode::Char('i') | KeyCode::Char('I') => {
-                                #[cfg(unix)]
-                                {
-                                    let tx_evt = tx.clone();
-                                    tokio::spawn(async move {
-                                        let bin = std::env::current_exe()
-                                            .unwrap_or_else(|_| std::path::PathBuf::from("realm-agent"))
-                                            .display()
-                                            .to_string();
-                                        match crate::cmd::install(Some(bin), false).await {
-                                            Ok(_) => { let _ = tx_evt.send(AppEvent::PublishError("install: done".into())); }
-                                            Err(e) => { let _ = tx_evt.send(AppEvent::PublishError(format!("install: {e}"))); }
-                                        }
-                                    });
-                                }
-                                #[cfg(not(unix))]
-                                {
-                                    let _ = tx.send(AppEvent::PublishError("install: unsupported".into()));
-                                }
+                                install_wizard = Some(InstallWizard::Choose);
+                                overlay_msg = Some((Instant::now(), "install: choose [c]li or [a]gent".into()));
+                                push_wizard = None;
+                                upgrade_wizard = None;
                             }
                             KeyCode::Char('w') | KeyCode::Char('W') => {
                                 let cmd = Command::Run {
@@ -626,6 +650,42 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 }
                             }
                             _ => {
+                                // Handle install choice single-key prompt when active
+                                if install_wizard == Some(InstallWizard::Choose) {
+                                    match key.code {
+                                        KeyCode::Char('c') | KeyCode::Char('C') => {
+                                            // Install CLI (realm)
+                                            #[cfg(unix)]
+                                            {
+                                                let tx_evt = tx.clone();
+                                                tokio::spawn(async move {
+                                                    match crate::cmd::install_cli(false).await {
+                                                        Ok(_) => { let _ = tx_evt.send(AppEvent::PublishError("install: cli done".into())); }
+                                                        Err(e) => { let _ = tx_evt.send(AppEvent::PublishError(format!("install: cli {e}"))); }
+                                                    }
+                                                });
+                                            }
+                                            #[cfg(not(unix))]
+                                            {
+                                                let _ = tx.send(AppEvent::PublishError("install: unsupported".into()));
+                                            }
+                                            install_wizard = None;
+                                            break;
+                                        }
+                                        KeyCode::Char('a') | KeyCode::Char('A') => {
+                                            install_wizard = Some(InstallWizard::AgentPath);
+                                            overlay_msg = Some((Instant::now(), "install agent: file path".into()));
+                                            filter_input = Some(String::new());
+                                            break;
+                                        }
+                                        KeyCode::Esc => {
+                                            install_wizard = None;
+                                            overlay_msg = Some((Instant::now(), "install: canceled".into()));
+                                            break;
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 if on_key(
                                     key,
                                     &mut view,

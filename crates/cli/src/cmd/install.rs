@@ -84,3 +84,48 @@ pub async fn install(binary: Option<String>, system: bool) -> anyhow::Result<()>
     Ok(())
 }
 
+#[cfg(unix)]
+pub async fn install_cli(_system: bool) -> anyhow::Result<()> {
+    let binary = std::env::current_exe()
+        .unwrap_or_else(|_| std::path::PathBuf::from("realm"))
+        .display()
+        .to_string();
+
+    // User-mode install (dev). We intentionally do not attempt to set up a service for the CLI.
+    let bin_dir = dirs::home_dir().context("home dir")?.join(".local/bin");
+    tokio::fs::create_dir_all(&bin_dir).await?;
+    let data_bin_dir = dirs::data_dir().context("data dir")?.join("realm").join("bin");
+    tokio::fs::create_dir_all(&data_bin_dir).await?;
+    let bin_bytes = tokio::fs::read(&binary).await?;
+    let digest = sha256_hex(&bin_bytes);
+    let versioned = data_bin_dir.join(format!("realm-{}", &digest[..16]));
+    tokio::fs::write(&versioned, &bin_bytes).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = tokio::fs::set_permissions(&versioned, std::fs::Permissions::from_mode(0o755)).await;
+    }
+
+    // current -> versioned in data dir
+    let current_link = data_bin_dir.join("current");
+    let _ = tokio::fs::remove_file(&current_link).await;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let _ = symlink(&versioned, &current_link);
+    }
+
+    // ~/.local/bin/realm -> current
+    let target_link = bin_dir.join("realm");
+    let _ = tokio::fs::remove_file(&target_link).await;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let _ = symlink(&current_link, &target_link);
+    }
+
+    // macOS does not use systemd; ignore `system` parameter for CLI.
+    println!("installed CLI at {} (symlink {})", versioned.display(), target_link.display());
+    Ok(())
+}
+

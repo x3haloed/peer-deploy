@@ -14,6 +14,8 @@ pub use init::key_show;
 pub use apply::apply;
 pub use status::status;
 pub use install::install;
+#[cfg(unix)]
+pub use install::install_cli;
 pub use upgrade::upgrade;
 pub use invite::invite;
 pub use enroll::enroll;
