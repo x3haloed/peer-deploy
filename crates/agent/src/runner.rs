@@ -77,44 +77,44 @@ pub async fn run_wasm_module_with_limits(
         .build();
 
     // readers for stdout/stderr pushing into ring buffers
-    {
-        let logs = logs.clone();
-        let name = component_name.to_string();
-        tokio::spawn(async move {
-            let mut rdr = BufReader::new(stdout_r);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match rdr.read_line(&mut line).await {
-                    Ok(0) => break,
-                    Ok(_) => push_log(&logs, &name, format!("stdout: {}", line.trim_end())).await,
-                    Err(e) => {
-                        push_log(&logs, &name, format!("stdout read error: {e}")).await;
-                        break;
-                    }
+    let logs_out = logs.clone();
+    let name_out = component_name.to_string();
+    let out_task = tokio::spawn(async move {
+        let mut rdr = BufReader::new(stdout_r);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match rdr.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    push_log(&logs_out, &name_out, format!("stdout: {}", line.trim_end())).await
+                }
+                Err(e) => {
+                    push_log(&logs_out, &name_out, format!("stdout read error: {e}")).await;
+                    break;
                 }
             }
-        });
-    }
-    {
-        let logs = logs.clone();
-        let name = component_name.to_string();
-        tokio::spawn(async move {
-            let mut rdr = BufReader::new(stderr_r);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match rdr.read_line(&mut line).await {
-                    Ok(0) => break,
-                    Ok(_) => push_log(&logs, &name, format!("stderr: {}", line.trim_end())).await,
-                    Err(e) => {
-                        push_log(&logs, &name, format!("stderr read error: {e}")).await;
-                        break;
-                    }
+        }
+    });
+    let logs_err = logs.clone();
+    let name_err = component_name.to_string();
+    let err_task = tokio::spawn(async move {
+        let mut rdr = BufReader::new(stderr_r);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match rdr.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    push_log(&logs_err, &name_err, format!("stderr: {}", line.trim_end())).await
+                }
+                Err(e) => {
+                    push_log(&logs_err, &name_err, format!("stderr read error: {e}")).await;
+                    break;
                 }
             }
-        });
-    }
+        }
+    });
 
     let limiter = MemoryLimiter {
         max_bytes: (memory_max_mb * 1024 * 1024) as usize,
@@ -172,5 +172,7 @@ pub async fn run_wasm_module_with_limits(
     }
 
     handle.abort();
+    let _ = out_task.await;
+    let _ = err_task.await;
     Ok(())
 }

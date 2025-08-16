@@ -189,26 +189,19 @@ pub async fn serve_metrics(metrics: Arc<Metrics>, logs: SharedLogs, bind_addr: &
                         let map = logs.lock().await;
                         if let Some(name) = component {
                             if name == "__all__" {
-                                let mut combined: Vec<(u64, String, String)> = Vec::new();
+                                let mut combined: Vec<(u64, &str, &str)> = Vec::new();
                                 for (comp, buf) in map.iter() {
-                                    for line in buf.iter() {
+                                    let start = buf.len().saturating_sub(tail);
+                                    for line in buf.iter().skip(start) {
                                         if let Some((ts, rest)) = line.split_once('|') {
                                             if let Ok(t) = ts.trim().parse::<u64>() {
-                                                combined.push((
-                                                    t,
-                                                    comp.clone(),
-                                                    rest.trim().to_string(),
-                                                ));
+                                                combined.push((t, comp.as_str(), rest.trim()));
                                             }
                                         }
                                     }
                                 }
                                 combined.sort_by_key(|(t, _, _)| *t);
-                                let start = if combined.len() > tail {
-                                    combined.len() - tail
-                                } else {
-                                    0
-                                };
+                                let start = combined.len().saturating_sub(tail);
                                 for (_, comp, msg) in combined.into_iter().skip(start) {
                                     out.push_str(&format!("[{comp}] {msg}\n"));
                                 }

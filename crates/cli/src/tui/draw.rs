@@ -200,13 +200,13 @@ pub fn draw_logs(
 ) {
     let items: Vec<ListItem> = events
         .iter()
-        .filter(|(_, s)| filter.is_none_or(|f| s.contains(f)))
+        .filter(|(_, s)| filter.map_or(true, |f| s.contains(f)))
         .map(|(t, s)| ListItem::new(format!("{:>4}s | {}", t.elapsed().as_secs(), s)))
         .collect();
     let title = if paused {
-        format!("Logs [PAUSED] ( {}/{} )", events.len(), EVENTS_CAP)
+        format!("Events [PAUSED] ( {}/{} )", events.len(), EVENTS_CAP)
     } else {
-        format!("Logs ( {}/{} )", events.len(), EVENTS_CAP)
+        format!("Events ( {}/{} )", events.len(), EVENTS_CAP)
     };
     let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
     f.render_widget(list, area);
