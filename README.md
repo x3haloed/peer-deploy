@@ -1,185 +1,159 @@
-“push → run everywhere” with hard isolation. Pure WASI on Wasmtime + a p2p Ifrastructure-as-Code.
+## peer-deploy
 
-Architecture (lean, sane)
-	•	Agent (Rust): single static binary; runs on any node (bare‑metal, cloud, laptop).
-	•	Embeds Wasmtime as the component host.
-	•	Pulls/receives signed WASI components and starts them with per‑instance limits.
-	•	Exposes a tiny gRPC/HTTP control port (mTLS or Noise).
-	•	P2P control plane: libp2p (QUIC + Noise + Kademlia DHT) for discovery and command gossip. No central control server required.
-	•	Auth: Ed25519 node keys + Ed25519 owner keys. Owner signs manifests; agents enforce signature + policy. No cloud IAM circus.
-	•	IaC state: TOML manifests (amen) describing nodes, components, routes, quotas, secrets. Desired state is replicated via gossip + append‑only log (CRDT or raft-lite).
-	•	Resource isolation (per component instance):
-	•	Memory cap via Wasmtime max pages.
-	•	CPU bound via fuel metering and/or epoch deadlines.
-	•	Capabilities via WASI preview2/0.2+ handles (deny by default; selectively allow sockets/http/fs/clock).
-	•	Observability:
-	•	Agent exposes Prometheus metrics; log drain per component (ring buffer).
-	•	One Web UI (SvelteKit or plain HTMX) that subscribes over p2p/pubsub and paints the “kingdom” (nodes, health, utilization, components).
+“push → run everywhere” with hard isolation. Powered by Wasmtime + WASI and a libp2p control plane.
 
-Minimal TOML (desired state)
+### What is this?
+- **Agent**: a single Rust binary that runs on your nodes. It hosts WASI components with strict resource limits and participates in a P2P control plane.
+- **CLI/TUI**: a single Rust binary named `realm` that gives you a text UI and commands to bootstrap, inspect, push components, and upgrade agents.
+- **Common protocol**: signed messages over libp2p gossipsub; agents provide a tiny HTTP endpoint for metrics and logs.
 
-# realm.toml
-[owner]
-pubkey = "ed25519:BASE58..."          # who is allowed to push/apply
+## Features
+- **WASI components** executed under Wasmtime with memory caps, fuel metering and epoch deadlines.
+- **P2P** discovery and command distribution (QUIC + Noise + mDNS + Kademlia).
+- **Signed intents**: owner key signs manifests and upgrades; agents enforce signature and TOFU owner trust.
+- **Metrics & Logs**: Prometheus metrics and lightweight log tailing served by the agent.
+- **Ad‑hoc or desired state**: push a single component, or apply a signed TOML manifest.
 
-[nodes."dev-laptop"]
-tags = ["dev","darwin","arm64"]
-addr_hint = "/dns/dev-laptop.local/udp/443/quic"
+## Getting started
 
-[nodes."bm-01"]
-tags = ["metal","linux","x86_64"]
+### Prerequisites
+- Rust toolchain (stable) and `cargo`
+- macOS or Linux
 
-[components.auth]
-source = "registry:ghcr.io/acme/auth@sha256:..."   # or file:/ s3:/ ipfs:/ p2p:/
-world  = "wasi:cli/command"
-allowed_outbound = ["https://idp.example.com"]
-memory_max_mb = 64
-fuel_per_sec = 5_000_000
-epoch_timeout_ms = 100
-env = { RUST_LOG = "info" }
+### Build
+- Build release binaries:
+```bash
+cargo build --release
+```
+- Outputs:
+  - `target/release/realm` (CLI/TUI)
+  - `target/release/agent` (agent)
 
-[components.orders]
-source = "file:./build/orders.wasm"
-world = "wasi:cli/command"
-allowed_outbound = ["postgres://db.internal:5432"]
-memory_max_mb = 128
-fuel_per_sec = 10_000_000
-epoch_timeout_ms = 150
-vars = { DB_URL = "postgres://spin@db.internal/shop" }
+### Run the TUI
+```bash
+./target/release/realm
+```
+- The TUI will open. Use the footer for keybinds.
 
-[routing]
-# simple edge mapping handled by the agent's built-in reverse proxy
-"bm-01" = [
-  { path="/auth/...",   component="auth",   replicas=2 },
-  { path="/orders/...", component="orders", replicas=3 }
-]
+### Install binaries from the TUI
+- Press `I` to install and choose one:
+  - **c**: install the CLI/TUI as `realm`
+  - **a**: install the Agent as `realm-agent` (you’ll be prompted for the agent binary path)
 
-[secrets]
-# encrypted-at-rest; delivered as WASI key-value handles
-"jwt_pub"   = "age-encrypted:..."
-"orders_db" = "age-encrypted:..."
+What the installer does (user-mode on macOS/Linux):
+- Copies the binary to a versioned path, maintains a `current` symlink, and places a convenience symlink on your PATH:
+  - CLI: `~/.local/bin/realm -> ~/Library/Application Support/realm/bin/current`
+  - Agent: `~/.local/bin/realm-agent -> ~/Library/Application Support/realm-agent/bin/current`
 
-CLI you’ll actually want
+Tip for macOS: ensure `~/.local/bin` is on your PATH (zsh):
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+```
 
-# bootstrap a new realm (generates owner key)
+### Generate an owner key
+```bash
 realm init
-realm key show
+realm key show   # prints your owner public key (ed25519:BASE58...)
+```
 
-# install agent on a node (ssh just once; after that it’s p2p)
-ssh bm-01 'curl -sL https://realm.sh/install | sh'
+### Configure an agent
+On a node that runs the agent, trust the owner and optionally add bootstrap peers:
+```bash
+realm configure --owner <ed25519:BASE58...> --bootstrap \
+  /dns4/host.local/udp/443/quic
+```
+Start the agent (example with tags/roles):
+```bash
+realm-agent --role dev --role darwin --role arm64
+```
+The agent exposes metrics and logs on `http://127.0.0.1:9920`.
 
-# introduce peers (bootstraps DHT)
-realm peer add /dns4/bm-01/tcp/443/quic
-realm peer add /dns4/dev-laptop/tcp/443/quic
+### Discover and view status
+From the TUI, peers discovered via mDNS will show up automatically. Or use the command:
+```bash
+realm status
+```
 
-# register nodes (agents gossip their node keys; you approve)
-realm nodes ls
-realm nodes approve bm-01 dev-laptop
+### Push a WASI component ad‑hoc
+The quickest way to try execution on a target peer:
+```bash
+realm push \
+  --name hello \
+  --file /path/to/hello.wasm \
+  --replicas 1 \
+  --memory-max-mb 64 \
+  --fuel 5000000 \
+  --epoch-ms 100 \
+  --tag dev \
+  --start
+```
+- Or from the TUI: press `O` and follow the wizard.
+- Selection can target specific peer IDs (`--peer`) or any peers with matching tags (`--tag`).
 
-# deploy desired state
-realm apply realm.toml        # signs it with your owner key
-realm status                  # live view of drift/health
+### Apply a signed manifest
+Create a TOML file that lists components and digests (sha256) and apply it:
+```bash
+realm apply --file ./realm.toml --version 1
+```
+- The CLI signs the manifest with your owner key.
+- Agents verify signature, enforce TOFU on first owner, verify component digests, stage artifacts, and reconcile desired replicas.
 
-# ad‑hoc commands (p2p exec)
-realm exec bm-01 -- 'ls -la'
-realm push orders ./build/orders.wasm
-realm restart orders --nodes bm-01
+### Upgrade agents remotely
+- From the TUI: press `U` and provide the path to the new agent binary, optionally targeting peers or tags.
+- Or via CLI:
+```bash
+realm upgrade --file ./target/release/agent --version 2 --tag dev
+```
+Upgrade behavior on agents:
+- Verifies signature on the raw binary bytes and checks owner matches trusted owner
+- Verifies sha256 digest
+- **Refuses downgrades** (requires higher version than running)
+- Writes versioned binary, updates `current` symlink, spawns new process, exits old
+- Emits progress to the agent logs so you can observe each phase in the TUI
 
-Agent internals (sketch)
+## Key commands
+- **Init owner key**: `realm init`
+- **Show owner public key**: `realm key show`
+- **Status query**: `realm status`
+- **Install from TUI**: press `I` → choose CLI or Agent
+- **Push component**: `realm push ...` or `O` in TUI
+- **Apply manifest**: `realm apply --file realm.toml --version N`
+- **Upgrade agents**: `realm upgrade --file ./agent --version N [--peer ...] [--tag ...]` or `U` in TUI
+- **Configure trust/bootstrap on node**: `realm configure --owner <pub> --bootstrap <addr>...`
+- **Invite/enroll (optional bootstrap UX)**:
+  - Owner: `realm invite --bootstrap <addr> ...` → share token
+  - Peer: `realm enroll --token <TOKEN>`
 
-Why Rust: easy static binary, first‑class libp2p, best Wasmtime bindings.
+## Agent command‑line (selected)
+- `--role <tag>`: repeatable; advertised via libp2p identify
+- `--wasm <file>`: start a single WASI component immediately (ad‑hoc)
+- `--memory-max-mb`, `--fuel`, `--epoch-ms`: execution limits for ad‑hoc run
 
-// Cargo.toml: wasmtime, wasmtime-wasi, libp2p, quinn, ed25519-dalek, serde, toml, axum(optional)
-struct Limits { mem_mb: u64, fuel_per_sec: u64, epoch_ms: u64 }
+## Metrics and logs
+- Metrics (Prometheus): `http://127.0.0.1:9920/metrics`
+- Logs (plain text): `http://127.0.0.1:9920/logs?component=__all__&tail=200`
+- TUI polls these endpoints to render overview tiles and logs.
 
-fn start_component(wasm: &[u8], limits: Limits, permits: WasiPermits) -> anyhow::Result<()> {
-    use wasmtime::{Engine, Store, Config, ResourceLimiterAsync};
-    let mut cfg = Config::new();
-    cfg.wasm_component_model(true)
-       .wasm_multi_memory(true)
-       .consume_fuel(true);
-    let engine = Engine::new(&cfg)?;
-    let mut store = Store::new(&engine, ());
-    store.add_fuel(limits.fuel_per_sec)?; // top-up strategy on timer
+## Notes & limits
+- WASI component should export `run` (command world). If no export is present, the agent will log that and complete without error.
+- On macOS, background services are not configured automatically (no systemd). If you want auto-start at login, we can add a `launchd` plist; open an issue.
+- The agent’s memory metrics currently report process RSS as a proxy. When Wasmtime exposes per-component stats we’ll switch to those.
 
-    // epoch deadline preemption
-    engine.increment_epoch();
-    // … spawn a tokio task that increments epoch periodically; cancel if overtime
+## Development
+- Build debug:
+```bash
+cargo build
+```
+- Build specific crates:
+```bash
+cargo build -p realm
+cargo build -p agent
+```
 
-    // memory limiter
-    struct Lim { max: usize }
-    impl ResourceLimiterAsync for Lim {
-        fn memory_growing(&mut self, _current: usize, desired: usize, _max: Option<usize>) -> bool {
-            desired <= self.max
-        }
-        fn table_growing(&mut self, _current: u32, _desired: u32, _maximum: Option<u32>) -> bool {
-            true
-        }
-    }
-    store.limiter_async(std::sync::Arc::new(tokio::sync::Mutex::new(
-        Lim { max: (limits.mem_mb * 1024 * 1024) as usize }
-    )));
+## Security model (short)
+- **Trust root**: your owner public key; agents enforce signed messages and TOFU for first owner.
+- **Payload trust**: digest‑pinned artifacts (sha256) verified before execution.
+- **Transport**: libp2p with Noise; discovery via mDNS and optional bootstrap multiaddrs.
 
-    // build WASI ctx with explicit capabilities
-    let wasi = wasi_cap_std_sync::WasiCtxBuilder::new()
-        .inherit_stdin() // or provide pipes
-        .inherit_stdout()
-        .inherit_stderr()
-        // selectively add dirs, sockets, clocks per manifest…
-        .build();
-
-    // load component & link wasi:cli/command
-    let component = wasmtime::component::Component::from_binary(&engine, wasm)?;
-    let mut linker = wasmtime::component::Linker::<()>::new(&engine);
-    wasmtime_wasi::add_to_linker_sync(&mut linker, |()| wasi)?;
-    let (instance, _bindings) = linker.instantiate(&mut store, &component)?;
-    // call the command world’s entrypoint
-    // bindings.call_run(&mut store, &[])?;
-    Ok(())
-}
-
-That’s the heart: load a signed component, apply strict limits, link only the WASI capabilities you allow, run. No Docker.
-
-Security model (simple, strong)
-	•	Trust root: your owner public key. Every realm.toml is signed (detached signature beside the file). Agents reject unsigned or stale manifests (monotonic version).
-	•	Payload trust: each component reference resolves to a digest‑pinned artifact (sha256:). Agent verifies the digest; optional transparency log (append‑only p2p log of published digests) to detect equivocation.
-	•	Node trust: each agent has an Ed25519 node key; first contact is TOFU with owner approval. After that: mutual Noise or mTLS using node certs.
-	•	Secrets: sealed to the node key (age or xChaCha20‑Poly1305) and released only to the instance that requests the named handle.
-
-Deployment pipeline (no registries required)
-	•	Artifacts: plain files (WASI components). Store anywhere: file:, s3:, ipfs:, p2p:. The agent fetches via a small pluggable fetcher set.
-	•	Rollouts:
-	•	max_surge, max_unavailable at the manifest route level.
-	•	Blue/green with two component labels (orders@blue, orders@green).
-	•	Health probe = HTTP handler inside the component or “wasi:cli health” export.
-
-Observability (minimal but useful)
-	•	Each instance exports:
-	•	wasm_exec_time_ms, wasm_restarts_total
-	•	fuel_used_total, epoch_preemptions_total
-	•	mem_current_bytes, mem_peak_bytes
-	•	Node exports:
-	•	CPU %, RAM, disk, p2p links, component counts
-	•	UI:
-	•	Kingdom map: nodes + tags, latencies, alarms.
-	•	Per‑node component table with “restart / scale / drain” buttons.
-	•	One‑click tail logs (ring buffer; back‑pressure via SSE).
-
-Selling points
-	•	No Docker. No k8s. Just agents + p2p + Wasmtime.
-	•	Secure by default: deny‑by‑default capabilities, signed intents, digest‑pinned code.
-	•	Easy AF: one binary per node, TOML for desired state, “realm apply”.
-	•	Wicked fast: ms startups, tiny memory footprints, precise per‑instance limits.
-	•	Portable: any OS/arch where the agent runs.
-
-MVP build plan (ruthlessly small)
-	1.	Step 1
-	•	Agent: run a single component with mem cap + fuel + epoch.
-	•	P2P: libp2p identity + Kademlia + pubsub. “hello world” command gossip.
-	•	CLI: realm init, realm apply, realm status.
-	2.	Step 2
-	•	Signed manifests, digest‑pinned artifacts, file:// and http(s):// fetchers.
-	•	Reverse proxy + routing table; scale N replicas per node.
-	•	Metrics endpoint + basic TUI/HTML dashboard.
-	3.	Stretch
-	•	Secrets sealed to node key; rolling update controls; IPFS fetcher.
+## License
+Apache-2.0
