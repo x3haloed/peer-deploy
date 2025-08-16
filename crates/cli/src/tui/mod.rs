@@ -439,13 +439,17 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         });
                 }
                 AppEvent::PublishError(msg) => {
-                    if !logs_paused {
-                        events.push_front((Instant::now(), msg.clone()));
-                        if events.len() > EVENTS_CAP {
-                            events.pop_back();
-                        }
+                    let overlay_text = msg.clone();
+                    let event_msg = if logs_paused {
+                        format!("{msg} [missed while paused]")
+                    } else {
+                        msg
+                    };
+                    events.push_front((Instant::now(), event_msg));
+                    if events.len() > EVENTS_CAP {
+                        events.pop_back();
                     }
-                    overlay_msg = Some((Instant::now(), msg));
+                    overlay_msg = Some((Instant::now(), overlay_text));
                 }
                 AppEvent::MdnsDiscovered(list) => {
                     for (peer, addr) in list {
