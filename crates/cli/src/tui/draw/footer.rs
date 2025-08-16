@@ -14,6 +14,7 @@ pub fn draw_footer(f: &mut ratatui::Frame<'_>, area: Rect, theme: &ThemeColors) 
         ("D", "Deploy"),
         ("U", "Upgrade"),
         ("I", "Install"),
+        ("C", "Connect"),
         ("/", "Filter"),
         ("T", "Theme"),
         ("ESC", "Cancel"),

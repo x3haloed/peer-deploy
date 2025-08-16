@@ -458,7 +458,10 @@ pub async fn run_agent(
                         }
                     }
                     SwarmEvent::NewListenAddr { address, .. } => {
-                        info!(%address, "listening");
+                        let dial = format!("{address}/p2p/{local_peer_id}");
+                        // Print to stdout so users always see a copy-pastable address
+                        println!("Agent listen multiaddr: {dial}");
+                        info!(%dial, "listening");
                     }
                     other => {
                         if cfg!(debug_assertions) { info!(?other, "swarm event"); }

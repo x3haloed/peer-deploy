@@ -275,7 +275,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 View::Topology => draw_topology(f, body, &app.topo, &theme),
                 View::Events => draw_logs(f, body, &app.events, app.log_filter.as_deref(), app.logs_paused, &theme),
                 View::Logs => draw_component_logs(f, body, &app.log_components, &mut app.logs_list_state, &app.log_lines, &theme),
-                View::Ops => draw_placeholder(f, body, "⚙️ Actions Panel\n\nUse keyboard shortcuts to perform operations:\n• A - Apply manifest\n• D - Deploy component\n• U - Upgrade agent\n• I - Install tools", &theme),
+                View::Ops => draw_placeholder(f, body, "⚙️ Actions Panel\n\nUse keyboard shortcuts to perform operations:\n• A - Apply manifest\n• D - Deploy component\n• U - Upgrade agent\n• I - Install tools\n• C - Connect to peer (Peers tab)", &theme),
             };
             draw_footer(f, chunks[2], &theme);
             if let Some((_, msg)) = &app.overlay_msg {
