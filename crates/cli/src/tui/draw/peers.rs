@@ -9,9 +9,7 @@ use ratatui::{
 
 use crate::tui::state::PeerRow;
 
-use super::{
-    THEME_BACKGROUND, THEME_ERROR, THEME_PRIMARY, THEME_SUCCESS, THEME_TEXT, THEME_WARNING,
-};
+use super::ThemeColors;
 
 pub fn draw_peers(
     f: &mut ratatui::Frame<'_>,
@@ -19,6 +17,7 @@ pub fn draw_peers(
     peers: &BTreeMap<String, PeerRow>,
     peer_latency: &BTreeMap<String, u128>,
     state: &mut TableState,
+    theme: &ThemeColors,
 ) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -54,64 +53,64 @@ pub fn draw_peers(
     let peers_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(THEME_PRIMARY))
+        .border_style(Style::default().fg(theme.primary))
         .title("👥 Total Peers")
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
     let peers_para = Paragraph::new(format!("{}", total_peers))
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .block(peers_block)
         .alignment(Alignment::Center);
     f.render_widget(peers_para, summary_layout[0]);
 
     let health_color = if healthy_peers == total_peers && total_peers > 0 {
-        THEME_SUCCESS
+        theme.success
     } else {
-        THEME_WARNING
+        theme.warning
     };
     let health_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(health_color))
         .title("💚 Healthy")
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
     let health_para = Paragraph::new(format!("{}/{}", healthy_peers, total_peers))
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .block(health_block)
         .alignment(Alignment::Center);
     f.render_widget(health_para, summary_layout[1]);
 
     let drift_color = if total_drift == 0 {
-        THEME_SUCCESS
+        theme.success
     } else {
-        THEME_ERROR
+        theme.error
     };
     let drift_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(drift_color))
         .title("⚠️ Drift")
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
     let drift_para = Paragraph::new(format!("{}", total_drift))
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .block(drift_block)
         .alignment(Alignment::Center);
     f.render_widget(drift_para, summary_layout[2]);
 
     let rtt_color = if avg_rtt < 100 {
-        THEME_SUCCESS
+        theme.success
     } else if avg_rtt < 500 {
-        THEME_WARNING
+        theme.warning
     } else {
-        THEME_ERROR
+        theme.error
     };
     let rtt_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(rtt_color))
         .title("📡 Avg RTT")
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
     let rtt_para = Paragraph::new(format!("{}ms", avg_rtt))
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .block(rtt_block)
         .alignment(Alignment::Center);
     f.render_widget(rtt_para, summary_layout[3]);
@@ -127,7 +126,7 @@ pub fn draw_peers(
     let header = ratatui::widgets::Row::new(cols.iter().map(|h| {
         Line::from(*h).style(
             Style::default()
-                .fg(THEME_PRIMARY)
+                .fg(theme.primary)
                 .add_modifier(Modifier::BOLD),
         )
     }));
@@ -139,11 +138,11 @@ pub fn draw_peers(
         let drift = p.desired_components.saturating_sub(p.running_components);
 
         let row_style = if secs > 30 {
-            Style::default().fg(THEME_ERROR)
+            Style::default().fg(theme.error)
         } else if drift > 0 {
-            Style::default().fg(THEME_WARNING)
+            Style::default().fg(theme.warning)
         } else {
-            Style::default().fg(THEME_TEXT)
+            Style::default().fg(theme.text)
         };
 
         let ping_indicator = if secs < 10 {
@@ -184,14 +183,14 @@ pub fn draw_peers(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(THEME_PRIMARY))
+            .border_style(Style::default().fg(theme.primary))
             .title("👥 Peer Details")
-            .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD)),
+            .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
     )
     .highlight_style(
         Style::default()
-            .bg(THEME_PRIMARY)
-            .fg(THEME_BACKGROUND)
+            .bg(theme.primary)
+            .fg(theme.background)
             .add_modifier(Modifier::BOLD),
     );
 

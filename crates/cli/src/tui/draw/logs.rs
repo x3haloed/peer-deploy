@@ -8,10 +8,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, ListState},
 };
 
-use super::{
-    THEME_ACCENT, THEME_BACKGROUND, THEME_ERROR, THEME_MUTED, THEME_PRIMARY, THEME_TEXT,
-    THEME_WARNING,
-};
+use super::ThemeColors;
 
 pub fn draw_logs(
     f: &mut ratatui::Frame<'_>,
@@ -19,6 +16,7 @@ pub fn draw_logs(
     events: &VecDeque<(Instant, String)>,
     filter: Option<&str>,
     paused: bool,
+    theme: &ThemeColors,
 ) {
     let filtered_events: Vec<_> = events
         .iter()
@@ -38,22 +36,21 @@ pub fn draw_logs(
                 format!("{:>2}h", elapsed / 3600)
             };
 
-            let content_color = if s.contains("error") || s.contains("Error") || s.contains("ERROR")
-            {
-                THEME_ERROR
+            let content_color = if s.contains("error") || s.contains("Error") || s.contains("ERROR") {
+                theme.error
             } else if s.contains("warn") || s.contains("Warn") || s.contains("WARN") {
-                THEME_WARNING
+                theme.warning
             } else if s.contains("info") || s.contains("Info") || s.contains("INFO") {
-                THEME_PRIMARY
+                theme.primary
             } else if i < 5 {
-                THEME_TEXT
+                theme.text
             } else {
-                THEME_MUTED
+                theme.muted
             };
 
             let line = Line::from(vec![
-                Span::styled(time_str, Style::default().fg(THEME_MUTED)),
-                Span::styled(" │ ", Style::default().fg(THEME_MUTED)),
+                Span::styled(time_str, Style::default().fg(theme.muted)),
+                Span::styled(" │ ", Style::default().fg(theme.muted)),
                 Span::styled(s, Style::default().fg(content_color)),
             ]);
 
@@ -84,9 +81,9 @@ pub fn draw_logs(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(if paused { THEME_WARNING } else { THEME_PRIMARY }))
+            .border_style(Style::default().fg(if paused { theme.warning } else { theme.primary }))
             .title(title)
-            .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD)),
+            .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
     );
 
     f.render_widget(list, area);
@@ -98,6 +95,7 @@ pub fn draw_component_logs(
     components: &[String],
     state: &mut ListState,
     lines: &VecDeque<String>,
+    theme: &ThemeColors,
 ) {
     let layout = Layout::default()
         .direction(Direction::Horizontal)
@@ -111,8 +109,8 @@ pub fn draw_component_logs(
         .map(|(i, c)| {
             let icon = if i == 0 { "🏠" } else { "🧩" };
             ListItem::new(Line::from(vec![
-                Span::styled(icon, Style::default().fg(THEME_PRIMARY)),
-                Span::styled(format!(" {}", c), Style::default().fg(THEME_TEXT)),
+                Span::styled(icon, Style::default().fg(theme.primary)),
+                Span::styled(format!(" {}", c), Style::default().fg(theme.text)),
             ]))
         })
         .collect();
@@ -122,14 +120,14 @@ pub fn draw_component_logs(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(THEME_PRIMARY))
+                .border_style(Style::default().fg(theme.primary))
                 .title("🧩 Components")
-                .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD)),
+                .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
         )
         .highlight_style(
             Style::default()
-                .bg(THEME_PRIMARY)
-                .fg(THEME_BACKGROUND)
+                .bg(theme.primary)
+                .fg(theme.background)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -140,17 +138,17 @@ pub fn draw_component_logs(
         .enumerate()
         .map(|(i, line)| {
             let content_color = if line.contains("[ERROR]") || line.contains("ERROR") {
-                THEME_ERROR
+                theme.error
             } else if line.contains("[WARN]") || line.contains("WARN") {
-                THEME_WARNING
+                theme.warning
             } else if line.contains("[INFO]") || line.contains("INFO") {
-                THEME_PRIMARY
+                theme.primary
             } else if line.contains("[DEBUG]") || line.contains("DEBUG") {
-                THEME_MUTED
+                theme.muted
             } else if i < 10 {
-                THEME_TEXT
+                theme.text
             } else {
-                THEME_MUTED
+                theme.muted
             };
 
             ListItem::new(Line::from(Span::styled(
@@ -169,9 +167,9 @@ pub fn draw_component_logs(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(THEME_ACCENT))
+            .border_style(Style::default().fg(theme.accent))
             .title(format!("📋 Logs - {}", selected_component))
-            .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD)),
+            .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
     );
 
     f.render_widget(logs_list, layout[1]);

@@ -5,6 +5,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use crossterm::style::ResetColor;
 use futures::StreamExt;
 use libp2p::{swarm::SwarmEvent, Multiaddr};
 use ratatui::{
@@ -16,7 +17,10 @@ use tokio::sync::mpsc;
 
 use common::Command;
 
-use crate::tui::draw::*;
+use crate::tui::draw::{
+    draw_component_logs, draw_footer, draw_header_tabs, draw_logs, draw_overlay,
+    draw_overview, draw_peers, draw_placeholder, draw_topology, get_theme,
+};
 use crate::tui::events::handle_event;
 use crate::tui::network::{new_swarm_tui, NodeBehaviourEvent};
 use crate::tui::state::{
@@ -29,6 +33,11 @@ pub async fn run_tui() -> anyhow::Result<()> {
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    // Reset any lingering colors (from previous runs or terminals that persist bg attr)
+    {
+        let mut s = std::io::stdout();
+        execute!(s, ResetColor)?;
+    }
     terminal.clear()?;
 
     let (mut swarm, topic_cmd, topic_status, local_peer_id) = new_swarm_tui().await?;
@@ -215,11 +224,21 @@ pub async fn run_tui() -> anyhow::Result<()> {
 
         terminal.draw(|f| {
             let area = f.size();
+            // resolve theme; avoid painting a global background to prevent color fallbacks on some terminals
+            let theme = get_theme(app.theme);
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(3)])
                 .split(area);
-            draw_header_tabs(f, chunks[0], &app.view, app.peers.len(), app.link_count, &local_peer_id);
+            draw_header_tabs(
+                f,
+                chunks[0],
+                &app.view,
+                app.peers.len(),
+                app.link_count,
+                &local_peer_id,
+                &theme,
+            );
             let body = chunks[1];
             match app.view {
                 View::Overview => {
@@ -247,21 +266,22 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         fuel_used_total,
                         mem_current_bytes,
                         mem_peak_bytes,
+                        &theme,
                     )
                 }
-                View::Peers => draw_peers(f, body, &app.peers, &app.peer_latency, &mut app.peers_table_state),
-                View::Deployments => draw_placeholder(f, body, "Application deployments and management will be available here. Use the Actions tab to deploy new components."),
-                View::Topology => draw_topology(f, body, &app.topo),
-                View::Events => draw_logs(f, body, &app.events, app.log_filter.as_deref(), app.logs_paused),
-                View::Logs => draw_component_logs(f, body, &app.log_components, &mut app.logs_list_state, &app.log_lines),
-                View::Ops => draw_placeholder(f, body, "⚙️ Actions Panel\n\nUse keyboard shortcuts to perform operations:\n• A - Apply manifest\n• D - Deploy component\n• U - Upgrade agent\n• I - Install tools"),
+                View::Peers => draw_peers(f, body, &app.peers, &app.peer_latency, &mut app.peers_table_state, &theme),
+                View::Deployments => draw_placeholder(f, body, "Application deployments and management will be available here. Use the Actions tab to deploy new components.", &theme),
+                View::Topology => draw_topology(f, body, &app.topo, &theme),
+                View::Events => draw_logs(f, body, &app.events, app.log_filter.as_deref(), app.logs_paused, &theme),
+                View::Logs => draw_component_logs(f, body, &app.log_components, &mut app.logs_list_state, &app.log_lines, &theme),
+                View::Ops => draw_placeholder(f, body, "⚙️ Actions Panel\n\nUse keyboard shortcuts to perform operations:\n• A - Apply manifest\n• D - Deploy component\n• U - Upgrade agent\n• I - Install tools", &theme),
             };
-            draw_footer(f, chunks[2]);
+            draw_footer(f, chunks[2], &theme);
             if let Some((_, msg)) = &app.overlay_msg {
-                draw_overlay(f, area, msg);
+                draw_overlay(f, area, msg, &theme);
             }
             if let Some(buf) = &app.filter_input {
-                draw_overlay(f, area, &format!("/{buf}"));
+                draw_overlay(f, area, &format!("/{buf}"), &theme);
             }
         })?;
     }

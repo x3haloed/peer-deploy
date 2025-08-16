@@ -11,6 +11,7 @@ use common::{
 use crossterm::event::{KeyCode, KeyEvent};
 use libp2p::Multiaddr;
 use ratatui::widgets::TableState;
+use crate::tui::draw::ThemeKind;
 pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<bool> {
     match evt {
         AppEvent::Key(key) => {
@@ -373,6 +374,16 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                             View::Logs => View::Ops,
                             View::Ops => View::Overview,
                         };
+                    }
+                    KeyCode::Char('t') | KeyCode::Char('T') => {
+                        app.theme = match app.theme {
+                            ThemeKind::Dark => ThemeKind::Light,
+                            ThemeKind::Light => ThemeKind::Dark,
+                        };
+                        app.overlay_msg = Some((Instant::now(), format!(
+                            "Theme: {}",
+                            match app.theme { ThemeKind::Dark => "Dark", ThemeKind::Light => "Light" }
+                        )));
                     }
                     KeyCode::PageUp => {
                         if app.view == View::Logs {

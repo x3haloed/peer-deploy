@@ -4,9 +4,9 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
 };
 
-use super::{THEME_MUTED, THEME_TEXT};
+use super::ThemeColors;
 
-pub fn draw_placeholder(f: &mut ratatui::Frame<'_>, area: Rect, text: &str) {
+pub fn draw_placeholder(f: &mut ratatui::Frame<'_>, area: Rect, text: &str, theme: &ThemeColors) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -28,12 +28,12 @@ pub fn draw_placeholder(f: &mut ratatui::Frame<'_>, area: Rect, text: &str) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(THEME_MUTED))
+        .border_style(Style::default().fg(theme.muted))
         .title("🚧 Coming Soon")
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
 
     let content = Paragraph::new(text)
-        .style(Style::default().fg(THEME_MUTED))
+        .style(Style::default().fg(theme.muted))
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })
         .block(block);

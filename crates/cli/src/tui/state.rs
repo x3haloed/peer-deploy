@@ -110,6 +110,7 @@ pub enum AppEvent {
 }
 
 pub struct AppState {
+    pub theme: crate::tui::draw::ThemeKind,
     pub view: View,
     pub events: VecDeque<(Instant, String)>,
     pub peers: BTreeMap<String, PeerRow>,
@@ -173,6 +174,7 @@ impl AppState {
             push_wizard: None,
             upgrade_wizard: None,
             install_wizard: None,
+            theme: crate::tui::draw::ThemeKind::Dark,
             tx,
             cmd_tx,
             dial_tx,

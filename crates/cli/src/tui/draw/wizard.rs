@@ -4,7 +4,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Gauge, Paragraph, Wrap},
 };
 
-use super::{THEME_ACCENT, THEME_MUTED, THEME_PRIMARY, THEME_SURFACE, THEME_TEXT};
+use super::ThemeColors;
 
 pub fn draw_wizard_dialog(
     f: &mut ratatui::Frame<'_>,
@@ -14,6 +14,7 @@ pub fn draw_wizard_dialog(
     input: &str,
     step: usize,
     total_steps: usize,
+    theme: &ThemeColors,
 ) {
     let popup_width = 60;
     let popup_height = 10;
@@ -33,10 +34,10 @@ pub fn draw_wizard_dialog(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(THEME_PRIMARY))
+        .border_style(Style::default().fg(theme.primary))
         .title(format!("🧙 {} - {}", title, progress_text))
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD))
-        .style(Style::default().bg(THEME_SURFACE));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(theme.surface));
 
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -53,28 +54,28 @@ pub fn draw_wizard_dialog(
         .split(inner);
 
     let progress_gauge = Gauge::default()
-        .gauge_style(Style::default().fg(THEME_PRIMARY))
+        .gauge_style(Style::default().fg(theme.primary))
         .ratio(progress / popup_width as f64);
     f.render_widget(progress_gauge, layout[0]);
 
     let prompt_para = Paragraph::new(prompt)
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .wrap(Wrap { trim: true });
     f.render_widget(prompt_para, layout[1]);
 
     let input_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(THEME_ACCENT))
+        .border_style(Style::default().fg(theme.accent))
         .title("Input");
 
     let input_para = Paragraph::new(format!("{}_", input))
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .block(input_block);
     f.render_widget(input_para, layout[2]);
 
     let help_text = "Enter: Confirm  |  Esc: Cancel  |  Backspace: Delete";
     let help_para = Paragraph::new(help_text)
-        .style(Style::default().fg(THEME_MUTED))
+        .style(Style::default().fg(theme.muted))
         .alignment(ratatui::layout::Alignment::Center);
     f.render_widget(help_para, layout[3]);
 }

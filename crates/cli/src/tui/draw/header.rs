@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::tui::state::View;
 
-use super::{THEME_MUTED, THEME_PRIMARY, THEME_SURFACE};
+use super::ThemeColors;
 
 pub fn draw_header_tabs(
     f: &mut ratatui::Frame<'_>,
@@ -16,6 +16,7 @@ pub fn draw_header_tabs(
     peer_count: usize,
     link_count: usize,
     local_peer_id: &PeerId,
+    theme: &ThemeColors,
 ) {
     let time = chrono::Local::now().format("%H:%M:%S");
 
@@ -32,12 +33,11 @@ pub fn draw_header_tabs(
         time
     );
 
-    let title_block = Block::default()
-        .style(Style::default().bg(THEME_SURFACE))
-        .borders(Borders::NONE);
+    // Avoid setting a background; some terminals render unknown colors as bright red.
+    let title_block = Block::default().borders(Borders::NONE);
 
     let title_para = Paragraph::new(status_info)
-        .style(Style::default().fg(THEME_MUTED))
+        .style(Style::default().fg(theme.muted))
         .block(title_block);
     f.render_widget(title_para, chunks[0]);
 
@@ -66,12 +66,12 @@ pub fn draw_header_tabs(
             Block::default()
                 .borders(Borders::BOTTOM)
                 .border_type(BorderType::Thick)
-                .border_style(Style::default().fg(THEME_PRIMARY)),
+                .border_style(Style::default().fg(theme.primary)),
         )
-        .style(Style::default().fg(THEME_MUTED))
+        .style(Style::default().fg(theme.muted))
         .highlight_style(
             Style::default()
-                .fg(THEME_PRIMARY)
+                .fg(theme.primary)
                 .add_modifier(Modifier::BOLD),
         )
         .select(selected_tab);

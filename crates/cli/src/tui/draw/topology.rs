@@ -8,15 +8,13 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Table},
 };
 
-use super::{
-    THEME_ACCENT, THEME_BACKGROUND, THEME_MUTED, THEME_PRIMARY, THEME_SUCCESS, THEME_TEXT,
-    THEME_WARNING,
-};
+use super::ThemeColors;
 
 pub fn draw_topology(
     f: &mut ratatui::Frame<'_>,
     area: Rect,
     topo: &BTreeMap<String, (Option<String>, Instant)>,
+    theme: &ThemeColors,
 ) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -48,28 +46,28 @@ pub fn draw_topology(
     let discovered_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(THEME_PRIMARY))
+        .border_style(Style::default().fg(theme.primary))
         .title("🔍 Discovered")
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
     let discovered_para = Paragraph::new(format!("{}", total_discovered))
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .block(discovered_block)
         .alignment(Alignment::Center);
     f.render_widget(discovered_para, summary_layout[0]);
 
     let active_color = if active_peers > 0 {
-        THEME_SUCCESS
+        theme.success
     } else {
-        THEME_WARNING
+        theme.warning
     };
     let active_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(active_color))
         .title("🟢 Active")
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
     let active_para = Paragraph::new(format!("{}", active_peers))
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .block(active_block)
         .alignment(Alignment::Center);
     f.render_widget(active_para, summary_layout[1]);
@@ -77,28 +75,28 @@ pub fn draw_topology(
     let addr_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(THEME_ACCENT))
+        .border_style(Style::default().fg(theme.accent))
         .title("📍 Addressable")
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
     let addr_para = Paragraph::new(format!("{}", has_addresses))
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .block(addr_block)
         .alignment(Alignment::Center);
     f.render_widget(addr_para, summary_layout[2]);
 
     let recent_color = if recent_discoveries > 0 {
-        THEME_SUCCESS
+        theme.success
     } else {
-        THEME_MUTED
+        theme.muted
     };
     let recent_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(recent_color))
         .title("🆕 Recent")
-        .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD));
+        .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
     let recent_para = Paragraph::new(format!("{}", recent_discoveries))
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .block(recent_block)
         .alignment(Alignment::Center);
     f.render_widget(recent_para, summary_layout[3]);
@@ -107,7 +105,7 @@ pub fn draw_topology(
     let header = ratatui::widgets::Row::new(cols.iter().map(|h| {
         Line::from(*h).style(
             Style::default()
-                .fg(THEME_PRIMARY)
+                .fg(theme.primary)
                 .add_modifier(Modifier::BOLD),
         )
     }));
@@ -132,9 +130,9 @@ pub fn draw_topology(
         };
 
         let row_style = if secs < 60 {
-            Style::default().fg(THEME_TEXT)
+            Style::default().fg(theme.text)
         } else {
-            Style::default().fg(THEME_MUTED)
+            Style::default().fg(theme.muted)
         };
 
         rows.push(
@@ -160,14 +158,14 @@ pub fn draw_topology(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(THEME_PRIMARY))
+            .border_style(Style::default().fg(theme.primary))
             .title("🌐 Network Topology (mDNS)")
-            .title_style(Style::default().fg(THEME_TEXT).add_modifier(Modifier::BOLD)),
+            .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
     )
     .highlight_style(
         Style::default()
-            .bg(THEME_PRIMARY)
-            .fg(THEME_BACKGROUND)
+            .bg(theme.primary)
+            .fg(theme.background)
             .add_modifier(Modifier::BOLD),
     );
 

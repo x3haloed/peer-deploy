@@ -4,9 +4,9 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
-use super::{THEME_PRIMARY, THEME_SURFACE, THEME_TEXT};
+use super::ThemeColors;
 
-pub fn draw_overlay(f: &mut ratatui::Frame<'_>, area: Rect, text: &str) {
+pub fn draw_overlay(f: &mut ratatui::Frame<'_>, area: Rect, text: &str, theme: &ThemeColors) {
     let text_width = text.len().min(60) + 4;
     let text_lines = (text.len() / 50) + 1;
     let popup_height = (text_lines + 2).min(8);
@@ -23,11 +23,11 @@ pub fn draw_overlay(f: &mut ratatui::Frame<'_>, area: Rect, text: &str) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(THEME_PRIMARY))
-        .style(Style::default().bg(THEME_SURFACE));
+        .border_style(Style::default().fg(theme.primary))
+        .style(Style::default().bg(theme.surface));
 
     let content = Paragraph::new(text)
-        .style(Style::default().fg(THEME_TEXT))
+        .style(Style::default().fg(theme.text))
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })
         .block(block);
