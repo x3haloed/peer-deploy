@@ -156,9 +156,7 @@ pub fn draw_topology(
     .header(header)
     .block(
         Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(theme.primary))
+            .borders(Borders::NONE)
             .title("🌐 Network Topology (mDNS)")
             .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
     )

@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 
 use super::ThemeColors;
@@ -36,7 +36,8 @@ pub fn draw_logs(
                 format!("{:>2}h", elapsed / 3600)
             };
 
-            let content_color = if s.contains("error") || s.contains("Error") || s.contains("ERROR") {
+            let content_color = if s.contains("error") || s.contains("Error") || s.contains("ERROR")
+            {
                 theme.error
             } else if s.contains("warn") || s.contains("Warn") || s.contains("WARN") {
                 theme.warning
@@ -50,7 +51,7 @@ pub fn draw_logs(
 
             let line = Line::from(vec![
                 Span::styled(time_str, Style::default().fg(theme.muted)),
-                Span::styled(" │ ", Style::default().fg(theme.muted)),
+                Span::styled(" • ", Style::default().fg(theme.muted)),
                 Span::styled(s, Style::default().fg(content_color)),
             ]);
 
@@ -79,9 +80,7 @@ pub fn draw_logs(
 
     let list = List::new(items).block(
         Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(if paused { theme.warning } else { theme.primary }))
+            .borders(Borders::NONE)
             .title(title)
             .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
     );
@@ -118,9 +117,7 @@ pub fn draw_component_logs(
     let components_list = List::new(items)
         .block(
             Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(theme.primary))
+                .borders(Borders::NONE)
                 .title("🧩 Components")
                 .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
         )
@@ -165,9 +162,7 @@ pub fn draw_component_logs(
 
     let logs_list = List::new(log_items).block(
         Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(theme.accent))
+            .borders(Borders::NONE)
             .title(format!("📋 Logs - {}", selected_component))
             .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
     );
