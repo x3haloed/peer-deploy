@@ -6,7 +6,9 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Sparkline, Table, TableState},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Sparkline, Table, TableState,
+    },
 };
 
 use super::{PeerRow, View, EVENTS_CAP};
@@ -26,6 +28,7 @@ pub fn draw_top(
             View::Peers => "peers",
             View::Deployments => "deployments",
             View::Topology => "topology",
+            View::Events => "events",
             View::Logs => "logs",
             View::Ops => "ops",
         },
@@ -64,7 +67,7 @@ pub fn draw_nav(f: &mut ratatui::Frame<'_>, area: Rect, items: &[&str], selected
 
 pub fn draw_footer(f: &mut ratatui::Frame<'_>, area: Rect) {
     let help =
-        "q quit  ↑/↓ or j/k tabs  1..6 jump  c collapse  A apply  U upgrade  W run  / filter  p pause";
+        "q quit  ↑/↓ or j/k tabs  1..7 jump  c collapse  A apply  U upgrade  W run  / filter  p pause";
     let p = Paragraph::new(Line::from(help))
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray));
@@ -74,9 +77,9 @@ pub fn draw_footer(f: &mut ratatui::Frame<'_>, area: Rect) {
 pub fn draw_overview(
     f: &mut ratatui::Frame<'_>,
     area: Rect,
-    cpu: &Vec<u64>,
-    mem: &Vec<u64>,
-    msgs: &Vec<u64>,
+    cpu: &[u64],
+    mem: &[u64],
+    msgs: &[u64],
     peer_count: usize,
     events: &VecDeque<(Instant, String)>,
 ) {
@@ -101,7 +104,7 @@ pub fn draw_overview(
         .split(rows[0]);
 
     let tile_style = Style::default().fg(Color::Gray);
-    let t1 = Paragraph::new(format!("Peers: {}", peer_count))
+    let t1 = Paragraph::new(format!("Peers: {peer_count}"))
         .style(tile_style)
         .block(Block::default().borders(Borders::ALL).title("Health"));
     f.render_widget(t1, tiles[0]);
@@ -154,8 +157,11 @@ pub fn draw_peers(
 ) {
     let cols = ["Peer ID", "Agent", "RTT(ms)", "Last ping", "Tags"];
     let header = ratatui::widgets::Row::new(cols.iter().map(|h| {
-        Line::from(*h)
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        Line::from(*h).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
     }));
     let mut rows = Vec::new();
     for (id, p) in peers.iter() {
@@ -194,7 +200,7 @@ pub fn draw_logs(
 ) {
     let items: Vec<ListItem> = events
         .iter()
-        .filter(|(_, s)| filter.map_or(true, |f| s.contains(f)))
+        .filter(|(_, s)| filter.is_none_or(|f| s.contains(f)))
         .map(|(t, s)| ListItem::new(format!("{:>4}s | {}", t.elapsed().as_secs(), s)))
         .collect();
     let title = if paused {
@@ -204,6 +210,30 @@ pub fn draw_logs(
     };
     let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
     f.render_widget(list, area);
+}
+
+pub fn draw_component_logs(
+    f: &mut ratatui::Frame<'_>,
+    area: Rect,
+    components: &[String],
+    state: &mut ListState,
+    lines: &VecDeque<String>,
+) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(24), Constraint::Min(1)])
+        .split(area);
+    let items: Vec<ListItem> = components
+        .iter()
+        .map(|c| ListItem::new(c.clone()))
+        .collect();
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title("Components"))
+        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
+    f.render_stateful_widget(list, cols[0], state);
+    let log_items: Vec<ListItem> = lines.iter().map(|l| ListItem::new(l.clone())).collect();
+    let logs = List::new(log_items).block(Block::default().borders(Borders::ALL).title("Logs"));
+    f.render_widget(logs, cols[1]);
 }
 
 pub fn draw_placeholder(f: &mut ratatui::Frame<'_>, area: Rect, text: &str) {
@@ -218,8 +248,11 @@ pub fn draw_topology(
 ) {
     let cols = ["Peer ID", "Last seen", "Addr"];
     let header = ratatui::widgets::Row::new(cols.iter().map(|h| {
-        Line::from(*h)
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        Line::from(*h).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
     }));
     let mut rows = Vec::new();
     for (peer, (addr, last)) in topo.iter() {
@@ -239,7 +272,11 @@ pub fn draw_topology(
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Topology (mDNS)"))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Topology (mDNS)"),
+    )
     .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
     f.render_widget(table, area);
 }
@@ -258,4 +295,3 @@ pub fn draw_overlay(f: &mut ratatui::Frame<'_>, area: Rect, text: &str) {
     f.render_widget(Clear, popup);
     f.render_widget(p, popup);
 }
-

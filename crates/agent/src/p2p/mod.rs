@@ -1,5 +1,7 @@
+#![allow(clippy::collapsible_match, clippy::double_ended_iterator_last)]
+
+use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
-use std::sync::{Arc, atomic::Ordering};
 
 use anyhow::anyhow;
 use futures::StreamExt;
@@ -11,15 +13,17 @@ use libp2p::{
 use tracing::{info, warn};
 
 use crate::runner::run_wasm_module_with_limits;
-use common::{deserialize_message, serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, Status};
+use common::{
+    deserialize_message, serialize_message, Command, Status, REALM_CMD_TOPIC, REALM_STATUS_TOPIC,
+};
 
-mod metrics;
-mod state;
 mod handlers;
+pub mod metrics;
+mod state;
 
-use metrics::{Metrics, SharedLogs, serve_metrics, push_log};
-use state::load_state;
 use handlers::{handle_apply_manifest, handle_upgrade};
+use metrics::{push_log, serve_metrics, Metrics, SharedLogs};
+use state::load_state;
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct NodeBehaviour {
@@ -30,7 +34,9 @@ struct NodeBehaviour {
 }
 
 fn load_or_create_node_key() -> identity::Keypair {
-    let dir = dirs::data_dir().unwrap_or(std::env::temp_dir()).join("realm-agent");
+    let dir = dirs::data_dir()
+        .unwrap_or(std::env::temp_dir())
+        .join("realm-agent");
     let path = dir.join("node.key");
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(bytes) = std::fs::read(&path) {
@@ -52,7 +58,8 @@ pub async fn run_agent(
     epoch_ms: u64,
 ) -> anyhow::Result<()> {
     let metrics = Arc::new(Metrics::new());
-    let logs: SharedLogs = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let logs: SharedLogs =
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
 
     let id_keys = load_or_create_node_key();
     let local_peer_id = PeerId::from(id_keys.public());
@@ -62,7 +69,8 @@ pub async fn run_agent(
     let mut gossipsub = gossipsub::Behaviour::new(
         gossipsub::MessageAuthenticity::Signed(id_keys.clone()),
         gossip_config,
-    ).map_err(|e| anyhow!(e))?;
+    )
+    .map_err(|e| anyhow!(e))?;
 
     let topic_cmd = gossipsub::IdentTopic::new(REALM_CMD_TOPIC);
     let topic_status = gossipsub::IdentTopic::new(REALM_STATUS_TOPIC);
@@ -103,10 +111,18 @@ pub async fn run_agent(
         let tx0 = tx.clone();
         let logs0 = logs.clone();
         tokio::spawn(async move {
-            push_log(&logs0, "adhoc", format!("starting run {}", &path)).await;
-            let res = run_wasm_module_with_limits(&path, memory_max_mb, fuel, epoch_ms).await
-                .map(|_| format!("run ok: {}", path))
-                .map_err(|e| format!("run error: {}", e));
+            push_log(&logs0, "adhoc", format!("starting run {path}")).await;
+            let res = run_wasm_module_with_limits(
+                &path,
+                "adhoc",
+                logs0.clone(),
+                memory_max_mb,
+                fuel,
+                epoch_ms,
+            )
+            .await
+            .map(|_| format!("run ok: {path}"))
+            .map_err(|e| format!("run error: {e}"));
             match &res {
                 Ok(m) => push_log(&logs0, "adhoc", m).await,
                 Err(m) => push_log(&logs0, "adhoc", m).await,
@@ -123,7 +139,11 @@ pub async fn run_agent(
     metrics.set_agent_version(boot_state.agent_version);
 
     // Spawn metrics server
-    tokio::spawn(serve_metrics(metrics.clone(), logs.clone(), "127.0.0.1:9920"));
+    tokio::spawn(serve_metrics(
+        metrics.clone(),
+        logs.clone(),
+        "127.0.0.1:9920",
+    ));
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
 
@@ -179,7 +199,7 @@ pub async fn run_agent(
                                 metrics.commands_received_total.fetch_add(1, Ordering::Relaxed);
                                 match cmd {
                                     Command::Hello { from } => {
-                                        let msg = Status { node_id: local_peer_id.to_string(), msg: format!("hello, {}", from) };
+                    let msg = Status { node_id: local_peer_id.to_string(), msg: format!("hello, {from}") };
                                         if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg)) {
                                             metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
                                         } else {
@@ -190,10 +210,10 @@ pub async fn run_agent(
                                         let tx1 = tx.clone();
                                         let logs1 = logs.clone();
                                         tokio::spawn(async move {
-                                            push_log(&logs1, "adhoc", format!("starting run {}", &wasm_path)).await;
-                                            let res = run_wasm_module_with_limits(&wasm_path, memory_max_mb, fuel, epoch_ms).await
-                                                .map(|_| format!("run ok: {}", wasm_path))
-                                                .map_err(|e| format!("run error: {}", e));
+                                            push_log(&logs1, "adhoc", format!("starting run {wasm_path}")).await;
+                                            let res = run_wasm_module_with_limits(&wasm_path, "adhoc", logs1.clone(), memory_max_mb, fuel, epoch_ms).await
+                                                .map(|_| format!("run ok: {wasm_path}"))
+                                                .map_err(|e| format!("run error: {e}"));
                                             match &res {
                                                 Ok(m) => push_log(&logs1, "adhoc", m).await,
                                                 Err(m) => push_log(&logs1, "adhoc", m).await,
