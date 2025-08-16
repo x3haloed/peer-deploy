@@ -413,7 +413,11 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                             }
                         }
                     }
-                    _ => {}
+                    _ => {
+                        if on_key(key, &mut app.view, &mut app.peers_table_state)? {
+                            return Ok(true);
+                        }
+                    }
                 }
             }
         }

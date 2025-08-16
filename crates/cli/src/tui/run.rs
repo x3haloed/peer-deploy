@@ -215,10 +215,11 @@ pub async fn run_tui() -> anyhow::Result<()> {
     loop {
         while let Ok(evt) = rx.try_recv() {
             if handle_event(&mut app, evt).await? {
+                // Restore terminal state before exiting the process to ensure a clean screen.
                 disable_raw_mode()?;
                 let mut stdout = std::io::stdout();
                 execute!(stdout, LeaveAlternateScreen)?;
-                return Ok(());
+                std::process::exit(0);
             }
         }
 
