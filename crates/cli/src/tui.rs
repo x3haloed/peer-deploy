@@ -2,12 +2,12 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crossterm::{
-    event::{self, Event as CEvent, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event as CEvent, KeyCode, KeyEvent},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::StreamExt;
-use libp2p::{gossipsub, mdns, swarm::SwarmEvent, Multiaddr, PeerId, SwarmBuilder, identify, identity, kad};
+use libp2p::{gossipsub, mdns, ping, swarm::SwarmEvent, Multiaddr, PeerId, SwarmBuilder, identity};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -15,11 +15,12 @@ use ratatui::{
     symbols,
     text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, List, ListItem, Paragraph, Sparkline, Table, TableState,
+        Block, Borders, List, ListItem, Paragraph, Sparkline, Table, TableState,
     },
     Terminal,
 };
 use tokio::sync::mpsc;
+use chrono::Local;
 
 use common::{deserialize_message, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, Status};
 
@@ -43,7 +44,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
     terminal.clear()?;
 
     // Networking: create swarm and subscribe to topics
-    let (mut swarm, topic_cmd, topic_status) = new_swarm_tui().await?;
+    let (mut swarm, topic_cmd, topic_status, local_peer_id) = new_swarm_tui().await?;
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<Multiaddr>().unwrap())?;
 
     // mpsc for UI events
@@ -104,6 +105,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 SwarmEvent::NewListenAddr { .. } => {}
                 SwarmEvent::ConnectionEstablished { .. } => { connected = connected.saturating_add(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
                 SwarmEvent::ConnectionClosed { .. } => { connected = connected.saturating_sub(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
+                SwarmEvent::Behaviour(NodeBehaviourEvent::Ping(_ev)) => {}
                 _ => {}
             }
         }
@@ -169,7 +171,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 ])
                 .split(area);
 
-            draw_top(f, chunks[0], &view, peers.len());
+            draw_top(f, chunks[0], &view, peers.len(), &local_peer_id);
 
             let body = chunks[1];
             let left_w = if nav_collapsed || body.width < 60 { 0 } else { 18 };
@@ -196,8 +198,9 @@ pub async fn run_tui() -> anyhow::Result<()> {
     // never reached
 }
 
-fn draw_top(f: &mut ratatui::Frame<'_>, area: Rect, view: &View, peer_count: usize) {
-    let title = format!(" realm | {} | peers:{} ", match view { View::Overview=>"overview", View::Peers=>"peers", View::Deployments=>"deployments", View::Topology=>"topology", View::Logs=>"logs", View::Ops=>"ops" }, peer_count);
+fn draw_top(f: &mut ratatui::Frame<'_>, area: Rect, view: &View, peer_count: usize, local_peer_id: &PeerId) {
+    let time = Local::now().format("%H:%M:%S");
+    let title = format!(" realm | {} | peers:{} | {} | {} ", match view { View::Overview=>"overview", View::Peers=>"peers", View::Deployments=>"deployments", View::Topology=>"topology", View::Logs=>"logs", View::Ops=>"ops" }, peer_count, local_peer_id, time);
     let block = Block::default().borders(Borders::BOTTOM).title(Span::styled(title, Style::default().fg(Color::Cyan)));
     let p = Paragraph::new("").block(block);
     f.render_widget(p, area);
@@ -320,9 +323,10 @@ fn on_key(key: KeyEvent, view: &mut View, nav_collapsed: &mut bool, selected_nav
 struct NodeBehaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
+    ping: ping::Behaviour,
 }
 
-async fn new_swarm_tui() -> anyhow::Result<(libp2p::Swarm<NodeBehaviour>, gossipsub::IdentTopic, gossipsub::IdentTopic)> {
+async fn new_swarm_tui() -> anyhow::Result<(libp2p::Swarm<NodeBehaviour>, gossipsub::IdentTopic, gossipsub::IdentTopic, PeerId)> {
     let id_keys = identity::Keypair::generate_ed25519();
     let gossip_config = gossipsub::ConfigBuilder::default().build()?;
     let mut gossipsub = gossipsub::Behaviour::new(
@@ -334,14 +338,16 @@ async fn new_swarm_tui() -> anyhow::Result<(libp2p::Swarm<NodeBehaviour>, gossip
     gossipsub.subscribe(&topic_cmd)?;
     gossipsub.subscribe(&topic_status)?;
     let mdns_beh = mdns::tokio::Behaviour::new(mdns::Config::default(), PeerId::from(id_keys.public()))?;
-    let behaviour = NodeBehaviour { gossipsub, mdns: mdns_beh };
+    let ping_beh = ping::Behaviour::new(ping::Config::new());
+    let behaviour = NodeBehaviour { gossipsub, mdns: mdns_beh, ping: ping_beh };
+    let local_peer_id = PeerId::from(id_keys.public());
     let swarm = SwarmBuilder::with_existing_identity(id_keys)
         .with_tokio()
         .with_quic()
         .with_dns()?
         .with_behaviour(|_| Ok(behaviour))?
         .build();
-    Ok((swarm, topic_cmd, topic_status))
+    Ok((swarm, topic_cmd, topic_status, local_peer_id))
 }
 
 

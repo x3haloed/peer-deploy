@@ -24,3 +24,4 @@ ratatui = { version = "0.26", default-features = false, features = ["crossterm"]
 crossterm = "0.27"
 sysinfo = "0.30"
 unicode-width = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
