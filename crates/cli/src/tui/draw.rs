@@ -69,7 +69,7 @@ pub fn draw_nav(f: &mut ratatui::Frame<'_>, area: Rect, items: &[&str], selected
 
 pub fn draw_footer(f: &mut ratatui::Frame<'_>, area: Rect) {
     let help =
-        "q quit  ↑/↓ or j/k tabs  1..7 jump  c collapse  A apply  U upgrade  W run  / filter (+addr to dial)  p pause";
+        "q quit  ↑/↓ or j/k tabs  1..7 jump  c collapse  A apply  U upgrade  W run  O push  / filter (+addr to dial)  p pause";
     let p = Paragraph::new(Line::from(help))
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray));

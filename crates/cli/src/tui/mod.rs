@@ -473,7 +473,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 overlay_msg = Some((Instant::now(), "run".to_string()));
                             }
                             KeyCode::Char('/') => { filter_input = Some(String::new()); }
-                            KeyCode::Char('P') => { push_wizard = Some(PushWizard::default()); overlay_msg = Some((Instant::now(), "push: file path".into())); filter_input = Some(String::new()); }
+                            KeyCode::Char('o') | KeyCode::Char('O') => { push_wizard = Some(PushWizard::default()); overlay_msg = Some((Instant::now(), "push: file path".into())); filter_input = Some(String::new()); }
                             KeyCode::Char('p') => {
                                 logs_paused = !logs_paused;
                                 overlay_msg = Some((
