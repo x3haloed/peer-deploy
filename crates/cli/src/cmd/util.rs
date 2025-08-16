@@ -1,7 +1,9 @@
+#![allow(clippy::collapsible_match)]
+
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow};
+use anyhow::{anyhow, Context};
 use futures::StreamExt;
 use libp2p::{
     gossipsub, mdns,
@@ -62,9 +64,13 @@ pub async fn new_swarm() -> anyhow::Result<(
     gossipsub.subscribe(&topic_cmd)?;
     gossipsub.subscribe(&topic_status)?;
 
-    let mdns_beh = mdns::tokio::Behaviour::new(mdns::Config::default(), PeerId::from(id_keys.public()))?;
+    let mdns_beh =
+        mdns::tokio::Behaviour::new(mdns::Config::default(), PeerId::from(id_keys.public()))?;
 
-    let behaviour = NodeBehaviour { gossipsub, mdns: mdns_beh };
+    let behaviour = NodeBehaviour {
+        gossipsub,
+        mdns: mdns_beh,
+    };
 
     let swarm = SwarmBuilder::with_existing_identity(id_keys)
         .with_tokio()
@@ -98,4 +104,3 @@ pub async fn mdns_warmup(swarm: &mut Swarm<NodeBehaviour>) {
         }
     }
 }
-

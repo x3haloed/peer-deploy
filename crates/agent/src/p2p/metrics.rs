@@ -1,10 +1,14 @@
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 use tracing::{info, warn};
 
 /// Shared log buffer used by the HTTP metrics server.
-pub type SharedLogs = Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, std::collections::VecDeque<String>>>>;
+pub type SharedLogs =
+    Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, std::collections::VecDeque<String>>>>;
 
 const LOGS_CAP: usize = 1000;
 
@@ -144,7 +148,7 @@ pub async fn serve_metrics(metrics: Arc<Metrics>, logs: SharedLogs, bind_addr: &
                     let mut buf = vec![0u8; 2048];
                     let _ = tokio::time::timeout(
                         Duration::from_millis(500),
-                        tokio::io::AsyncReadExt::read(&mut stream, &mut buf)
+                        tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
                     )
                     .await;
                     let req = String::from_utf8_lossy(&buf);
@@ -184,8 +188,36 @@ pub async fn serve_metrics(metrics: Arc<Metrics>, logs: SharedLogs, bind_addr: &
                         let mut out = String::new();
                         let map = logs.lock().await;
                         if let Some(name) = component {
-                            if let Some(buf) = map.get(&name) {
-                                let start = if buf.len() > tail { buf.len() - tail } else { 0 };
+                            if name == "__all__" {
+                                let mut combined: Vec<(u64, String, String)> = Vec::new();
+                                for (comp, buf) in map.iter() {
+                                    for line in buf.iter() {
+                                        if let Some((ts, rest)) = line.split_once('|') {
+                                            if let Ok(t) = ts.trim().parse::<u64>() {
+                                                combined.push((
+                                                    t,
+                                                    comp.clone(),
+                                                    rest.trim().to_string(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                                combined.sort_by_key(|(t, _, _)| *t);
+                                let start = if combined.len() > tail {
+                                    combined.len() - tail
+                                } else {
+                                    0
+                                };
+                                for (_, comp, msg) in combined.into_iter().skip(start) {
+                                    out.push_str(&format!("[{comp}] {msg}\n"));
+                                }
+                            } else if let Some(buf) = map.get(&name) {
+                                let start = if buf.len() > tail {
+                                    buf.len() - tail
+                                } else {
+                                    0
+                                };
                                 for line in buf.iter().skip(start) {
                                     out.push_str(line);
                                     out.push('\n');
@@ -200,11 +232,7 @@ pub async fn serve_metrics(metrics: Arc<Metrics>, logs: SharedLogs, bind_addr: &
                                 out.push('\n');
                             }
                         }
-                        (
-                            "HTTP/1.1 200 OK",
-                            "text/plain; charset=utf-8",
-                            out,
-                        )
+                        ("HTTP/1.1 200 OK", "text/plain; charset=utf-8", out)
                     } else {
                         (
                             "HTTP/1.1 404 Not Found",
@@ -228,4 +256,3 @@ pub async fn serve_metrics(metrics: Arc<Metrics>, logs: SharedLogs, bind_addr: &
         }
     }
 }
-

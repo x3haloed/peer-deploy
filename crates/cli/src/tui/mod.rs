@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_match, clippy::single_match)]
+
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -11,7 +13,7 @@ use libp2p::{gossipsub, identity, mdns, ping, swarm::SwarmEvent, Multiaddr, Peer
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    widgets::TableState,
+    widgets::{ListState, TableState},
     Terminal,
 };
 use tokio::sync::mpsc;
@@ -32,6 +34,7 @@ enum View {
     Peers,
     Deployments,
     Topology,
+    Events,
     Logs,
     Ops,
 }
@@ -71,6 +74,8 @@ pub async fn run_tui() -> anyhow::Result<()> {
         MdnsExpired(Vec<(PeerId, Multiaddr)>),
         Metrics(String),
         Logs(String),
+        LogComponents(Vec<String>),
+        LogTail(Vec<String>),
     }
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
@@ -119,7 +124,9 @@ pub async fn run_tui() -> anyhow::Result<()> {
             topic_cmd.clone(),
             common::serialize_message(&common::Command::StatusQuery),
         ) {
-            let _ = tx_swarm.send(AppEvent::PublishError(format!("publish StatusQuery error: {}", e)));
+            let _ = tx_swarm.send(AppEvent::PublishError(format!(
+                "publish StatusQuery error: {e}"
+            )));
         }
 
         let mut connected = 0usize;
@@ -157,7 +164,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         .gossipsub
                         .publish(topic_cmd.clone(), common::serialize_message(&cmd))
                     {
-                        let _ = tx_swarm.send(AppEvent::PublishError(format!("publish error: {}", e)));
+                        let _ = tx_swarm.send(AppEvent::PublishError(format!("publish error: {e}")));
                     }
                 }
             }
@@ -173,6 +180,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
         "Peers",
         "Deployments",
         "Topology",
+        "Events",
         "Logs",
         "Ops",
     ];
@@ -194,7 +202,13 @@ pub async fn run_tui() -> anyhow::Result<()> {
     let mut log_filter: Option<String> = None;
     let mut logs_paused = false;
     let metrics_url = "http://127.0.0.1:9920/metrics".to_string();
-    let logs_url = "http://127.0.0.1:9920/logs?component=__all__&tail=200".to_string();
+    let logs_events_url = "http://127.0.0.1:9920/logs?component=__all__&tail=200".to_string();
+    let logs_base_url = "http://127.0.0.1:9920/logs".to_string();
+    let mut log_components: Vec<String> = Vec::new();
+    let mut log_lines: VecDeque<String> = VecDeque::with_capacity(200);
+    let mut logs_list_state = ListState::default();
+    logs_list_state.select(Some(0));
+    let selected_component = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
 
     // background fetchers for metrics and logs
     {
@@ -215,7 +229,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
     }
     {
         let tx_l = tx.clone();
-        let logs_url = logs_url.clone();
+        let logs_url = logs_events_url.clone();
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             let mut intv = tokio::time::interval(Duration::from_secs(3));
@@ -224,6 +238,35 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 if let Ok(resp) = client.get(&logs_url).send().await {
                     if let Ok(text) = resp.text().await {
                         let _ = tx_l.send(AppEvent::Logs(text));
+                    }
+                }
+            }
+        });
+    }
+    {
+        let tx_l2 = tx.clone();
+        let base = logs_base_url.clone();
+        let selected = selected_component.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let mut intv = tokio::time::interval(Duration::from_secs(3));
+            loop {
+                intv.tick().await;
+                if let Ok(resp) = client.get(&base).send().await {
+                    if let Ok(text) = resp.text().await {
+                        let list: Vec<String> =
+                            text.lines().skip(1).map(|s| s.to_string()).collect();
+                        let _ = tx_l2.send(AppEvent::LogComponents(list));
+                    }
+                }
+                let name = { selected.lock().await.clone() };
+                if !name.is_empty() {
+                    let url = format!("{base}?component={name}&tail=200");
+                    if let Ok(resp) = client.get(&url).send().await {
+                        if let Ok(text) = resp.text().await {
+                            let lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
+                            let _ = tx_l2.send(AppEvent::LogTail(lines));
+                        }
                     }
                 }
             }
@@ -305,6 +348,47 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                     },
                                 ));
                             }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if view == View::Logs {
+                                    if let Some(idx) = logs_list_state.selected() {
+                                        let new = idx.saturating_sub(1);
+                                        logs_list_state.select(Some(new));
+                                        if let Some(name) = log_components.get(new) {
+                                            let mut sel = selected_component.lock().await;
+                                            *sel = name.clone();
+                                        }
+                                    }
+                                } else if on_key(
+                                    key,
+                                    &mut view,
+                                    &mut nav_collapsed,
+                                    &mut selected_nav,
+                                    &mut peers_table_state,
+                                )? {
+                                    break;
+                                }
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if view == View::Logs {
+                                    let next =
+                                        logs_list_state.selected().unwrap_or(0).saturating_add(1);
+                                    if next < log_components.len() {
+                                        logs_list_state.select(Some(next));
+                                        if let Some(name) = log_components.get(next) {
+                                            let mut sel = selected_component.lock().await;
+                                            *sel = name.clone();
+                                        }
+                                    }
+                                } else if on_key(
+                                    key,
+                                    &mut view,
+                                    &mut nav_collapsed,
+                                    &mut selected_nav,
+                                    &mut peers_table_state,
+                                )? {
+                                    break;
+                                }
+                            }
                             _ => {
                                 if on_key(
                                     key,
@@ -365,10 +449,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 }
                 AppEvent::MdnsDiscovered(list) => {
                     for (peer, addr) in list {
-                        topo.insert(
-                            peer.to_string(),
-                            (Some(addr.to_string()), Instant::now()),
-                        );
+                        topo.insert(peer.to_string(), (Some(addr.to_string()), Instant::now()));
                     }
                 }
                 AppEvent::MdnsExpired(list) => {
@@ -381,16 +462,47 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 }
                 AppEvent::Metrics(text) => {
                     if !logs_paused {
-                        events.push_front((Instant::now(), format!("metrics updated ({} bytes)", text.len())));
-                        if events.len() > EVENTS_CAP { events.pop_back(); }
+                        events.push_front((
+                            Instant::now(),
+                            format!("metrics updated ({} bytes)", text.len()),
+                        ));
+                        if events.len() > EVENTS_CAP {
+                            events.pop_back();
+                        }
                     }
                 }
                 AppEvent::Logs(text) => {
                     if !logs_paused {
                         if let Some(last) = text.lines().last() {
-                            events.push_front((Instant::now(), format!("logs: {}", last)));
-                            if events.len() > EVENTS_CAP { events.pop_back(); }
+                            events.push_front((Instant::now(), format!("logs: {last}")));
+                            if events.len() > EVENTS_CAP {
+                                events.pop_back();
+                            }
                         }
+                    }
+                }
+                AppEvent::LogComponents(list) => {
+                    log_components = list;
+                    if log_components.is_empty() {
+                        logs_list_state.select(None);
+                        let mut sel = selected_component.lock().await;
+                        sel.clear();
+                    } else {
+                        let idx = logs_list_state
+                            .selected()
+                            .unwrap_or(0)
+                            .min(log_components.len() - 1);
+                        logs_list_state.select(Some(idx));
+                        if let Some(name) = log_components.get(idx) {
+                            let mut sel = selected_component.lock().await;
+                            *sel = name.clone();
+                        }
+                    }
+                }
+                AppEvent::LogTail(lines) => {
+                    log_lines.clear();
+                    for l in lines {
+                        log_lines.push_back(l);
                     }
                 }
             }
@@ -464,7 +576,14 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 }
                 View::Deployments => draw_placeholder(f, cols[1], "Deployments: no data yet"),
                 View::Topology => draw_topology(f, cols[1], &topo),
-                View::Logs => draw_logs(f, cols[1], &events, log_filter.as_deref(), logs_paused),
+                View::Events => draw_logs(f, cols[1], &events, log_filter.as_deref(), logs_paused),
+                View::Logs => draw_component_logs(
+                    f,
+                    cols[1],
+                    &log_components,
+                    &mut logs_list_state,
+                    &log_lines,
+                ),
                 View::Ops => {
                     draw_placeholder(f, cols[1], "Ops: use keybinds A/U/W to perform actions")
                 }
@@ -476,7 +595,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 draw_overlay(f, area, msg);
             }
             if let Some(buf) = &filter_input {
-                draw_overlay(f, area, &format!("/{}", buf));
+                draw_overlay(f, area, &format!("/{buf}"));
             }
         })?;
     }
@@ -519,12 +638,16 @@ fn on_key(
             *selected_nav = 3;
         }
         KeyCode::Char('5') => {
-            *view = View::Logs;
+            *view = View::Events;
             *selected_nav = 4;
         }
         KeyCode::Char('6') => {
-            *view = View::Ops;
+            *view = View::Logs;
             *selected_nav = 5;
+        }
+        KeyCode::Char('7') => {
+            *view = View::Ops;
+            *selected_nav = 6;
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if *selected_nav > 0 {
@@ -535,12 +658,13 @@ fn on_key(
                 1 => View::Peers,
                 2 => View::Deployments,
                 3 => View::Topology,
-                4 => View::Logs,
+                4 => View::Events,
+                5 => View::Logs,
                 _ => View::Ops,
             };
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if *selected_nav < 5 {
+            if *selected_nav < 6 {
                 *selected_nav += 1;
             }
             *view = match *selected_nav {
@@ -548,7 +672,8 @@ fn on_key(
                 1 => View::Peers,
                 2 => View::Deployments,
                 3 => View::Topology,
-                4 => View::Logs,
+                4 => View::Events,
+                5 => View::Logs,
                 _ => View::Ops,
             };
         }

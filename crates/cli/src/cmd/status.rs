@@ -1,14 +1,21 @@
+#![allow(clippy::collapsible_match)]
+
 use std::time::Duration;
 
 use futures::StreamExt;
 
 use common::{serialize_message, Command};
 
-use super::util::{new_swarm, mdns_warmup, NodeBehaviourEvent};
+use super::util::{mdns_warmup, new_swarm, NodeBehaviourEvent};
 
 pub async fn status() -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap())?;
+    libp2p::Swarm::listen_on(
+        &mut swarm,
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse::<libp2p::Multiaddr>()
+            .unwrap(),
+    )?;
 
     swarm
         .behaviour_mut()
@@ -19,20 +26,18 @@ pub async fn status() -> anyhow::Result<()> {
         mdns_warmup(&mut swarm).await;
         loop {
             match swarm.select_next_some().await {
-                libp2p::swarm::SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(ev)) => {
-                    match ev {
-                        libp2p::mdns::Event::Discovered(list) => {
-                            for (peer, _addr) in list {
-                                swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
-                            }
-                        }
-                        libp2p::mdns::Event::Expired(list) => {
-                            for (peer, _addr) in list {
-                                swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer);
-                            }
+                libp2p::swarm::SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(ev)) => match ev {
+                    libp2p::mdns::Event::Discovered(list) => {
+                        for (peer, _addr) in list {
+                            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
                         }
                     }
-                }
+                    libp2p::mdns::Event::Expired(list) => {
+                        for (peer, _addr) in list {
+                            swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer);
+                        }
+                    }
+                },
                 libp2p::swarm::SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) => {
                     if let libp2p::gossipsub::Event::Message { message, .. } = ev {
                         if message.topic == topic_status.hash() {
@@ -54,4 +59,3 @@ pub async fn status() -> anyhow::Result<()> {
         }
     }
 }
-

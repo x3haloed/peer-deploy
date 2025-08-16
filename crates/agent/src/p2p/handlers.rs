@@ -4,15 +4,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
 use crate::runner::run_wasm_module_with_limits;
-use common::{
-    verify_bytes_ed25519, AgentUpgrade, Manifest, SignedManifest, sha256_hex,
-};
+use common::{sha256_hex, verify_bytes_ed25519, AgentUpgrade, Manifest, SignedManifest};
 
+use super::metrics::push_log;
+use super::metrics::SharedLogs;
 use super::state::{
     agent_data_dir, load_state, load_trusted_owner, save_state, save_trusted_owner,
 };
-use super::metrics::SharedLogs;
-use super::metrics::push_log;
 
 /// Handle an ApplyManifest command from the network.
 pub async fn handle_apply_manifest(
@@ -24,12 +22,16 @@ pub async fn handle_apply_manifest(
     let sig = match base64::engine::general_purpose::STANDARD.decode(&signed.signature_b64) {
         Ok(s) => s,
         Err(e) => {
-            let _ = tx.send(Err(format!("bad signature_b64: {}", e)));
+            let _ = tx.send(Err(format!("bad signature_b64: {e}")));
             return;
         }
     };
-    let ok = verify_bytes_ed25519(&signed.owner_pub_bs58, signed.manifest_toml.as_bytes(), &sig)
-        .unwrap_or(false);
+    let ok = verify_bytes_ed25519(
+        &signed.owner_pub_bs58,
+        signed.manifest_toml.as_bytes(),
+        &sig,
+    )
+    .unwrap_or(false);
     if !ok {
         let _ = tx.send(Err("manifest rejected (sig)".into()));
         return;
@@ -55,42 +57,44 @@ pub async fn handle_apply_manifest(
     // Verify and stage artifacts, then launch and persist version
     match verify_and_stage_artifacts(&signed.manifest_toml).await {
         Ok(staged) => {
-            if let Err(e) = launch_components(staged, &signed.manifest_toml).await {
-                let _ = tx.send(Err(format!("launch error: {}", e)));
+            if let Err(e) = launch_components(staged, &signed.manifest_toml, logs.clone()).await {
+                let _ = tx.send(Err(format!("launch error: {e}")));
                 return;
             }
             let mut state2 = load_state();
             state2.manifest_version = signed.version;
             save_state(&state2);
             let _ = tx.send(Ok(format!("manifest accepted v{}", signed.version)));
-            push_log(&logs, "apply", format!("manifest accepted v{}", signed.version)).await;
+            push_log(
+                &logs,
+                "apply",
+                format!("manifest accepted v{}", signed.version),
+            )
+            .await;
         }
         Err(e) => {
-            let _ = tx.send(Err(format!("manifest rejected (digest): {}", e)));
-            push_log(&logs, "apply", format!("manifest rejected (digest): {}", e)).await;
+            let _ = tx.send(Err(format!("manifest rejected (digest): {e}")));
+            push_log(&logs, "apply", format!("manifest rejected (digest): {e}")).await;
         }
     }
 }
 
 /// Handle an UpgradeAgent command.
-pub async fn handle_upgrade(
-    tx: UnboundedSender<Result<String, String>>,
-    pkg: AgentUpgrade,
-) {
+pub async fn handle_upgrade(tx: UnboundedSender<Result<String, String>>, pkg: AgentUpgrade) {
     use base64::Engine;
 
     // Decode signature and binary
     let sig = match base64::engine::general_purpose::STANDARD.decode(&pkg.signature_b64) {
         Ok(s) => s,
         Err(e) => {
-            let _ = tx.send(Err(format!("upgrade rejected (bad signature_b64: {})", e)));
+            let _ = tx.send(Err(format!("upgrade rejected (bad signature_b64: {e})")));
             return;
         }
     };
     let bin_bytes = match base64::engine::general_purpose::STANDARD.decode(&pkg.binary_b64) {
         Ok(b) => b,
         Err(e) => {
-            let _ = tx.send(Err(format!("upgrade rejected (bad binary_b64: {})", e)));
+            let _ = tx.send(Err(format!("upgrade rejected (bad binary_b64: {e})")));
             return;
         }
     };
@@ -144,16 +148,16 @@ pub async fn handle_upgrade(
         Ok(mut f) => {
             use tokio::io::AsyncWriteExt;
             if let Err(e) = f.write_all(&bin_bytes).await {
-                let _ = tx.send(Err(format!("upgrade rejected (write error: {})", e)));
+                let _ = tx.send(Err(format!("upgrade rejected (write error: {e})")));
                 return;
             }
             if let Err(e) = f.sync_all().await {
-                let _ = tx.send(Err(format!("upgrade rejected (fsync file: {})", e)));
+                let _ = tx.send(Err(format!("upgrade rejected (fsync file: {e})")));
                 return;
             }
         }
         Err(e) => {
-            let _ = tx.send(Err(format!("upgrade rejected (open error: {})", e)));
+            let _ = tx.send(Err(format!("upgrade rejected (open error: {e})")));
             return;
         }
     }
@@ -162,7 +166,8 @@ pub async fn handle_upgrade(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(&versioned_path, std::fs::Permissions::from_mode(0o755)).await;
+        let _ = tokio::fs::set_permissions(&versioned_path, std::fs::Permissions::from_mode(0o755))
+            .await;
     }
 
     // Fsync directory where the new binary lives (best-effort)
@@ -244,6 +249,7 @@ async fn verify_and_stage_artifacts(
 async fn launch_components(
     staged: std::collections::BTreeMap<String, std::path::PathBuf>,
     manifest_toml: &str,
+    logs: SharedLogs,
 ) -> anyhow::Result<()> {
     let manifest: Manifest = toml::from_str(manifest_toml)?;
     for (name, path) in staged {
@@ -252,13 +258,16 @@ async fn launch_components(
             let fuel = spec.fuel.unwrap_or(5_000_000);
             let epoch = spec.epoch_ms.unwrap_or(100);
             let p = path.to_string_lossy().to_string();
+            let logs = logs.clone();
+            let n = name.clone();
             tokio::spawn(async move {
-                if let Err(e) = run_wasm_module_with_limits(&p, mem, fuel, epoch).await {
-                    warn!(component=%name, error=%e, "component run failed");
+                if let Err(e) =
+                    run_wasm_module_with_limits(&p, &n, logs.clone(), mem, fuel, epoch).await
+                {
+                    warn!(component=%n, error=%e, "component run failed");
                 }
             });
         }
     }
     Ok(())
 }
-
