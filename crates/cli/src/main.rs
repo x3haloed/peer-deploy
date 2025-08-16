@@ -10,6 +10,7 @@ use libp2p::{
 };
 use tracing_subscriber::EnvFilter;
 use base64::Engine;
+use realm::tui;
 
 use common::{serialize_message, Command, REALM_CMD_TOPIC, REALM_STATUS_TOPIC, OwnerKeypair, SignedManifest, AgentUpgrade, sign_bytes_ed25519};
 use common::{InviteToken, InviteUnsigned, verify_bytes_ed25519};
@@ -109,6 +110,11 @@ async fn main() -> anyhow::Result<()> {
         .with_target(false)
         .compact()
         .init();
+
+    // If no args, launch TUI as default operating mode
+    if std::env::args().len() == 1 {
+        return tui::run_tui().await;
+    }
 
     let cli = Cli::parse();
 

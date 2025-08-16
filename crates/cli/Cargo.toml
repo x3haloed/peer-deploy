@@ -20,3 +20,7 @@ libp2p.workspace = true
 
 common = { path = "../common" }
 tokio.workspace = true
+ratatui = { version = "0.26", default-features = false, features = ["crossterm"] }
+crossterm = "0.27"
+sysinfo = "0.30"
+unicode-width = "0.1"

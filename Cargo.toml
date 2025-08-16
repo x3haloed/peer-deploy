@@ -4,7 +4,6 @@ members = [
 	"crates/cli",
 	"crates/common",
 	"components/hello",
-	"crates/tui",
 ]
 resolver = "2"
 
