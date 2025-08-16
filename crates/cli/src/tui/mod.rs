@@ -353,16 +353,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 ));
                             }
                             KeyCode::Up | KeyCode::Char('k') => {
-                                if view == View::Logs {
-                                    if let Some(idx) = logs_list_state.selected() {
-                                        let new = idx.saturating_sub(1);
-                                        logs_list_state.select(Some(new));
-                                        if let Some(name) = log_components.get(new) {
-                                            let mut sel = selected_component.lock().await;
-                                            *sel = name.clone();
-                                        }
-                                    }
-                                } else if on_key(
+                                if on_key(
                                     key,
                                     &mut view,
                                     &mut nav_collapsed,
@@ -373,17 +364,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 }
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
-                                if view == View::Logs {
-                                    let next =
-                                        logs_list_state.selected().unwrap_or(0).saturating_add(1);
-                                    if next < log_components.len() {
-                                        logs_list_state.select(Some(next));
-                                        if let Some(name) = log_components.get(next) {
-                                            let mut sel = selected_component.lock().await;
-                                            *sel = name.clone();
-                                        }
-                                    }
-                                } else if on_key(
+                                if on_key(
                                     key,
                                     &mut view,
                                     &mut nav_collapsed,
@@ -391,6 +372,33 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                     &mut peers_table_state,
                                 )? {
                                     break;
+                                }
+                            }
+                            KeyCode::PageUp => {
+                                if view == View::Logs {
+                                    if let Some(idx) = logs_list_state.selected() {
+                                        let new = idx.saturating_sub(1);
+                                        logs_list_state.select(Some(new));
+                                        if let Some(name) = log_components.get(new) {
+                                            let mut sel = selected_component.lock().await;
+                                            *sel = name.clone();
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::PageDown => {
+                                if view == View::Logs {
+                                    let next = logs_list_state
+                                        .selected()
+                                        .unwrap_or(0)
+                                        .saturating_add(1);
+                                    if next < log_components.len() {
+                                        logs_list_state.select(Some(next));
+                                        if let Some(name) = log_components.get(next) {
+                                            let mut sel = selected_component.lock().await;
+                                            *sel = name.clone();
+                                        }
+                                    }
                                 }
                             }
                             _ => {
