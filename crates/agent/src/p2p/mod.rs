@@ -282,9 +282,10 @@ pub async fn run_agent(
                                         let tx2 = tx.clone();
                                         let logs2 = logs.clone();
                                         let m2 = metrics.clone();
+                                        let sup = supervisor.clone();
                                         tokio::spawn(async move {
                                             push_log(&logs2, "apply", format!("apply v{}", signed.version)).await;
-                                            handle_apply_manifest(tx2, signed, logs2, m2).await;
+                                            handle_apply_manifest(tx2, signed, logs2, m2, sup).await;
                                         });
                                     }
                                     Command::UpgradeAgent(pkg) => {

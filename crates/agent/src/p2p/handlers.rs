@@ -1,10 +1,9 @@
 use anyhow::anyhow;
 use base64::Engine;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::warn;
 
-use crate::runner::run_wasm_module_with_limits;
-use crate::supervisor::DesiredComponent;
+// use crate::runner::run_wasm_module_with_limits; // supervisor handles launching
+use crate::supervisor::{DesiredComponent, Supervisor};
 use common::{sha256_hex, verify_bytes_ed25519, AgentUpgrade, Manifest, SignedManifest};
 
 use super::metrics::{push_log, Metrics};
@@ -20,6 +19,7 @@ pub async fn handle_apply_manifest(
     signed: SignedManifest,
     logs: SharedLogs,
     metrics: std::sync::Arc<Metrics>,
+    supervisor: std::sync::Arc<Supervisor>,
 ) {
     // Signature check
     let sig = match base64::engine::general_purpose::STANDARD.decode(&signed.signature_b64) {
@@ -75,11 +75,8 @@ pub async fn handle_apply_manifest(
                         );
                     }
                 }
-                // Supervisor desired set will be set by the caller (p2p::run_agent) if wired
-            }
-            if let Err(e) = launch_components(staged, &signed.manifest_toml, logs.clone(), metrics.clone()).await {
-                let _ = tx.send(Err(format!("launch error: {e}")));
-                return;
+                // Update supervisor desired set
+                supervisor.set_desired(desired).await;
             }
             let mut state2 = load_state();
             state2.manifest_version = signed.version;
@@ -266,31 +263,4 @@ async fn verify_and_stage_artifacts(
     Ok(staged)
 }
 
-async fn launch_components(
-    staged: std::collections::BTreeMap<String, std::path::PathBuf>,
-    manifest_toml: &str,
-    logs: SharedLogs,
-    metrics: std::sync::Arc<Metrics>,
-) -> anyhow::Result<()> {
-    let manifest: Manifest = toml::from_str(manifest_toml)?;
-    for (name, path) in staged {
-        if let Some(spec) = manifest.components.get(&name) {
-            let mem = spec.memory_max_mb.unwrap_or(64);
-            let fuel = spec.fuel.unwrap_or(5_000_000);
-            let epoch = spec.epoch_ms.unwrap_or(100);
-            let p = path.to_string_lossy().to_string();
-            let logs = logs.clone();
-            let n = name.clone();
-            let m = metrics.clone();
-            tokio::spawn(async move {
-                // mark as running while the component task is active
-                m.inc_components_running();
-                let res = run_wasm_module_with_limits(&p, &n, logs.clone(), mem, fuel, epoch).await;
-                if let Err(e) = res { warn!(component=%n, error=%e, "component run failed"); }
-                // decrement when it exits
-                m.dec_components_running();
-            });
-        }
-    }
-    Ok(())
-}
+// legacy ad-hoc launcher retained for reference; superseded by supervisor

@@ -168,7 +168,7 @@ pub fn draw_peers(
     peer_latency: &BTreeMap<String, u128>,
     state: &mut TableState,
 ) {
-    let cols = ["Peer ID", "Agent", "RTT(ms)", "Last ping", "Tags"];
+    let cols = ["Peer ID", "Agent", "RTT(ms)", "Last ping", "Tags", "Drift"];
     let header = ratatui::widgets::Row::new(cols.iter().map(|h| {
         Line::from(*h).style(
             Style::default()
@@ -180,22 +180,31 @@ pub fn draw_peers(
     for (id, p) in peers.iter() {
         let secs = p.last_ping.elapsed().as_secs();
         let rtt = peer_latency.get(id).cloned().unwrap_or_default();
-        rows.push(ratatui::widgets::Row::new(vec![
+        let drift = p
+            .desired_components
+            .saturating_sub(p.running_components);
+        let mut row = ratatui::widgets::Row::new(vec![
             id.clone(),
             p.agent_version.to_string(),
             rtt.to_string(),
             format!("{}s", secs),
             p.roles.clone(),
-        ]));
+            drift.to_string(),
+        ]);
+        if drift > 0 {
+            row = row.style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        }
+        rows.push(row);
     }
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(45),
+            Constraint::Percentage(40),
             Constraint::Length(8),
             Constraint::Length(8),
             Constraint::Length(10),
-            Constraint::Percentage(29),
+            Constraint::Percentage(24),
+            Constraint::Length(6),
         ],
     )
     .header(header)
