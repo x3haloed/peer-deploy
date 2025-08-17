@@ -75,6 +75,10 @@ On startup, the agent prints a copy‑pastable libp2p multiaddr to stdout, for e
 ```
 Agent listen multiaddr: /ip4/0.0.0.0/udp/12345/quic-v1/p2p/12D3KooW...
 ```
+The agent now persists its chosen UDP listen port in `~/.local/share/realm-agent/listen_port` and reuses it on restart so peers can reconnect consistently. To set the port explicitly before starting:
+```bash
+REALM_LISTEN_PORT=60856 realm configure --owner <ed25519:...>
+```
 
 ### Discover and view status
 From the TUI, peers discovered via mDNS will show up automatically. Or use the command:

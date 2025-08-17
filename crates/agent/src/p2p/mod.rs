@@ -17,7 +17,7 @@ use crate::runner::run_wasm_module_with_limits;
 use common::{
     deserialize_message, serialize_message, Command, Status, REALM_CMD_TOPIC, REALM_STATUS_TOPIC,
 };
-use state::{load_bootstrap_addrs, load_state, load_trusted_owner};
+use state::{load_bootstrap_addrs, load_state, load_trusted_owner, load_listen_port, save_listen_port};
 
 mod handlers;
 pub mod metrics;
@@ -116,7 +116,12 @@ pub async fn run_agent(
         .with_behaviour(|_| Ok(behaviour))?
         .build();
 
-    let listen_addr: Multiaddr = "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap();
+    // Use a persisted UDP port if available to keep stable multiaddrs across restarts
+    let listen_addr: Multiaddr = if let Some(port) = load_listen_port() {
+        format!("/ip4/0.0.0.0/udp/{}/quic-v1", port).parse().unwrap()
+    } else {
+        "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap()
+    };
     Swarm::listen_on(&mut swarm, listen_addr)?;
     // Dial configured bootstrap peers
     for addr in load_bootstrap_addrs().into_iter() {
@@ -522,6 +527,10 @@ pub async fn run_agent(
                         // Persist PeerId for CLI whoami/debug
                         let _ = std::fs::create_dir_all(state::agent_data_dir());
                         let _ = std::fs::write(state::agent_data_dir().join("node.peer"), local_peer_id.to_string());
+                        // Persist the chosen UDP port for stable restarts
+                        if let Some(port) = address.iter().find_map(|p| match p { libp2p::multiaddr::Protocol::Udp(p) => Some(p), _ => None }) {
+                            save_listen_port(port);
+                        }
                         info!(%dial, "listening");
                     }
                     other => {

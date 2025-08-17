@@ -24,6 +24,10 @@ fn bootstrap_path() -> PathBuf {
     agent_data_dir().join("bootstrap.json")
 }
 
+fn listen_port_path() -> PathBuf {
+    agent_data_dir().join("listen_port")
+}
+
 pub fn load_trusted_owner() -> Option<String> {
     fs::read_to_string(trusted_owner_path())
         .ok()
@@ -34,6 +38,20 @@ pub fn load_trusted_owner() -> Option<String> {
 pub fn save_trusted_owner(pub_bs58: &str) {
     let _ = fs::create_dir_all(agent_data_dir());
     let _ = fs::write(trusted_owner_path(), pub_bs58.as_bytes());
+}
+
+/// Load a persisted UDP listen port for QUIC if present.
+pub fn load_listen_port() -> Option<u16> {
+    if let Ok(s) = fs::read_to_string(listen_port_path()) {
+        if let Ok(p) = s.trim().parse::<u16>() { return Some(p); }
+    }
+    None
+}
+
+/// Persist the UDP listen port so the agent can reuse it across restarts.
+pub fn save_listen_port(port: u16) {
+    let _ = fs::create_dir_all(agent_data_dir());
+    let _ = fs::write(listen_port_path(), port.to_string().as_bytes());
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
