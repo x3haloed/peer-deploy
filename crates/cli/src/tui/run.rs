@@ -7,7 +7,8 @@ use crossterm::{
 };
 use crossterm::style::ResetColor;
 use futures::StreamExt;
-use libp2p::{swarm::SwarmEvent, Multiaddr};
+use libp2p::{swarm::SwarmEvent, Multiaddr, PeerId};
+use libp2p::multiaddr::Protocol;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -171,7 +172,12 @@ pub async fn run_tui() -> anyhow::Result<()> {
                     }
                 }
                 Some(addr) = dial_rx.recv() => {
-                    let _ = libp2p::Swarm::dial(&mut swarm, addr);
+                    // Hint gossipsub with explicit peer if /p2p/<PeerId> suffix is present
+                    let peer_opt: Option<PeerId> = addr.iter().filter_map(|p| if let Protocol::P2p(peer) = p { Some(peer) } else { None }).last();
+                    if let Some(pid) = peer_opt { swarm.behaviour_mut().gossipsub.add_explicit_peer(&pid); }
+                    if let Err(e) = libp2p::Swarm::dial(&mut swarm, addr.clone()) {
+                        let _ = tx_swarm.send(AppEvent::PublishError(format!("dial submit error: {e} ({addr})")));
+                    }
                 }
             }
         }
