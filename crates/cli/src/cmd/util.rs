@@ -38,6 +38,17 @@ pub async fn write_bootstrap(addrs: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn read_bootstrap() -> anyhow::Result<Vec<String>> {
+    let path = agent_data_dir_cli()?.join("bootstrap.json");
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let list: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_default();
+            Ok(list)
+        }
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
 #[derive(libp2p::swarm::NetworkBehaviour)]
 pub struct NodeBehaviour {
     pub gossipsub: gossipsub::Behaviour,

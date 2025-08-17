@@ -50,6 +50,29 @@ pub async fn run_tui() -> anyhow::Result<()> {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
     let (dial_tx, mut dial_rx) = mpsc::unbounded_channel::<Multiaddr>();
 
+    // Bootstrap: auto-dial any persisted peers from the shared agent bootstrap.json
+    {
+        let tx_boot = tx.clone();
+        let dial_boot = dial_tx.clone();
+        tokio::spawn(async move {
+            if let Ok(list) = crate::cmd::util::read_bootstrap().await {
+                for addr in list {
+                    let s = addr.trim().to_string();
+                    let s_norm = if s.starts_with('/') { s } else { format!("/{}", s) };
+                    match s_norm.parse::<Multiaddr>() {
+                        Ok(ma) => {
+                            let _ = dial_boot.send(ma);
+                            let _ = tx_boot.send(AppEvent::PublishError(format!("bootstrap dial: {}", s_norm)));
+                        }
+                        Err(_) => {
+                            let _ = tx_boot.send(AppEvent::PublishError(format!("bad bootstrap addr: {}", s_norm)));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     // Tick task
     let tx_tick = tx.clone();
     tokio::spawn(async move {

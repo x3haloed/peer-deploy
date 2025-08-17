@@ -293,6 +293,15 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                             if !addr.starts_with('/') { addr.insert(0, '/'); }
                             if let Ok(ma) = addr.parse::<Multiaddr>() {
                                 app.events.push_front((Instant::now(), format!("dialing {addr}")));
+                                // persist into bootstrap for next runs
+                                let addr_clone = addr.clone();
+                                tokio::spawn(async move {
+                                    let mut list = crate::cmd::util::read_bootstrap().await.unwrap_or_default();
+                                    if !list.iter().any(|s| s == &addr_clone) {
+                                        list.push(addr_clone);
+                                        let _ = crate::cmd::util::write_bootstrap(&list).await;
+                                    }
+                                });
                                 app.dial_tx.send(ma).ok();
                             } else {
                                 app.events
