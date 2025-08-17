@@ -345,13 +345,13 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                         app.upgrade_wizard = None;
                     }
                     KeyCode::Char('c') | KeyCode::Char('C') => {
-                        if app.view == View::Peers {
-                            app.overlay_msg = Some((
-                                Instant::now(),
-                                "🌐 Connect: Enter / paste a libp2p multiaddr".into(),
-                            ));
-                            app.filter_input = Some(String::new());
-                        }
+                        // Always jump to Peers view and open connect prompt
+                        app.view = View::Peers;
+                        app.overlay_msg = Some((
+                            Instant::now(),
+                            "🌐 Connect: Enter / paste a libp2p multiaddr".into(),
+                        ));
+                        app.filter_input = Some(String::new());
                     }
                     KeyCode::Char('w') | KeyCode::Char('W') => {
                         let cmd = Command::Run {
