@@ -356,13 +356,45 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                         app.upgrade_wizard = None;
                     }
                     KeyCode::Char('c') | KeyCode::Char('C') => {
-                        // Always jump to Peers view and open connect prompt
-                        app.view = View::Peers;
-                        app.overlay_msg = Some((
-                            Instant::now(),
-                            "🌐 Connect: Enter / paste a libp2p multiaddr".into(),
-                        ));
-                        app.filter_input = Some(String::new());
+                        if app.install_wizard == Some(InstallWizard::Choose) {
+                            // Install CLI tool using the currently running binary
+                            let tx_evt = app.tx.clone();
+                            #[cfg(unix)]
+                            tokio::spawn(async move {
+                                match crate::cmd::install_cli(false).await {
+                                    Ok(_) => {
+                                        let _ = tx_evt.send(AppEvent::PublishError(
+                                            "✅ Install: CLI installed".into(),
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        let _ = tx_evt.send(AppEvent::PublishError(format!(
+                                            "❌ Install: CLI failed - {e}"
+                                        )));
+                                    }
+                                }
+                            });
+                            #[cfg(not(unix))]
+                            {
+                                let _ = app.tx.send(AppEvent::PublishError(
+                                    "❌ Install: Unsupported platform".into(),
+                                ));
+                            }
+                            app.overlay_msg = Some((
+                                Instant::now(),
+                                "🚀 Install: CLI installation started".into(),
+                            ));
+                            app.install_wizard = None;
+                            app.filter_input = None;
+                        } else {
+                            // Connect flow
+                            app.view = View::Peers;
+                            app.overlay_msg = Some((
+                                Instant::now(),
+                                "🌐 Connect: Enter / paste a libp2p multiaddr".into(),
+                            ));
+                            app.filter_input = Some(String::new());
+                        }
                     }
                     KeyCode::Char('w') | KeyCode::Char('W') => {
                         let cmd = Command::Run {
