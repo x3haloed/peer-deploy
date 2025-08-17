@@ -65,6 +65,15 @@ enum Commands {
         /// Preopen mounts (repeatable): host=/abs/path,guest=/www[,ro=true]
         #[arg(long = "mount")]
         mounts: Vec<String>,
+        /// Declare service ports (repeatable), e.g. 8080/tcp or 9090/udp
+        #[arg(long = "port")]
+        ports: Vec<String>,
+        /// Static route (repeatable): path=/web[,host=app.local],dir=/abs/dir
+        #[arg(long = "route-static")]
+        routes_static: Vec<String>,
+        /// Gateway bind policy: local|public
+        #[arg(long)]
+        visibility: Option<String>,
         /// Target specific peers by PeerId (repeatable)
         #[arg(long = "peer")]
         target_peers: Vec<String>,
@@ -131,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Invite { bootstrap, realm_id, exp_mins } => cmd::invite(bootstrap, realm_id, exp_mins).await,
         Commands::Enroll { token, binary, system } => cmd::enroll(token, binary, system).await,
         Commands::Configure { owner, bootstrap } => cmd::configure(owner, bootstrap).await,
-        Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, target_peers, target_tags, start).await,
+        Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
     }
 }
 

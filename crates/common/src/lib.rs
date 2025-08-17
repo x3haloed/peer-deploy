@@ -101,6 +101,9 @@ pub struct PushUnsigned {
     pub start: bool,                // start immediately
     pub binary_sha256_hex: String,  // digest of binary_b64
     pub mounts: Option<Vec<MountSpec>>, // preopened directories for ad-hoc push
+    pub ports: Option<Vec<ServicePort>>, // declared guest ports
+    pub routes: Option<Vec<HttpRoute>>,  // HTTP routes
+    pub visibility: Option<Visibility>,  // gateway binding policy
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +127,9 @@ pub struct ComponentSpec {
     pub epoch_ms: Option<u64>,
     pub replicas: Option<u32>,
     pub mounts: Option<Vec<MountSpec>>, // preopened directories
+    pub ports: Option<Vec<ServicePort>>, // declared guest ports (Service)
+    pub routes: Option<Vec<HttpRoute>>,  // HTTP routing (Exposure)
+    pub visibility: Option<Visibility>,  // gateway binding policy
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +138,36 @@ pub struct MountSpec {
     pub guest: String, // guest path inside WASI sandbox (e.g., "/www")
     #[serde(default)]
     pub ro: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServicePort {
+    pub name: Option<String>,
+    pub port: u16,
+    #[serde(default = "default_protocol")] 
+    pub protocol: Protocol,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Protocol {
+    Tcp,
+    Udp,
+}
+
+fn default_protocol() -> Protocol { Protocol::Tcp }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpRoute {
+    pub host: Option<String>,     // match host if provided
+    pub path_prefix: String,      // e.g., "/app"
+    pub to_port: Option<u16>,     // target ServicePort.port (for proxying)
+    pub static_dir: Option<String>, // serve static files from host directory
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Visibility {
+    Local,
+    Public,
 }
 
 pub fn sign_bytes_ed25519(private_hex: &str, data: &[u8]) -> anyhow::Result<Vec<u8>> {

@@ -67,6 +67,16 @@ impl Supervisor {
         });
     }
 
+    /// Return a snapshot of desired components (cheap clone for gateway).
+    pub async fn get_desired_snapshot(&self) -> BTreeMap<String, DesiredComponent> {
+        self.desired.lock().await.clone()
+    }
+
+    /// Get one desired component by name, if present.
+    pub async fn get_component(&self, name: &str) -> Option<DesiredComponent> {
+        self.desired.lock().await.get(name).cloned()
+    }
+
     async fn reconcile_once(&self) {
         let desired = self.desired.lock().await.clone();
         for (name, desired) in desired.into_iter() {

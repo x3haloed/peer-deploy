@@ -22,6 +22,7 @@ use state::{load_bootstrap_addrs, load_state};
 mod handlers;
 pub mod metrics;
 mod state;
+mod gateway;
 
 use handlers::{handle_apply_manifest, handle_upgrade};
 use metrics::{push_log, serve_metrics, Metrics, SharedLogs};
@@ -167,6 +168,50 @@ pub async fn run_agent(
         logs.clone(),
         "127.0.0.1:9920",
     ));
+
+    // Spawn gateway manager: always serve loopback; add public bind if visibility requires it
+    {
+        let sup_for_local = supervisor.clone();
+        let m = metrics.clone();
+        tokio::spawn(async move {
+            gateway::serve_gateway(sup_for_local, Some(m), "127.0.0.1:8080").await;
+        });
+    }
+    {
+        let sup_for_public = supervisor.clone();
+        let metrics_for_public = metrics.clone();
+        let roles_for_public = roles.clone();
+        tokio::spawn(async move {
+            let mut public_spawned = false;
+            let mut intv = tokio::time::interval(Duration::from_secs(2));
+            loop {
+                intv.tick().await;
+                if !public_spawned {
+                    let desired = sup_for_public.get_desired_snapshot().await;
+                    let mut any_public = false;
+                    for (_name, comp) in desired.iter() {
+                        if let Some(vis) = &comp.spec.visibility {
+                            if matches!(vis, common::Visibility::Public) {
+                                any_public = true;
+                                break;
+                            }
+                        }
+                    }
+                    // gate public binding on 'edge' role present on this peer
+                    let is_edge = roles_for_public.iter().any(|r| r == "edge");
+                    if any_public && is_edge {
+                        // Best effort: start public gateway; if bind fails, log and continue loop
+                        let sup2 = sup_for_public.clone();
+                        let m2 = metrics_for_public.clone();
+                        tokio::spawn(async move {
+                            gateway::serve_gateway(sup2, Some(m2), "0.0.0.0:8080").await;
+                        });
+                        public_spawned = true;
+                    }
+                }
+            }
+        });
+    }
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     // track msgs per second by counting status publishes
@@ -426,6 +471,9 @@ pub async fn run_agent(
                                                                                     epoch_ms: pkg.unsigned.epoch_ms,
                                                                                     replicas: Some(pkg.unsigned.replicas),
                                                                                     mounts: pkg.unsigned.mounts.clone(),
+                                                                                    ports: pkg.unsigned.ports.clone(),
+                                                                                    routes: pkg.unsigned.routes.clone(),
+                                                                                    visibility: pkg.unsigned.visibility.clone(),
                                                                                 };
                                                                                 let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec };
                                                                                 supervisor.upsert_component(desired).await;

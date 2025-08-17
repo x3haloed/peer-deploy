@@ -57,6 +57,8 @@ pub struct PushWizard {
     pub epoch_ms: u64,
     pub tags_csv: String,
     pub start: bool,
+    pub static_dir: String,
+    pub route_path_prefix: String,
 }
 
 impl Default for PushWizard {
@@ -70,6 +72,8 @@ impl Default for PushWizard {
             epoch_ms: 100,
             tags_csv: String::new(),
             start: true,
+            static_dir: String::new(),
+            route_path_prefix: "/".to_string(),
         }
     }
 }

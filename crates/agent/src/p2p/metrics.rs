@@ -49,6 +49,10 @@ pub struct Metrics {
     pub mem_current_bytes: AtomicU64,
     pub mem_peak_bytes: AtomicU64,
     pub msgs_per_sec: AtomicU64,
+    // Gateway metrics
+    pub gateway_requests_total: AtomicU64,
+    pub gateway_errors_total: AtomicU64,
+    pub gateway_last_latency_ms: AtomicU64,
 }
 
 impl Metrics {
@@ -72,6 +76,9 @@ impl Metrics {
             mem_current_bytes: AtomicU64::new(0),
             mem_peak_bytes: AtomicU64::new(0),
             msgs_per_sec: AtomicU64::new(0),
+            gateway_requests_total: AtomicU64::new(0),
+            gateway_errors_total: AtomicU64::new(0),
+            gateway_last_latency_ms: AtomicU64::new(0),
         }
     }
 
@@ -212,6 +219,21 @@ impl Metrics {
         out.push_str(&format!(
             "agent_msgs_per_sec {}\n",
             self.msgs_per_sec.load(Ordering::Relaxed)
+        ));
+        out.push_str("# TYPE gateway_requests_total counter\n");
+        out.push_str(&format!(
+            "gateway_requests_total {}\n",
+            self.gateway_requests_total.load(Ordering::Relaxed)
+        ));
+        out.push_str("# TYPE gateway_errors_total counter\n");
+        out.push_str(&format!(
+            "gateway_errors_total {}\n",
+            self.gateway_errors_total.load(Ordering::Relaxed)
+        ));
+        out.push_str("# TYPE gateway_last_latency_ms gauge\n");
+        out.push_str(&format!(
+            "gateway_last_latency_ms {}\n",
+            self.gateway_last_latency_ms.load(Ordering::Relaxed)
         ));
         out
     }

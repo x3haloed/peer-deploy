@@ -131,13 +131,25 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                                     wiz.step = 6;
                                     app.overlay_msg = Some((
                                         Instant::now(),
-                                        "🚀 Deploy: Start immediately? (y/N)".into(),
+                                        "📁 Deploy: Static dir to serve (optional)".into(),
+                                    ));
+                                    app.filter_input = Some(String::new());
+                                }
+                                6 => {
+                                    wiz.static_dir = input_val;
+                                    wiz.step = 7;
+                                    app.overlay_msg = Some((
+                                        Instant::now(),
+                                        "🌐 Deploy: Route path prefix (default: /)".into(),
                                     ));
                                     app.filter_input = Some(String::new());
                                 }
                                 _ => {
                                     let yes = input_val.to_lowercase();
-                                    wiz.start = yes == "y" || yes == "yes" || yes.is_empty();
+                                    if !yes.is_empty() {
+                                        wiz.route_path_prefix = yes;
+                                    }
+                                    // default start = true from wizard default; allow overriding via 'y/N' later if we re-order
                                     let target_peer: Option<String> = if matches!(app.view, View::Peers | View::Deployments) {
                                         app.peers_table_state
                                             .selected()
@@ -158,6 +170,8 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                                         .map(|s| s.trim().to_string())
                                         .filter(|s| !s.is_empty())
                                         .collect();
+                                    let route_path = wiz.route_path_prefix.clone();
+                                    let static_dir = wiz.static_dir.clone();
                                     tokio::spawn(async move {
                                         let key_path = match dirs::config_dir() {
                                             Some(mut d) => {
@@ -180,7 +194,7 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                                                     match tokio::fs::read(&file).await {
                                                         Ok(bin) => {
                                                             let digest = sha256_hex(&bin);
-                                                            let unsigned = PushUnsigned {
+                                                            let mut unsigned = PushUnsigned {
                                                                 alg: "ed25519".into(),
                                                                 owner_pub_bs58: kp
                                                                     .public_bs58
@@ -202,7 +216,13 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                                                                 start: wiz.start,
                                                                 binary_sha256_hex: digest,
                                                                 mounts: None,
+                                                                ports: None,
+                                                                routes: None,
+                                                                visibility: None,
                                                             };
+                                                            if !static_dir.is_empty() {
+                                                                unsigned.routes = Some(vec![common::HttpRoute { host: None, path_prefix: if route_path.is_empty() { "/".into() } else { route_path }, to_port: None, static_dir: Some(static_dir) }]);
+                                                            }
                                                             if let Ok(unsigned_bytes) =
                                                                 serde_json::to_vec(&unsigned)
                                                             {
