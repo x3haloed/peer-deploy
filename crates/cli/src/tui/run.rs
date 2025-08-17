@@ -107,7 +107,9 @@ pub async fn run_tui() -> anyhow::Result<()> {
                                 }
                             }
                         }
-                        SwarmEvent::NewListenAddr { .. } => {}
+                        SwarmEvent::NewListenAddr { address, .. } => {
+                            let _ = tx_swarm.send(AppEvent::PublishError(format!("listener: {address}")));
+                        }
                         SwarmEvent::ConnectionEstablished { .. } => { connected = connected.saturating_add(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
                         SwarmEvent::ConnectionClosed { .. } => { connected = connected.saturating_sub(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
                         SwarmEvent::Behaviour(NodeBehaviourEvent::Ping(ev)) => {
@@ -115,9 +117,23 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         }
                         SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(ev)) => {
                             match ev {
-                                libp2p::mdns::Event::Discovered(list) => { let _ = tx_swarm.send(AppEvent::MdnsDiscovered(list)); }
-                                libp2p::mdns::Event::Expired(list) => { let _ = tx_swarm.send(AppEvent::MdnsExpired(list)); }
+                                libp2p::mdns::Event::Discovered(list) => {
+                                    // Keep gossipsub aware of freshly discovered peers beyond warm-up
+                                    for (peer, _addr) in &list {
+                                        swarm.behaviour_mut().gossipsub.add_explicit_peer(peer);
+                                    }
+                                    let _ = tx_swarm.send(AppEvent::MdnsDiscovered(list));
+                                }
+                                libp2p::mdns::Event::Expired(list) => {
+                                    for (peer, _addr) in &list {
+                                        swarm.behaviour_mut().gossipsub.remove_explicit_peer(peer);
+                                    }
+                                    let _ = tx_swarm.send(AppEvent::MdnsExpired(list));
+                                }
                             }
+                        }
+                        SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                            let _ = tx_swarm.send(AppEvent::PublishError(format!("dial error to {:?}: {}", peer_id, error)));
                         }
                         _ => {}
                     }

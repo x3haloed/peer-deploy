@@ -289,8 +289,10 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                             return Ok(false);
                         }
                         if app.view == View::Peers {
-                            let addr = buf.clone();
+                            let mut addr = buf.trim().to_string();
+                            if !addr.starts_with('/') { addr.insert(0, '/'); }
                             if let Ok(ma) = addr.parse::<Multiaddr>() {
+                                app.events.push_front((Instant::now(), format!("dialing {addr}")));
                                 app.dial_tx.send(ma).ok();
                             } else {
                                 app.events
@@ -469,8 +471,8 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
             }
         }
         AppEvent::Connected(n) => {
-            app.events
-                .push_front((Instant::now(), format!("connected: {n}")));
+            app.link_count = n;
+            app.events.push_front((Instant::now(), format!("connected: {n}")));
         }
         AppEvent::Ping(peer, dur) => {
             app.peer_latency.insert(peer.to_string(), dur.as_millis());
