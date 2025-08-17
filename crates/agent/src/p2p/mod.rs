@@ -130,6 +130,9 @@ pub async fn run_agent(
         }
     }
 
+    // Track current number of established connections to report in Status
+    let mut link_count: usize = 0;
+
     // channel for run results to publish status from the main loop
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<String, String>>();
 
@@ -275,6 +278,7 @@ pub async fn run_agent(
                     tags: roles.clone(),
                     drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                     trusted_owner_pub_bs58: load_trusted_owner(),
+                    links: link_count as u64,
                 };
                 if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -315,6 +319,7 @@ pub async fn run_agent(
                     tags: roles.clone(),
                     drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                     trusted_owner_pub_bs58: load_trusted_owner(),
+                    links: link_count as u64,
                 };
                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     warn!(error=%e, "failed to publish heartbeat status");
@@ -361,6 +366,7 @@ pub async fn run_agent(
                                             tags: roles.clone(),
                                             drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                                             trusted_owner_pub_bs58: load_trusted_owner(),
+                                            links: link_count as u64,
                                         };
                                         if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                                             metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -432,6 +438,7 @@ pub async fn run_agent(
                                             tags: roles.clone(),
                                             drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
                                             trusted_owner_pub_bs58: load_trusted_owner(),
+                                            links: link_count as u64,
                                         };
                                         if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                                             metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -532,6 +539,12 @@ pub async fn run_agent(
                             save_listen_port(port);
                         }
                         info!(%dial, "listening");
+                    }
+                    SwarmEvent::ConnectionEstablished { .. } => {
+                        link_count = link_count.saturating_add(1);
+                    }
+                    SwarmEvent::ConnectionClosed { .. } => {
+                        link_count = link_count.saturating_sub(1);
                     }
                     other => {
                         if cfg!(debug_assertions) { info!(?other, "swarm event"); }

@@ -60,14 +60,10 @@ pub fn draw_overview(
         .title("🏥 Cluster Health")
         .title_style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
 
-    let health_content = format!(
-        "Peers: {}\nStatus: {}",
+    let health_content = format!("Peers: {}\nLinks: {}\nStatus: {}",
         peer_count,
-        if peer_count > 0 {
-            "Healthy"
-        } else {
-            "No Peers"
-        }
+        msgs.last().cloned().unwrap_or(0),
+        if peer_count > 0 { "Healthy" } else { "No Peers" }
     );
 
     let health_para = Paragraph::new(health_content)

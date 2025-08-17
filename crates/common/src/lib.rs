@@ -29,6 +29,8 @@ pub struct Status {
     pub drift: i64,
     #[serde(default)]
     pub trusted_owner_pub_bs58: Option<String>,
+    #[serde(default)]
+    pub links: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
