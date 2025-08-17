@@ -109,6 +109,11 @@ enum Commands {
         #[arg(long)]
         bootstrap: Vec<String>,
     },
+    /// Diagnose a QUIC dial attempt to a multiaddr; prints handshake results
+    DiagQuic {
+        #[arg(value_name = "MULTIADDR")]
+        addr: String,
+    },
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -140,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Invite { bootstrap, realm_id, exp_mins } => cmd::invite(bootstrap, realm_id, exp_mins).await,
         Commands::Enroll { token, binary, system } => cmd::enroll(token, binary, system).await,
         Commands::Configure { owner, bootstrap } => cmd::configure(owner, bootstrap).await,
+        Commands::DiagQuic { addr } => cmd::diag_quic(addr).await,
         Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
     }
 }
