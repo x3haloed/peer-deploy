@@ -55,6 +55,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```bash
 realm init
 realm key show   # prints your owner public key (ed25519:BASE58...)
+realm whoami     # prints CLI owner pub, agent's trusted owner (if set), and agent PeerId (if running)
 ```
 
 ### Configure an agent
@@ -195,6 +196,8 @@ cargo build -p agent
 
 ## Security model (short)
 - **Trust root**: your owner public key; agents enforce signed messages and TOFU for first owner.
+- Status includes `trusted_owner_pub_bs58` so UIs can display who the agent trusts.
+- On startup the agent logs its PeerId and writes it to `~/.local/share/realm-agent/node.peer`.
 - **Payload trust**: digest‑pinned artifacts (sha256) verified before execution.
 - **Transport**: libp2p with Noise; discovery via mDNS and optional bootstrap multiaddrs.
 

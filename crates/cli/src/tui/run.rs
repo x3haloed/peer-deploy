@@ -7,7 +7,7 @@ use crossterm::{
 };
 use crossterm::style::ResetColor;
 use futures::StreamExt;
-use libp2p::{swarm::{SwarmEvent, dial_opts::DialOpts}, Multiaddr, PeerId};
+use libp2p::{swarm::{SwarmEvent, dial_opts::DialOpts}, Multiaddr};
 use libp2p::multiaddr::Protocol;
 use ratatui::{
     backend::CrosstermBackend,
@@ -134,7 +134,14 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             let _ = tx_swarm.send(AppEvent::PublishError(format!("listener: {address}")));
                         }
-                        SwarmEvent::ConnectionEstablished { .. } => { connected = connected.saturating_add(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
+                        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                            connected = connected.saturating_add(1);
+                            let _ = tx_swarm.send(AppEvent::Connected(connected));
+                            // Surface immediate confirmation like the diag tool
+                            let _ = tx_swarm.send(AppEvent::PublishError(format!(
+                                "connection established with {peer_id}"
+                            )));
+                        }
                         SwarmEvent::ConnectionClosed { .. } => { connected = connected.saturating_sub(1); let _ = tx_swarm.send(AppEvent::Connected(connected)); }
                         SwarmEvent::Behaviour(NodeBehaviourEvent::Ping(ev)) => {
                             if let Ok(rtt) = ev.result { let _ = tx_swarm.send(AppEvent::Ping(ev.peer, rtt)); }
@@ -159,7 +166,13 @@ pub async fn run_tui() -> anyhow::Result<()> {
                         SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                             let _ = tx_swarm.send(AppEvent::PublishError(format!("dial error to {:?}: {}", peer_id, error)));
                         }
-                        _ => {}
+                        other => {
+                            // Catch-all debug surfacing of swarm events to help troubleshoot early connectivity
+                            let _ = tx_swarm.send(AppEvent::PublishError(format!(
+                                "swarm event: {:?}",
+                                other
+                            )));
+                        }
                     }
                 }
                 Some(cmd) = cmd_rx.recv() => {
@@ -210,6 +223,15 @@ pub async fn run_tui() -> anyhow::Result<()> {
         dial_tx.clone(),
         selected_component.clone(),
     );
+    // Load local owner pubkey for display, if present
+    if let Ok(dir) = crate::cmd::util::owner_dir() {
+        let path = dir.join("owner.key.json");
+        if let Ok(bytes) = tokio::fs::read(&path).await {
+            if let Ok(kp) = serde_json::from_slice::<common::OwnerKeypair>(&bytes) {
+                app.owner_pub = Some(kp.public_bs58);
+            }
+        }
+    }
     let metrics_url = "http://127.0.0.1:9920/metrics".to_string();
     let logs_events_url = "http://127.0.0.1:9920/logs?component=__all__&tail=200".to_string();
     let logs_base_url = "http://127.0.0.1:9920/logs".to_string();
@@ -303,6 +325,7 @@ pub async fn run_tui() -> anyhow::Result<()> {
                 app.peers.len(),
                 app.link_count,
                 &local_peer_id,
+                app.owner_pub.as_deref(),
                 &theme,
             );
             let body = chunks[1];

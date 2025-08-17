@@ -30,6 +30,15 @@ pub async fn write_trusted_owner(pub_bs58: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Read the currently configured/trusted owner key from the agent data dir (if any).
+pub async fn read_trusted_owner() -> anyhow::Result<Option<String>> {
+    let path = agent_data_dir_cli()?.join("owner.pub");
+    match tokio::fs::read_to_string(&path).await {
+        Ok(s) => Ok(Some(s.trim().to_string())),
+        Err(_) => Ok(None),
+    }
+}
+
 pub async fn write_bootstrap(addrs: &[String]) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(&agent_data_dir_cli()?).await?;
     let path = agent_data_dir_cli()?.join("bootstrap.json");

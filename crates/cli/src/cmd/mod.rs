@@ -9,6 +9,7 @@ pub mod enroll;
 pub mod configure;
 pub mod push;
 pub mod diag;
+pub mod whoami;
 
 pub use init::init;
 pub use init::key_show;
@@ -23,4 +24,5 @@ pub use enroll::enroll;
 pub use configure::configure;
 pub use push::push;
 pub use diag::diag_quic;
+pub use whoami::whoami;
 

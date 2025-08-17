@@ -17,6 +17,7 @@ pub fn draw_header_tabs(
     peer_count: usize,
     link_count: usize,
     local_peer_id: &PeerId,
+    owner_pub: Option<&str>,
     theme: &ThemeColors,
 ) {
     let time = chrono::Local::now().format("%H:%M:%S").to_string();
@@ -26,7 +27,7 @@ pub fn draw_header_tabs(
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(area);
 
-    let status_line = Line::from(vec![
+    let mut parts = vec![
         Span::styled(
             " realm ",
             Style::default()
@@ -46,12 +47,21 @@ pub fn draw_header_tabs(
         ),
         Span::styled(" • ", Style::default().fg(theme.muted)),
         Span::styled(
-            format!("{:.8}…", local_peer_id.to_string()),
+            format!("peer {:.8}…", local_peer_id.to_string()),
             Style::default().fg(theme.muted),
         ),
-        Span::styled(" • ", Style::default().fg(theme.muted)),
-        Span::styled(time, Style::default().fg(theme.muted)),
-    ]);
+    ];
+    if let Some(op) = owner_pub {
+        parts.push(Span::styled(" • ", Style::default().fg(theme.muted)));
+        parts.push(Span::styled(
+            format!("owner {:.12}…", op),
+            Style::default().fg(theme.muted),
+        ));
+    }
+    parts.push(Span::styled(" • ", Style::default().fg(theme.muted)));
+    parts.push(Span::styled(time, Style::default().fg(theme.muted)));
+
+    let status_line = Line::from(parts);
 
     let title_para = Paragraph::new(status_line).block(Block::default());
     f.render_widget(title_para, chunks[0]);

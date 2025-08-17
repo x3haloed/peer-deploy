@@ -27,6 +27,8 @@ pub struct Status {
     pub mem_percent: u64,
     pub tags: Vec<String>,
     pub drift: i64,
+    #[serde(default)]
+    pub trusted_owner_pub_bs58: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

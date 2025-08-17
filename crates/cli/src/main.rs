@@ -114,6 +114,8 @@ enum Commands {
         #[arg(value_name = "MULTIADDR")]
         addr: String,
     },
+    /// Print identities: CLI owner key, agent trusted owner, agent PeerId
+    Whoami,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -146,6 +148,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Enroll { token, binary, system } => cmd::enroll(token, binary, system).await,
         Commands::Configure { owner, bootstrap } => cmd::configure(owner, bootstrap).await,
         Commands::DiagQuic { addr } => cmd::diag_quic(addr).await,
+        Commands::Whoami => cmd::whoami().await,
         Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
     }
 }

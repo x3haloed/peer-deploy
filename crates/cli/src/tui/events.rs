@@ -474,7 +474,11 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                 },
             );
             app.events
-                .push_front((Instant::now(), format!("status from {}", status.node_id)));
+                .push_front((Instant::now(), format!(
+                    "status from {}{}",
+                    status.node_id,
+                    match status.trusted_owner_pub_bs58 { Some(ref o) => format!(" (owner={})", &o[..o.len().min(20)]), None => "".into() }
+                )));
             while app.events.len() > EVENTS_CAP {
                 app.events.pop_back();
             }

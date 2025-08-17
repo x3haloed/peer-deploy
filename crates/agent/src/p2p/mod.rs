@@ -17,7 +17,7 @@ use crate::runner::run_wasm_module_with_limits;
 use common::{
     deserialize_message, serialize_message, Command, Status, REALM_CMD_TOPIC, REALM_STATUS_TOPIC,
 };
-use state::{load_bootstrap_addrs, load_state};
+use state::{load_bootstrap_addrs, load_state, load_trusted_owner};
 
 mod handlers;
 pub mod metrics;
@@ -155,7 +155,13 @@ pub async fn run_agent(
         });
     }
 
-    info!(peer = %local_peer_id, "agent started");
+    // Surface identity and trusted owner for clarity
+    let trusted_owner = load_trusted_owner();
+    if let Some(owner) = &trusted_owner {
+        info!(peer = %local_peer_id, owner_pub = %owner, "agent started");
+    } else {
+        info!(peer = %local_peer_id, "agent started (no trusted owner yet; TOFU will set on first signed command)");
+    }
 
     // Initialize gauges from persisted state
     let boot_state = load_state();
@@ -263,6 +269,7 @@ pub async fn run_agent(
                     mem_percent,
                     tags: roles.clone(),
                     drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
+                    trusted_owner_pub_bs58: load_trusted_owner(),
                 };
                 if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -302,6 +309,7 @@ pub async fn run_agent(
                     mem_percent,
                     tags: roles.clone(),
                     drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
+                    trusted_owner_pub_bs58: load_trusted_owner(),
                 };
                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     warn!(error=%e, "failed to publish heartbeat status");
@@ -347,6 +355,7 @@ pub async fn run_agent(
                                             mem_percent,
                                             tags: roles.clone(),
                                             drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
+                                            trusted_owner_pub_bs58: load_trusted_owner(),
                                         };
                                         if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                                             metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -417,6 +426,7 @@ pub async fn run_agent(
                                             mem_percent,
                                             tags: roles.clone(),
                                             drift: metrics.components_desired.load(Ordering::Relaxed) as i64 - metrics.components_running.load(Ordering::Relaxed) as i64,
+                                            trusted_owner_pub_bs58: load_trusted_owner(),
                                         };
                                         if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                                             metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -509,6 +519,9 @@ pub async fn run_agent(
                         let dial = format!("{address}/p2p/{local_peer_id}");
                         // Print to stdout so users always see a copy-pastable address
                         println!("Agent listen multiaddr: {dial}");
+                        // Persist PeerId for CLI whoami/debug
+                        let _ = std::fs::create_dir_all(state::agent_data_dir());
+                        let _ = std::fs::write(state::agent_data_dir().join("node.peer"), local_peer_id.to_string());
                         info!(%dial, "listening");
                     }
                     other => {
