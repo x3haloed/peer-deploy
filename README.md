@@ -13,6 +13,7 @@
 - **Signed intents**: owner key signs manifests and upgrades; agents enforce signature and TOFU owner trust.
 - **Metrics & Logs**: Prometheus metrics and lightweight log tailing served by the agent.
 - **Ad‑hoc or desired state**: push a single component, or apply a signed TOML manifest.
+- **Gateway & exposure (MVP)**: local HTTP gateway on `127.0.0.1:8080` that serves component web content from a static directory route or a `/www` mount; optional public bind on peers tagged with `--role edge` when a component requests `visibility=Public`.
 
 ## Getting started
 
@@ -68,6 +69,12 @@ realm-agent --role dev --role darwin --role arm64
 ```
 The agent exposes metrics and logs on `http://127.0.0.1:9920`.
 
+On startup, the agent prints a copy‑pastable libp2p multiaddr to stdout, for example:
+
+```
+Agent listen multiaddr: /ip4/0.0.0.0/udp/12345/quic-v1/p2p/12D3KooW...
+```
+
 ### Discover and view status
 From the TUI, peers discovered via mDNS will show up automatically. Or use the command:
 ```bash
@@ -89,6 +96,39 @@ realm push \
 ```
 - Or from the TUI: press `O` and follow the wizard.
 - Selection can target specific peer IDs (`--peer`) or any peers with matching tags (`--tag`).
+
+#### Expose a web app (static content, MVP)
+- Serve from a static directory using a route (local only by default):
+```bash
+realm push \
+  --name web \
+  --file /path/to/web.wasm \
+  --route-static path=/web,dir=/abs/path/to/site \
+  --visibility local \
+  --tag dev \
+  --start
+```
+Then open:
+- `http://127.0.0.1:8080/` for an index of components with web content
+- `http://127.0.0.1:8080/web/...` for your static files under that prefix
+
+- Alternatively, mount a host directory as `/www` and browse `/{component}/...`:
+```bash
+realm push \
+  --name web \
+  --file /path/to/web.wasm \
+  --mount host=/abs/path/to/site,guest=/www \
+  --visibility local \
+  --start
+```
+
+- Public exposure (edge peers only): run the agent with the `edge` role and set `--visibility public` when pushing:
+```bash
+realm-agent --role edge ...
+realm push --name web --file /path/to/web.wasm \
+  --route-static path=/,dir=/abs/site --visibility public --start
+```
+If binding succeeds, the gateway will also listen on `0.0.0.0:8080`.
 
 ### Apply a signed manifest
 Create a TOML file that lists components and digests (sha256) and apply it:
@@ -117,6 +157,7 @@ Upgrade behavior on agents:
 - **Status query**: `realm status`
 - **Install from TUI**: press `I` → choose CLI or Agent
 - **Push component**: `realm push ...` or `O` in TUI
+- **Connect to peer in TUI**: on the Peers tab press `C`, paste a multiaddr, Enter
 - **Apply manifest**: `realm apply --file realm.toml --version N`
 - **Upgrade agents**: `realm upgrade --file ./agent --version N [--peer ...] [--tag ...]` or `U` in TUI
 - **Configure trust/bootstrap on node**: `realm configure --owner <pub> --bootstrap <addr>...`
@@ -133,11 +174,13 @@ Upgrade behavior on agents:
 - Metrics (Prometheus): `http://127.0.0.1:9920/metrics`
 - Logs (plain text): `http://127.0.0.1:9920/logs?component=__all__&tail=200`
 - TUI polls these endpoints to render overview tiles and logs.
+  - Gateway metrics included: `gateway_requests_total`, `gateway_errors_total`, `gateway_last_latency_ms`
 
 ## Notes & limits
 - WASI component should export `run` (command world). If no export is present, the agent will log that and complete without error.
 - On macOS, background services are not configured automatically (no systemd). If you want auto-start at login, we can add a `launchd` plist; open an issue.
 - The agent’s memory metrics currently report process RSS as a proxy. When Wasmtime exposes per-component stats we’ll switch to those.
+- Gateway (MVP) serves static directories via routes or `/www` mounts. HTTP proxying into component handlers and TLS are planned next.
 
 ## Development
 - Build debug:
