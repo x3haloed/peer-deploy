@@ -618,4 +618,7 @@ pub async fn run_agent(
             }
         }
     }
+    
+    // This code is unreachable since the main loop runs forever
+    // The cleanup will be handled by the graceful shutdown in main.rs
 }

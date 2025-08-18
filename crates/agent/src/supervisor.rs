@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{atomic::{AtomicUsize, Ordering}, Arc};
+use tokio::task::JoinHandle;
 
 use tracing::{info, warn};
 
@@ -21,6 +22,7 @@ pub struct Supervisor {
     metrics: Arc<Metrics>,
     desired: tokio::sync::Mutex<BTreeMap<String, DesiredComponent>>,
     counts: tokio::sync::Mutex<HashMap<String, Arc<AtomicUsize>>>,
+    tasks: tokio::sync::Mutex<HashMap<String, Vec<JoinHandle<()>>>>,
 }
 
 impl Supervisor {
@@ -30,6 +32,7 @@ impl Supervisor {
             metrics,
             desired: tokio::sync::Mutex::new(BTreeMap::new()),
             counts: tokio::sync::Mutex::new(HashMap::new()),
+            tasks: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -99,6 +102,28 @@ impl Supervisor {
         // Note: minimal loop does not scale down replicas yet.
     }
 
+    /// Clean up tasks for a given component
+    pub async fn cleanup_component(&self, component_name: &str) {
+        let mut tasks = self.tasks.lock().await;
+        if let Some(handles) = tasks.remove(component_name) {
+            for handle in handles {
+                handle.abort();
+            }
+            info!(component=%component_name, "Cleaned up component tasks");
+        }
+    }
+
+    /// Clean up all running tasks
+    pub async fn cleanup_all(&self) {
+        let mut tasks = self.tasks.lock().await;
+        for (component, handles) in tasks.drain() {
+            for handle in handles {
+                handle.abort();
+            }
+            info!(component=%component, "Cleaned up all tasks");
+        }
+    }
+
     async fn launch_replica(&self, desired: DesiredComponent, count: Arc<AtomicUsize>) {
         let logs = self.logs.clone();
         let metrics = self.metrics.clone();
@@ -126,7 +151,7 @@ impl Supervisor {
         metrics.inc_components_running();
         count.fetch_add(1, Ordering::Relaxed);
         let name_run = name.clone();
-        tokio::spawn(async move {
+        let task_handle = tokio::spawn(async move {
             let res = run_wasm_module_with_limits(&path, &name_run, logs.clone(), mem, fuel, epoch, Some(metrics.clone()), desired.spec.mounts.clone()).await;
             if let Err(e) = &res { warn!(component=%name_run, error=%e, "replica crashed"); }
             // restart on crash by decrementing and letting next reconcile add back
@@ -134,6 +159,11 @@ impl Supervisor {
             metrics.inc_restarts_total();
             count.fetch_sub(1, Ordering::Relaxed);
         });
+        
+        // Track the task for cleanup
+        let mut tasks = self.tasks.lock().await;
+        tasks.entry(name.clone()).or_insert_with(Vec::new).push(task_handle);
+        
         info!(component=%name, "replica started");
     }
 }
