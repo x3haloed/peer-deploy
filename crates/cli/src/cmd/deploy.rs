@@ -2,7 +2,7 @@ use anyhow::Context;
 
 use common::{sha256_hex, sign_bytes_ed25519, serialize_message, Command, OwnerKeypair, PushPackage, PushUnsigned, Visibility};
 
-use super::util::{mdns_warmup, new_swarm, owner_dir};
+use super::util::{mdns_warmup, new_swarm, owner_dir, dial_bootstrap};
 use base64::Engine;
 
 pub async fn deploy_component(
@@ -76,6 +76,7 @@ pub async fn deploy_component(
         "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap(),
     )?;
     mdns_warmup(&mut swarm).await;
+    dial_bootstrap(&mut swarm).await;
 
     // load owner key
     let dir = owner_dir()?;
@@ -110,11 +111,41 @@ pub async fn deploy_component(
         signature_b64: base64::engine::general_purpose::STANDARD.encode(sig),
     };
 
-    libp2p::Swarm::behaviour_mut(&mut swarm)
+    // Drive the swarm for a short window so the publish actually transmits.
+    use futures::StreamExt;
+    let _ = libp2p::Swarm::behaviour_mut(&mut swarm)
         .gossipsub
-        .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg)))?;
-
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg.clone())));
+    let start = std::time::Instant::now();
+    let deadline = std::time::Duration::from_secs(3);
+    let mut republish = tokio::time::interval(std::time::Duration::from_millis(700));
+    loop {
+        if start.elapsed() >= deadline { break; }
+        tokio::select! {
+            _ = republish.tick() => {
+                let _ = libp2p::Swarm::behaviour_mut(&mut swarm)
+                    .gossipsub
+                    .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg.clone())));
+            }
+            Some(event) = swarm.next() => {
+                if let libp2p::swarm::SwarmEvent::Behaviour(super::util::NodeBehaviourEvent::Mdns(ev)) = event {
+                    match ev {
+                        libp2p::mdns::Event::Discovered(list) => {
+                            for (peer, _addr) in list {
+                                libp2p::Swarm::behaviour_mut(&mut swarm).gossipsub.add_explicit_peer(&peer);
+                            }
+                        }
+                        libp2p::mdns::Event::Expired(list) => {
+                            for (peer, _addr) in list {
+                                libp2p::Swarm::behaviour_mut(&mut swarm).gossipsub.remove_explicit_peer(&peer);
+                            }
+                        }
+                    }
+                }
+            }
+            else => { break; }
+        }
+    }
     Ok(())
 }
 
