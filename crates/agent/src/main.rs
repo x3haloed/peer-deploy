@@ -2,7 +2,6 @@ mod p2p;
 mod runner;
 mod supervisor;
 mod cmd;
-mod tui;
 mod web;
 
 use clap::{Parser, Subcommand};
@@ -19,28 +18,6 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Run the agent (default mode when no subcommand specified)
-    Agent {
-        /// Optional WASM module path to run at startup
-        #[arg(long)]
-        wasm: Option<String>,
-
-        /// Maximum memory in MB for the WASM instance
-        #[arg(long, default_value_t = 64)]
-        memory_max_mb: u64,
-
-        /// Initial fuel units to provide to WASM
-        #[arg(long, default_value_t = 5_000_000)]
-        fuel: u64,
-
-        /// Epoch deadline interval in milliseconds
-        #[arg(long, default_value_t = 100)]
-        epoch_ms: u64,
-
-        /// Roles/tags this agent advertises (repeat flag for multiple)
-        #[arg(long = "role")]
-        roles: Vec<String>,
-    },
     /// Generate local owner key
     Init,
     /// Display owner public key
@@ -171,8 +148,6 @@ enum Commands {
         #[arg(long, default_value_t = true)]
         start: bool,
     },
-    /// Launch the TUI interface
-    Tui,
     /// Start management web interface
     Manage {
         /// Authentication method (for now, always authenticates)
@@ -194,49 +169,38 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    // Default behavior: if no subcommand specified, start TUI
-    let command = cli.command.unwrap_or_else(|| {
-        // If invoked as "realm-agent" with no args, default to agent mode
-        // If invoked as just CLI commands, default to TUI
-        Commands::Tui
-    });
+    // Default behavior: if no subcommand specified, run the agent
+    let command = cli.command;
 
     match command {
-        Commands::Agent { wasm, memory_max_mb, fuel, epoch_ms, roles } => {
+        None => {
             let shutdown = setup_shutdown_handler();
             tokio::select! {
-                result = p2p::run_agent(wasm, memory_max_mb, fuel, epoch_ms, roles) => result,
+                result = p2p::run_agent(None, 64, 5_000_000, 100, vec![]) => result,
                 _ = shutdown => {
                     info!("Shutdown signal received, stopping agent gracefully");
                     Ok(())
                 }
             }
         },
-        Commands::Tui => {
-            let shutdown = setup_shutdown_handler();
-            tokio::select! {
-                result = tui::run_tui() => result,
-                _ = shutdown => Ok(())
-            }
-        },
-        Commands::Init => cmd::init().await,
-        Commands::KeyShow => cmd::key_show().await,
-        Commands::Apply { wasm, file, version } => cmd::apply(wasm, file, version).await,
-        Commands::Status => cmd::status().await,
+        Some(Commands::Init) => cmd::init().await,
+        Some(Commands::KeyShow) => cmd::key_show().await,
+        Some(Commands::Apply { wasm, file, version }) => cmd::apply(wasm, file, version).await,
+        Some(Commands::Status) => cmd::status().await,
         #[cfg(unix)]
-        Commands::Install { binary, system } => cmd::install(binary, system).await,
+        Some(Commands::Install { binary, system }) => cmd::install(binary, system).await,
         #[cfg(not(unix))]
-        Commands::Install { .. } => Err(anyhow::anyhow!("install is only supported on Unix-like systems with systemd")),
-        Commands::Upgrade { file, version, target_peers, target_tags } =>
+        Some(Commands::Install { .. }) => Err(anyhow::anyhow!("install is only supported on Unix-like systems with systemd")),
+        Some(Commands::Upgrade { file, version, target_peers, target_tags }) =>
             cmd::upgrade(file, version, target_peers, target_tags).await,
-        Commands::Invite { bootstrap, realm_id, exp_mins } => cmd::invite(bootstrap, realm_id, exp_mins).await,
-        Commands::Enroll { token, binary, system } => cmd::enroll(token, binary, system).await,
-        Commands::Configure { owner, bootstrap } => cmd::configure(owner, bootstrap).await,
-        Commands::DiagQuic { addr } => cmd::diag_quic(addr).await,
-        Commands::Whoami => cmd::whoami().await,
-        Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
-        Commands::DeployComponent { path, package, profile, features, target_peers, target_tags, name, start } => cmd::deploy_component(path, package, profile, features, target_peers, target_tags, name, start).await,
-        Commands::Manage { owner_key, timeout } => {
+        Some(Commands::Invite { bootstrap, realm_id, exp_mins }) => cmd::invite(bootstrap, realm_id, exp_mins).await,
+        Some(Commands::Enroll { token, binary, system }) => cmd::enroll(token, binary, system).await,
+        Some(Commands::Configure { owner, bootstrap }) => cmd::configure(owner, bootstrap).await,
+        Some(Commands::DiagQuic { addr }) => cmd::diag_quic(addr).await,
+        Some(Commands::Whoami) => cmd::whoami().await,
+        Some(Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start }) => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
+        Some(Commands::DeployComponent { path, package, profile, features, target_peers, target_tags, name, start }) => cmd::deploy_component(path, package, profile, features, target_peers, target_tags, name, start).await,
+        Some(Commands::Manage { owner_key, timeout }) => {
             use std::time::Duration;
             let timeout_duration = Duration::from_secs(timeout * 60);
             web::start_management_session(owner_key, timeout_duration).await

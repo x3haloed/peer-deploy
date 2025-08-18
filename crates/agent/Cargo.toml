@@ -48,11 +48,8 @@ mime_guess = "2.0"
 include_dir = "0.7"
 uuid = { version = "1.0", features = ["v4"] }
 
-# CLI dependencies (merged from CLI crate)
+# CLI dependencies (no TUI)
 clap.workspace = true
-ratatui = { version = "0.26", default-features = false, features = ["crossterm"] }
-crossterm = "0.27"
-unicode-width = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 common = { path = "../common" }

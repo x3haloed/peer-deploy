@@ -1,1 +1,0 @@
-// Wizard drawing functions - currently unused but may be needed for future features
