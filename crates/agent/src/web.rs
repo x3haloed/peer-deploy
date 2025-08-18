@@ -149,25 +149,7 @@ struct LogQuery {
     component: Option<String>,
 }
 
-// Web server implementation
-pub async fn start_management_server(
-    port: u16,
-    session_id: String,
-    state: WebState,
-) -> Result<()> {
-    let app = create_app(state.clone(), session_id.clone());
-    
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    
-    info!("🌐 Management interface available at http://127.0.0.1:{}", port);
-    info!("🔒 Session ID: {}", session_id);
-    info!("🛑 Use Ctrl+C to terminate session");
-    
-    axum::serve(listener, app).await?;
-    
-    Ok(())
-}
+
 
 fn create_app(state: WebState, session_id: String) -> Router {
     // Authenticate the session immediately
@@ -326,16 +308,43 @@ pub async fn start_management_session(
     // Find an available port
     let port = find_available_port().await?;
     
+    // Print session info immediately
+    println!("🌐 Management interface available at http://127.0.0.1:{}", port);
+    println!("🔒 Session ID: {}", session_id);
+    println!("🛑 Use Ctrl+C to terminate session");
+    println!("⏱️  Session will timeout in {} minutes", timeout_duration.as_secs() / 60);
+    println!();
+    
     // Start the web server with timeout
-    let server_future = start_management_server(port, session_id, state);
+    let server_future = start_management_server_internal(port, session_id, state);
     
     match timeout(timeout_duration, server_future).await {
-        Ok(result) => result,
+        Ok(result) => {
+            println!("Management session ended");
+            result
+        },
         Err(_) => {
-            info!("Management session timed out");
+            println!("⏱️  Management session timed out");
             Ok(())
         }
     }
+}
+
+async fn start_management_server_internal(
+    port: u16,
+    session_id: String,
+    state: WebState,
+) -> Result<()> {
+    let app = create_app(state.clone(), session_id.clone());
+    
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    
+    info!("Management web server starting on port {}", port);
+    
+    axum::serve(listener, app).await?;
+    
+    Ok(())
 }
 
 async fn find_available_port() -> Result<u16> {
