@@ -25,3 +25,5 @@ world = "hello"
 [package.metadata.component.target.dependencies]
 "wasi:http" = { version = "0.2.7" }
 
+
+

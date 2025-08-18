@@ -1,6 +1,5 @@
 package hello:component;
 
 world hello {
-	import wasi:http/types@0.2.7;
 	export wasi:http/incoming-handler@0.2.7;
 }

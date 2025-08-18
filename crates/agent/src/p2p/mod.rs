@@ -469,30 +469,42 @@ pub async fn run_agent(
                                         // these are served over HTTP; no-op here for now
                                     }
                                     Command::PushComponent(pkg) => {
+                                        info!("Processing PushComponent command for component: {}", pkg.unsigned.component_name);
                                         // Selection: peer IDs or tags
                                         let sel_ids = &pkg.unsigned.target_peer_ids;
                                         let sel_tags = &pkg.unsigned.target_tags;
                                         let mut selected = true;
                                         if !sel_ids.is_empty() {
                                             selected = sel_ids.iter().any(|s| s == &local_peer_id.to_string());
+                                            info!("Target peer IDs: {:?}, selected by peer ID: {}", sel_ids, selected);
                                         }
                                         if selected && !sel_tags.is_empty() {
                                             // require at least one common tag
                                             selected = sel_tags.iter().any(|t| roles.contains(t));
+                                            info!("Target tags: {:?}, agent tags: {:?}, selected by tag: {}", sel_tags, roles, selected);
                                         }
+                                        info!("Component {} selection result: {}", pkg.unsigned.component_name, selected);
                                         if selected {
                                             // Verify signature and digest
+                                            info!("Starting signature verification for component {}", pkg.unsigned.component_name);
                                             if let Ok(unsigned_bytes) = serde_json::to_vec(&pkg.unsigned) {
+                                                info!("Serialized unsigned data successfully");
                                                 if let Ok(sig_bytes) = base64::engine::general_purpose::STANDARD.decode(&pkg.signature_b64) {
-                                                    if common::verify_bytes_ed25519(&pkg.unsigned.owner_pub_bs58, &unsigned_bytes, &sig_bytes).unwrap_or(false) {
+                                                    info!("Decoded signature successfully");
+                                                    let sig_valid = common::verify_bytes_ed25519(&pkg.unsigned.owner_pub_bs58, &unsigned_bytes, &sig_bytes).unwrap_or(false);
+                                                    info!("Signature verification result: {} for owner: {}", sig_valid, pkg.unsigned.owner_pub_bs58);
+                                                    if sig_valid {
                                                         if let Ok(bin_bytes) = base64::engine::general_purpose::STANDARD.decode(&pkg.binary_b64) {
                                                             let digest = common::sha256_hex(&bin_bytes);
                                                             if digest == pkg.unsigned.binary_sha256_hex {
                                                                 // TOFU owner trust like other commands
+                                                                info!("Binary digest verified successfully");
                                                                 if let Some(trusted) = crate::p2p::state::load_trusted_owner() {
+                                                                    info!("Found trusted owner: {}, command owner: {}", trusted, pkg.unsigned.owner_pub_bs58);
                                                                     if trusted != pkg.unsigned.owner_pub_bs58 {
                                                                         warn!("push: owner mismatch");
                                                                     } else {
+                                                                        info!("Owner verified, staging artifact for component {}", pkg.unsigned.component_name);
                                                                         // Stage artifact
                                                                         let stage_dir = crate::p2p::state::agent_data_dir().join("artifacts");
                                                                         if tokio::fs::create_dir_all(&stage_dir).await.is_ok() {
@@ -504,6 +516,7 @@ pub async fn run_agent(
                                                                             }
                                                                             push_log(&logs, &pkg.unsigned.component_name, format!("pushed {} bytes (sha256={})", bin_bytes.len(), &digest[..16])).await;
                                                                             if pkg.unsigned.start {
+                                                                                info!("Component {} marked for start, creating spec and scheduling", pkg.unsigned.component_name);
                                                                                 let spec = common::ComponentSpec {
                                                                                     source: format!("file:{}", file_path.display()),
                                                                                     sha256_hex: pkg.unsigned.binary_sha256_hex.clone(),
@@ -517,13 +530,16 @@ pub async fn run_agent(
                                                                                     visibility: pkg.unsigned.visibility.clone(),
                                                                                 };
                                                                                 let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec };
+                                                                                info!("Calling supervisor.upsert_component for {}", pkg.unsigned.component_name);
                                                                                 supervisor.upsert_component(desired).await;
+                                                                                info!("Component {} successfully scheduled", pkg.unsigned.component_name);
                                                                                 push_log(&logs, &pkg.unsigned.component_name, "scheduled (upsert)" ).await;
                                                                             }
                                                                         }
                                                                     }
                                                                 } else {
                                                                     // TOFU: accept first signed push and trust this owner, also stage and schedule
+                                                                    info!("No trusted owner found, performing TOFU for owner: {}", pkg.unsigned.owner_pub_bs58);
                                                                     crate::p2p::state::save_trusted_owner(&pkg.unsigned.owner_pub_bs58);
                                                                     let stage_dir = crate::p2p::state::agent_data_dir().join("artifacts");
                                                                     if tokio::fs::create_dir_all(&stage_dir).await.is_ok() {

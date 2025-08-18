@@ -46,6 +46,7 @@ impl ResourceLimiter for MemoryLimiter {
 struct StoreData {
     table: ResourceTable,
     wasi: wasmtime_wasi::WasiCtx,
+    http: WasiHttpCtx,
     limiter: MemoryLimiter,
 }
 
@@ -56,6 +57,11 @@ impl wasmtime_wasi::WasiView for StoreData {
     fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
         &mut self.wasi
     }
+}
+
+impl WasiHttpView for StoreData {
+    fn ctx(&mut self) -> &mut WasiHttpCtx { &mut self.http }
+    fn table(&mut self) -> &mut ResourceTable { &mut self.table }
 }
 
 pub async fn run_wasm_module_with_limits(
@@ -72,6 +78,7 @@ pub async fn run_wasm_module_with_limits(
 
     let mut cfg = Config::new();
     cfg.wasm_component_model(true)
+        .async_support(true)
         .wasm_multi_memory(true)
         .epoch_interruption(true)
         .consume_fuel(true);
@@ -154,6 +161,7 @@ pub async fn run_wasm_module_with_limits(
         StoreData {
             table: ResourceTable::new(),
             wasi,
+            http: WasiHttpCtx::new(),
             limiter,
         },
     );
