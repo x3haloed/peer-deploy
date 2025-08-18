@@ -165,6 +165,16 @@ pub async fn handle_upgrade(
         }
     }
 
+    // If the package specifies a target platform, enforce it explicitly here as well
+    if let Some(ref plat) = pkg.target_platform {
+        let host = host_platform_string();
+        if &host != plat {
+            push_log(&logs, "upgrade", format!("upgrade rejected (platform {} != {})", host, plat)).await;
+            let _ = tx.send(Err(format!("upgrade rejected (platform {} != {})", host, plat)));
+            return;
+        }
+    }
+
     // Version monotonicity
     let mut state = load_state();
     if pkg.version <= state.agent_version {

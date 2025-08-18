@@ -441,6 +441,16 @@ pub async fn run_agent(
                                         if selected && !sel_tags.is_empty() {
                                             selected = sel_tags.iter().any(|t| roles.contains(t));
                                         }
+                                        // Optional platform prefilter: if pkg specifies a target platform, pre-check against host
+                                        if selected {
+                                            if let Some(ref plat) = pkg.target_platform {
+                                                // normalize rust target triples to our os/arch strings
+                                                let host = format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH);
+                                                if &host != plat {
+                                                    selected = false;
+                                                }
+                                            }
+                                        }
                                         if selected {
                                             let tx3 = tx.clone();
                                             let logs3 = logs.clone();

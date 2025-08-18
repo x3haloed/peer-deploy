@@ -71,6 +71,19 @@ class RealmApp {
         // Ops: Upgrade agent
         const upgradeForm = document.getElementById('upgrade-form');
         if (upgradeForm) {
+            const addBtn = document.getElementById('add-upgrade-row');
+            const rows = document.getElementById('upgrade-rows');
+            if (addBtn && rows) {
+                addBtn.addEventListener('click', () => {
+                    const row = document.createElement('div');
+                    row.className = 'grid grid-cols-1 md:grid-cols-2 gap-3';
+                    row.innerHTML = `
+                        <input type="file" name="file" accept="*/*" required class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                        <input type="text" name="platform" placeholder="platform (e.g., linux/x86_64)" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                    `;
+                    rows.appendChild(row);
+                });
+            }
             upgradeForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const fd = new FormData(upgradeForm);

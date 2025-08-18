@@ -298,8 +298,14 @@
                             <h3 class="font-semibold mb-4">Upgrade Agent</h3>
                             <form id="upgrade-form" class="space-y-4">
                                 <div>
-                                    <label for="upgrade-file" class="block text-sm text-gray-300 mb-1">Agent Binary</label>
-                                    <input type="file" id="upgrade-file" name="file" accept="*/*" required class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                    <label class="block text-sm text-gray-300 mb-1">Binaries</label>
+                                    <div id="upgrade-rows" class="space-y-3">
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            <input type="file" name="file" accept="*/*" required class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                            <input type="text" name="platform" placeholder="platform (e.g., linux/x86_64)" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                        </div>
+                                    </div>
+                                    <button id="add-upgrade-row" type="button" class="mt-2 border border-graphite px-3 py-1 rounded text-sm">+ Add another binary</button>
                                 </div>
                                 <div>
                                     <label for="upgrade-version" class="block text-sm text-gray-300 mb-1">Version</label>

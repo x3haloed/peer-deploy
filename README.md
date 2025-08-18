@@ -135,12 +135,18 @@ realm apply --file ./realm.toml --version 1
 - From the web UI: navigate to Ops → Upgrade Agent and upload the new binary.
 - Or via CLI:
 ```bash
+# Single platform (let agents sniff compatibility)
 realm upgrade --file ./target/release/agent --version 2 --tag dev
+
+# Explicit platform targeting (recommended for multi-arch fleets)
+realm upgrade --file ./agent-linux-x86_64 --version 3 --platform linux/x86_64 --tag prod
+realm upgrade --file ./agent-macos-arm64  --version 3 --platform macos/aarch64 --tag prod
 ```
 Upgrade behavior on agents:
 - Verifies signature on the raw binary bytes and checks owner matches trusted owner
 - Verifies sha256 digest
 - **Refuses downgrades** (requires higher version than running)
+- Verifies target platform via header sniff; optional explicit `target_platform` must match `os/arch`
 - Writes versioned binary, updates `current` symlink, spawns new process, exits old
 - Emits progress to the agent logs so you can observe each phase in the web UI
 

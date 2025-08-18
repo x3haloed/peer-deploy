@@ -84,6 +84,8 @@ pub struct AgentUpgrade {
     pub alg: String,            // "ed25519"
     pub owner_pub_bs58: String, // "ed25519:BASE58..."
     pub version: u64,           // monotonic
+    #[serde(default)]
+    pub target_platform: Option<String>, // e.g., "linux/x86_64"; optional for backward compat
     pub target_peer_ids: Vec<String>,
     pub target_tags: Vec<String>,
     pub binary_sha256_hex: String,
