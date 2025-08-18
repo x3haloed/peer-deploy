@@ -104,9 +104,7 @@ impl Metrics {
         self.restarts_total.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn add_fuel_used(&self, used: u64) {
-        self.fuel_used_total.fetch_add(used, Ordering::Relaxed);
-    }
+
 
     pub fn set_mem_current_bytes(&self, current: u64) {
         self.mem_current_bytes.store(current, Ordering::Relaxed);

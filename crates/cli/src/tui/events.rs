@@ -241,7 +241,7 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                                                     match tokio::fs::read(&file).await {
                                                         Ok(bin) => {
                                                             let digest = sha256_hex(&bin);
-                                                            let mut unsigned = PushUnsigned {
+                                                            let unsigned = PushUnsigned {
                                                                 alg: "ed25519".into(),
                                                                 owner_pub_bs58: kp
                                                                     .public_bs58

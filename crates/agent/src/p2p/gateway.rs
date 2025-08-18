@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tracing::{info, warn};
@@ -6,35 +5,6 @@ use tracing::{info, warn};
 use crate::supervisor::Supervisor;
 use crate::runner::invoke_http_component_once;
 use crate::p2p::metrics::Metrics;
-
-fn guess_content_type(path: &Path) -> &'static str {
-    if let Some(ext) = path.extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()) {
-        match ext.as_str() {
-            "html" | "htm" => "text/html; charset=utf-8",
-            "css" => "text/css; charset=utf-8",
-            "js" => "application/javascript; charset=utf-8",
-            "json" => "application/json; charset=utf-8",
-            "svg" => "image/svg+xml",
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "gif" => "image/gif",
-            "wasm" => "application/wasm",
-            _ => "application/octet-stream",
-        }
-    } else {
-        "application/octet-stream"
-    }
-}
-
-fn sanitize_rest(rest: &str) -> String {
-    let mut out = String::new();
-    for segment in rest.split('/') {
-        if segment.is_empty() || segment == "." || segment == ".." { continue; }
-        if !out.is_empty() { out.push('/'); }
-        out.push_str(segment);
-    }
-    out
-}
 
 pub async fn serve_gateway(supervisor: Arc<Supervisor>, metrics: Option<Arc<Metrics>>, bind_addr: &str) {
     let listener = match tokio::net::TcpListener::bind(bind_addr).await {
@@ -119,5 +89,3 @@ pub async fn serve_gateway(supervisor: Arc<Supervisor>, metrics: Option<Arc<Metr
         });
     }
 }
-
-

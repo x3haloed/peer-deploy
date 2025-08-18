@@ -19,7 +19,6 @@ pub use peers::draw_peers;
 pub use placeholder::draw_placeholder;
 pub use topology::draw_topology;
 pub use deployments::draw_deployments;
-pub use wizard::draw_wizard_dialog; // may be unused currently
 
 pub use theme::{get_theme, ThemeColors, ThemeKind};
 

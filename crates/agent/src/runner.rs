@@ -152,7 +152,7 @@ pub async fn run_wasm_module_with_limits(
     });
 
     // Track an approximate memory watermark to update metrics less often
-    let mut last_mem_bytes: u64 = 0;
+    let last_mem_bytes: u64 = 0;
     let limiter = MemoryLimiter {
         max_bytes: (memory_max_mb * 1024 * 1024) as usize,
     };
@@ -215,7 +215,6 @@ pub async fn run_wasm_module_with_limits(
         let approx = (memory_max_mb * 1024 * 1024) as u64;
         if approx != last_mem_bytes {
             m.set_mem_current_bytes(approx);
-            last_mem_bytes = approx;
         }
     }
 

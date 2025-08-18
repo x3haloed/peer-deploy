@@ -36,7 +36,7 @@ mod component_impl {
 #[cfg(not(feature = "component"))]
 mod non_component_stub {
     // No-op library to keep workspace `cargo build` happy when not building the component target.
-    pub const BUILD_INFO: &str = "hello lib (non-component build)";
+
 }
 
 

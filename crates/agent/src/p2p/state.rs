@@ -104,10 +104,7 @@ pub fn save_desired_manifest(toml: &str) {
     let _ = fs::write(desired_manifest_path(), toml.as_bytes());
 }
 
-/// Load desired manifest TOML if present.
-pub fn load_desired_manifest() -> Option<String> {
-    fs::read_to_string(desired_manifest_path()).ok()
-}
+
 
 /// Load bootstrap multiaddrs if present.
 pub fn load_bootstrap_addrs() -> Vec<String> {

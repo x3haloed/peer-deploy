@@ -2,8 +2,7 @@ use anyhow::Context;
 use futures::StreamExt;
 use libp2p::{gossipsub, identity, mdns, noise, yamux, tcp, swarm::SwarmEvent, Multiaddr, SwarmBuilder};
 
-use crate::cmd::util::owner_dir;
-use common::{REALM_CMD_TOPIC, REALM_STATUS_TOPIC};
+
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
 pub struct NodeBehaviour {

@@ -11,7 +11,7 @@ pub async fn init() -> anyhow::Result<()> {
     if tokio::fs::try_exists(&key_path).await? {
         // Validate existing key contains private_hex; if missing, regenerate for usability
         if let Ok(bytes) = tokio::fs::read(&key_path).await {
-            if let Ok(mut kp) = serde_json::from_slice::<common::OwnerKeypair>(&bytes) {
+            if let Ok(kp) = serde_json::from_slice::<common::OwnerKeypair>(&bytes) {
                 if kp.private_hex.trim().is_empty() {
                     println!(
                         "owner key at {} is missing private_hex; regenerating a fresh key",

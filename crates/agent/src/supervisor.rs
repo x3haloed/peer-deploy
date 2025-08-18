@@ -55,7 +55,7 @@ impl Supervisor {
         counts.entry(name).or_insert_with(|| Arc::new(AtomicUsize::new(0)));
     }
 
-    pub async fn desired_len(&self) -> usize { self.desired.lock().await.len() }
+
 
     pub fn spawn_reconcile(self: Arc<Self>) {
         tokio::spawn(async move {
