@@ -60,6 +60,31 @@ pub struct PushWizard {
     pub static_dir: String,           // deprecated
     pub route_path_prefix: String,    // deprecated
 }
+#[derive(Clone, Debug)]
+pub struct DeployWizard {
+    pub step: usize,
+    pub path: String,
+    pub package: String,
+    pub profile: String,
+    pub features: String,
+    pub start: bool,
+    pub tags_csv: String,
+}
+
+impl Default for DeployWizard {
+    fn default() -> Self {
+        Self {
+            step: 0,
+            path: String::new(),
+            package: String::new(),
+            profile: "release".to_string(),
+            features: "component".to_string(),
+            start: true,
+            tags_csv: String::new(),
+        }
+    }
+}
+
 
 impl Default for PushWizard {
     fn default() -> Self {
@@ -140,6 +165,7 @@ pub struct AppState {
     pub push_wizard: Option<PushWizard>,
     pub upgrade_wizard: Option<UpgradeWizard>,
     pub install_wizard: Option<InstallWizard>,
+    pub deploy_wizard: Option<DeployWizard>,
     pub tx: mpsc::UnboundedSender<AppEvent>,
     pub cmd_tx: mpsc::UnboundedSender<Command>,
     pub dial_tx: mpsc::UnboundedSender<Multiaddr>,
@@ -180,6 +206,7 @@ impl AppState {
             push_wizard: None,
             upgrade_wizard: None,
             install_wizard: None,
+            deploy_wizard: None,
             theme: crate::tui::draw::ThemeKind::Dark,
             tx,
             cmd_tx,

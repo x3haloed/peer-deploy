@@ -1,7 +1,7 @@
 use std::{path::Path, time::Instant};
 
 use crate::tui::state::{
-    AppEvent, AppState, InstallWizard, PeerRow, PushWizard, UpgradeWizard, View, EVENTS_CAP,
+    AppEvent, AppState, InstallWizard, PeerRow, PushWizard, UpgradeWizard, View, EVENTS_CAP, DeployWizard,
 };
 use base64::Engine;
 use common::{
@@ -61,6 +61,61 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                             ));
                             app.install_wizard = None;
                             app.filter_input = None;
+                            return Ok(false);
+                        }
+                        if let Some(mut wiz) = app.deploy_wizard.clone() {
+                            match wiz.step {
+                                0 => {
+                                    if input_val.is_empty() {
+                                        app.overlay_msg = Some((Instant::now(), "🚨 Error: Project path required".into()));
+                                        app.filter_input = Some(String::new());
+                                        return Ok(false);
+                                    }
+                                    wiz.path = input_val;
+                                    wiz.step = 1;
+                                    app.overlay_msg = Some((Instant::now(), "📦 Deploy: Package name (optional, Enter to skip)".into()));
+                                    app.filter_input = Some(String::new());
+                                }
+                                1 => {
+                                    wiz.package = input_val;
+                                    wiz.step = 2;
+                                    app.overlay_msg = Some((Instant::now(), "⚙️ Deploy: Features (default: component)".into()));
+                                    app.filter_input = Some(String::new());
+                                }
+                                2 => {
+                                    if !input_val.is_empty() { wiz.features = input_val; }
+                                    wiz.step = 3;
+                                    app.overlay_msg = Some((Instant::now(), "🏗️ Deploy: Profile (release/debug, default: release)".into()));
+                                    app.filter_input = Some(String::new());
+                                }
+                                3 => {
+                                    if !input_val.is_empty() { wiz.profile = input_val; }
+                                    wiz.step = 4;
+                                    app.overlay_msg = Some((Instant::now(), "🏷️ Deploy: Target tags (comma-separated, optional)".into()));
+                                    app.filter_input = Some(String::new());
+                                }
+                                _ => {
+                                    wiz.tags_csv = input_val;
+                                    let tx_evt = app.tx.clone();
+                                    let path = wiz.path.clone();
+                                    let package = if wiz.package.is_empty() { None } else { Some(wiz.package.clone()) };
+                                    let features = wiz.features.clone();
+                                    let profile = wiz.profile.clone();
+                                    let start = wiz.start;
+                                    let tags: Vec<String> = wiz.tags_csv.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                                    tokio::spawn(async move {
+                                        match crate::cmd::deploy_component(path, package, profile, features, vec![], tags, None, start).await {
+                                            Ok(_) => { let _ = tx_evt.send(AppEvent::PublishError("✅ Deploy: component built & pushed".into())); },
+                                            Err(e) => { let _ = tx_evt.send(AppEvent::PublishError(format!("❌ Deploy failed: {e}"))); }
+                                        }
+                                    });
+                                    app.overlay_msg = Some((Instant::now(), "🚀 Deploy started".into()));
+                                    app.deploy_wizard = None;
+                                    app.filter_input = None;
+                                    return Ok(false);
+                                }
+                            }
+                            app.deploy_wizard = Some(wiz);
                             return Ok(false);
                         }
                         if let Some(mut wiz) = app.push_wizard.clone() {
@@ -385,7 +440,9 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                         }
                     }
                     KeyCode::Char('w') | KeyCode::Char('W') => {
-                        app.overlay_msg = Some((Instant::now(), "Deploy: use CLI 'realm deploy-component --path <dir> [--package ...]'".into()));
+                        app.deploy_wizard = Some(DeployWizard::default());
+                        app.overlay_msg = Some((Instant::now(), "🚀 Deploy: Enter project path (Cargo.toml dir)".into()));
+                        app.filter_input = Some(String::new());
                     }
                     KeyCode::Char('/') => {
                         app.filter_input = Some(String::new());
