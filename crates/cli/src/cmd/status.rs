@@ -6,7 +6,7 @@ use futures::StreamExt;
 
 use common::{serialize_message, Command};
 
-use super::util::{mdns_warmup, new_swarm, NodeBehaviourEvent};
+use super::util::{mdns_warmup, new_swarm, NodeBehaviourEvent, dial_bootstrap};
 
 pub async fn status() -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
@@ -17,13 +17,15 @@ pub async fn status() -> anyhow::Result<()> {
             .unwrap(),
     )?;
 
+    // Warm up discovery and dial bootstrap before publishing to avoid InsufficientPeers
+    mdns_warmup(&mut swarm).await;
+    dial_bootstrap(&mut swarm).await;
     swarm
         .behaviour_mut()
         .gossipsub
         .publish(topic_cmd.clone(), serialize_message(&Command::StatusQuery))?;
 
     let timeout = tokio::time::timeout(Duration::from_secs(5), async {
-        mdns_warmup(&mut swarm).await;
         loop {
             match swarm.select_next_some().await {
                 libp2p::swarm::SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(ev)) => match ev {

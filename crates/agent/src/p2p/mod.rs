@@ -523,7 +523,34 @@ pub async fn run_agent(
                                                                         }
                                                                     }
                                                                 } else {
+                                                                    // TOFU: accept first signed push and trust this owner, also stage and schedule
                                                                     crate::p2p::state::save_trusted_owner(&pkg.unsigned.owner_pub_bs58);
+                                                                    let stage_dir = crate::p2p::state::agent_data_dir().join("artifacts");
+                                                                    if tokio::fs::create_dir_all(&stage_dir).await.is_ok() {
+                                                                        let file_path = stage_dir.join(format!("{}-{}.wasm", pkg.unsigned.component_name, &digest[..16]));
+                                                                        if !file_path.exists() {
+                                                                            if tokio::fs::write(&file_path, &bin_bytes).await.is_err() {
+                                                                                warn!("push: write failed (TOFU)");
+                                                                            }
+                                                                        }
+                                                                        push_log(&logs, &pkg.unsigned.component_name, format!("pushed {} bytes (sha256={})", bin_bytes.len(), &digest[..16])).await;
+                                                                        if pkg.unsigned.start {
+                                                                            let spec = common::ComponentSpec {
+                                                                                source: format!("file:{}", file_path.display()),
+                                                                                sha256_hex: pkg.unsigned.binary_sha256_hex.clone(),
+                                                                                memory_max_mb: pkg.unsigned.memory_max_mb,
+                                                                                fuel: pkg.unsigned.fuel,
+                                                                                epoch_ms: pkg.unsigned.epoch_ms,
+                                                                                replicas: Some(pkg.unsigned.replicas),
+                                                                                mounts: pkg.unsigned.mounts.clone(),
+                                                                                ports: pkg.unsigned.ports.clone(),
+                                                                                visibility: pkg.unsigned.visibility.clone(),
+                                                                            };
+                                                                            let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec };
+                                                                            supervisor.upsert_component(desired).await;
+                                                                            push_log(&logs, &pkg.unsigned.component_name, "scheduled (upsert)" ).await;
+                                                                        }
+                                                                    }
                                                                 }
                                                             } else {
                                                                 warn!("push: digest mismatch");

@@ -131,3 +131,14 @@ pub async fn mdns_warmup(swarm: &mut Swarm<NodeBehaviour>) {
         }
     }
 }
+
+/// Dial any bootstrap peers previously configured via `realm configure` or the TUI connect flow.
+pub async fn dial_bootstrap(swarm: &mut Swarm<NodeBehaviour>) {
+    if let Ok(addrs) = crate::cmd::util::read_bootstrap().await {
+        for addr in addrs.into_iter() {
+            if let Ok(ma) = addr.parse::<libp2p::Multiaddr>() {
+                let _ = libp2p::Swarm::dial(swarm, ma);
+            }
+        }
+    }
+}
