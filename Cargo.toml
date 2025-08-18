@@ -3,7 +3,7 @@ members = [
 	"crates/agent",
 	"crates/cli",
 	"crates/common",
-	"components/hello",
+	"components/hello", "tmp_hello",
 ]
 resolver = "2"
 

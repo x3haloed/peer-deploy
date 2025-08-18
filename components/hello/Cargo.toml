@@ -6,11 +6,22 @@ edition = "2021"
 [lib]
 name = "hello"
 path = "src/lib.rs"
+crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = { version = "0.24.0", default-features = false, features = ["macros" ] }
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
 
 [features]
 default = []
 component = []
+
+[package.metadata.component]
+package = "hello:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "hello"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { version = "0.2.7" }
 

@@ -2,13 +2,18 @@
 // Default build (workspace `cargo build`) does not compile the WASI HTTP component bindings.
 // Enable the `component` feature and use `cargo component build` to build as a WASI HTTP component.
 
+#![cfg_attr(feature = "component", no_main)]
+
+#[cfg(feature = "component")]
+mod bindings;
+
 #[cfg(feature = "component")]
 mod component_impl {
-    #![no_main]
-    wit_bindgen::generate!({ world: "hello", path: "wit" });
+    #[allow(unused_imports)]
+    use crate::bindings as bindings;
 
-    use exports::wasi::http::incoming_handler::Guest;
-    use wasi::http::types as http;
+    use bindings::exports::wasi::http::incoming_handler::Guest;
+    use bindings::wasi::http::types as http;
 
     struct Hello;
 
@@ -17,17 +22,15 @@ mod component_impl {
             let headers = http::Fields::new();
             let resp = http::OutgoingResponse::new(headers);
             let body = resp.body().expect("body");
-            out.set(Ok(resp));
+            http::ResponseOutparam::set(out, Ok(resp));
             let mut w = body.write().expect("write");
-            use std::io::Write;
-            let _ = w.write_all(b"hello, world\n");
+            let _ = w.write(b"hello, world\n");
             drop(w);
             let _ = http::OutgoingBody::finish(body, None);
         }
     }
 
-    #[export_name = "_start"]
-    pub extern "C" fn _start() {}
+    bindings::export!(Hello with_types_in bindings);
 }
 
 #[cfg(not(feature = "component"))]
