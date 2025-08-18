@@ -9,8 +9,20 @@ pub async fn init() -> anyhow::Result<()> {
 
     let key_path = dir.join("owner.key.json");
     if tokio::fs::try_exists(&key_path).await? {
-        println!("owner key already exists at {}", key_path.display());
-        return Ok(());
+        // Validate existing key contains private_hex; if missing, regenerate for usability
+        if let Ok(bytes) = tokio::fs::read(&key_path).await {
+            if let Ok(mut kp) = serde_json::from_slice::<common::OwnerKeypair>(&bytes) {
+                if kp.private_hex.trim().is_empty() {
+                    println!(
+                        "owner key at {} is missing private_hex; regenerating a fresh key",
+                        key_path.display()
+                    );
+                } else {
+                    println!("owner key already exists at {}", key_path.display());
+                    return Ok(());
+                }
+            }
+        }
     }
 
     let kp = common::OwnerKeypair::generate()?;

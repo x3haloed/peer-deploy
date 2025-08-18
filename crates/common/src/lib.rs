@@ -36,8 +36,8 @@ pub struct Status {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct OwnerKeypair {
     pub public_bs58: String,  // ed25519:BASE58
-    #[serde(skip_serializing, default)]
-    pub private_hex: String,  // never serialize; allow default when missing
+    #[serde(default)]
+    pub private_hex: String,  // hex-encoded ed25519 private key
 }
 
 impl fmt::Debug for OwnerKeypair {
@@ -169,8 +169,14 @@ pub enum Visibility {
 pub fn sign_bytes_ed25519(private_hex: &str, data: &[u8]) -> anyhow::Result<Vec<u8>> {
     use ed25519_dalek::Signer;
     use ed25519_dalek::SigningKey;
+    if private_hex.trim().is_empty() {
+        anyhow::bail!("owner private key missing; run `realm init` to generate a key, or ensure `owner.key.json` contains `private_hex`");
+    }
     let sk_bytes = hex::decode(private_hex)?;
-    let signing = SigningKey::from_bytes(sk_bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("bad key len"))?);
+    if sk_bytes.len() != 32 {
+        anyhow::bail!("bad key len: expected 32-byte ed25519 private key; run `realm init` to regenerate");
+    }
+    let signing = SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap());
     let sig = signing.sign(data);
     Ok(sig.to_bytes().to_vec())
 }
