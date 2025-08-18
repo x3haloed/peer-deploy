@@ -22,8 +22,8 @@ pub async fn status() -> anyhow::Result<()> {
     dial_bootstrap(&mut swarm).await;
 
     // Retry publish until we receive a reply or the deadline is reached
-    let deadline = Instant::now() + Duration::from_secs(7);
-    let mut republish = tokio::time::interval(Duration::from_millis(800));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut republish = tokio::time::interval(Duration::from_millis(2000));
     // initial publish
     let _ = swarm
         .behaviour_mut()

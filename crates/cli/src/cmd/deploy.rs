@@ -118,7 +118,7 @@ pub async fn deploy_component(
     let connect_deadline = std::time::Duration::from_secs(5);
     let mut connected_peers: u32 = 0;
     let mut command_sent = false;
-    let mut republish = tokio::time::interval(std::time::Duration::from_millis(1000));
+    let mut republish = tokio::time::interval(std::time::Duration::from_millis(2000));
     
     // First wait for at least one connection
     println!("Establishing P2P connections...");
@@ -138,10 +138,8 @@ pub async fn deploy_component(
                         .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg.clone())));
                     command_sent = true;
                 } else if command_sent {
-                    // Continue republishing for reliability
-                    let _ = libp2p::Swarm::behaviour_mut(&mut swarm)
-                        .gossipsub
-                        .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg.clone())));
+                    // Reduce republishing frequency after initial success
+                    break;
                 }
             }
             Some(event) = swarm.next() => {
@@ -182,19 +180,12 @@ pub async fn deploy_component(
             .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg.clone())));
     }
     
-    let final_deadline = std::time::Duration::from_secs(8);
-    while start.elapsed() < final_deadline {
-        tokio::select! {
-            _ = republish.tick() => {
-                let _ = libp2p::Swarm::behaviour_mut(&mut swarm)
-                    .gossipsub
-                    .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg.clone())));
-            }
-            Some(_) = swarm.next() => {
-                // Continue processing events to maintain connections
-            }
-            else => { break; }
-        }
+    // Send command one more time after a short delay for extra reliability
+    if command_sent {
+        tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+        let _ = libp2p::Swarm::behaviour_mut(&mut swarm)
+            .gossipsub
+            .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg.clone())));
     }
     
     println!("Deployment command sent. Check agent status with: cargo run -p realm -- status");
