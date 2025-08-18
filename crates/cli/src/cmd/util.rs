@@ -62,6 +62,7 @@ pub async fn read_bootstrap() -> anyhow::Result<Vec<String>> {
 pub struct NodeBehaviour {
     pub gossipsub: gossipsub::Behaviour,
     pub mdns: mdns::tokio::Behaviour,
+    pub ping: libp2p::ping::Behaviour,
 }
 
 /// Create a new swarm suitable for CLI interactions.
@@ -88,10 +89,12 @@ pub async fn new_swarm() -> anyhow::Result<(
 
     let mdns_beh =
         mdns::tokio::Behaviour::new(mdns::Config::default(), PeerId::from(id_keys.public()))?;
+    let ping_beh = libp2p::ping::Behaviour::new(libp2p::ping::Config::new());
 
     let behaviour = NodeBehaviour {
         gossipsub,
         mdns: mdns_beh,
+        ping: ping_beh,
     };
 
     let swarm = SwarmBuilder::with_existing_identity(id_keys.clone())

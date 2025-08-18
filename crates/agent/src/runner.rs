@@ -185,8 +185,8 @@ pub async fn run_wasm_module_with_limits(
 
     let component = Component::from_binary(&engine, &wasm)?;
     let mut linker = CLinker::<StoreData>::new(&engine);
-    wasmtime_wasi::add_to_linker_sync(&mut linker)?;
-    let instance = linker.instantiate(&mut store, &component)?;
+    wasmtime_wasi::add_to_linker_async(&mut linker)?;
+    let instance = linker.instantiate_async(&mut store, &component).await?;
     info!(path = %wasm_path, "component instantiated with limits");
 
     // Try to call the command world's entrypoint: 'run'
