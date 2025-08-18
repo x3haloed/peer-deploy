@@ -72,7 +72,9 @@ pub async fn new_swarm() -> anyhow::Result<(
 )> {
     let id_keys = libp2p::identity::Keypair::generate_ed25519();
 
-    let gossip_config = gossipsub::ConfigBuilder::default().build()?;
+    let gossip_config = gossipsub::ConfigBuilder::default()
+        .max_transmit_size(10 * 1024 * 1024) // allow up to 10 MiB messages
+        .build()?;
     let mut gossipsub = gossipsub::Behaviour::new(
         gossipsub::MessageAuthenticity::Signed(id_keys.clone()),
         gossip_config,

@@ -73,7 +73,9 @@ pub async fn run_agent(
     let id_keys = load_or_create_node_key();
     let local_peer_id = PeerId::from(id_keys.public());
 
-    let gossip_config = gossipsub::ConfigBuilder::default().build()?;
+    let gossip_config = gossipsub::ConfigBuilder::default()
+        .max_transmit_size(10 * 1024 * 1024) // allow up to 10 MiB messages
+        .build()?;
 
     let mut gossipsub = gossipsub::Behaviour::new(
         gossipsub::MessageAuthenticity::Signed(id_keys.clone()),
