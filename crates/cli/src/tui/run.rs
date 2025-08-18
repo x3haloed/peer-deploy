@@ -7,7 +7,7 @@ use crossterm::{
 };
 use crossterm::style::ResetColor;
 use futures::StreamExt;
-use libp2p::{swarm::{SwarmEvent, dial_opts::DialOpts}, Multiaddr};
+use libp2p::{swarm::{SwarmEvent, dial_opts::DialOpts, DialError}, Multiaddr};
 use libp2p::multiaddr::Protocol;
 use ratatui::{
     backend::CrosstermBackend,
@@ -164,7 +164,14 @@ pub async fn run_tui() -> anyhow::Result<()> {
                             }
                         }
                         SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                            let _ = tx_swarm.send(AppEvent::PublishError(format!("dial error to {:?}: {}", peer_id, error)));
+                            match error {
+                                DialError::DialPeerConditionFalse(_) => {
+                                    let _ = tx_swarm.send(AppEvent::PublishError(format!("already connected to {:?}", peer_id)));
+                                }
+                                other => {
+                                    let _ = tx_swarm.send(AppEvent::PublishError(format!("dial error to {:?}: {}", peer_id, other)));
+                                }
+                            }
                         }
                         other => {
                             // Catch-all debug surfacing of swarm events to help troubleshoot early connectivity
@@ -199,14 +206,28 @@ pub async fn run_tui() -> anyhow::Result<()> {
                             .extend_addresses_through_behaviour()
                             .build();
                         if let Err(e) = libp2p::Swarm::dial(&mut swarm, opts) {
-                            let _ = tx_swarm.send(AppEvent::PublishError(format!("dial submit error: {e} ({addr})")));
+                            match e {
+                                DialError::DialPeerConditionFalse(_) => {
+                                    let _ = tx_swarm.send(AppEvent::PublishError(format!("already connected: {} via {}", pid, base)));
+                                }
+                                other => {
+                                    let _ = tx_swarm.send(AppEvent::PublishError(format!("dial submit error: {other} ({addr})")));
+                                }
+                            }
                         } else {
                             let _ = tx_swarm.send(AppEvent::PublishError(format!("dial scheduled: {} via {}", pid, base)));
                         }
                     } else {
                         // fallback: dial the address as-is
                         if let Err(e) = libp2p::Swarm::dial(&mut swarm, addr.clone()) {
-                            let _ = tx_swarm.send(AppEvent::PublishError(format!("dial submit error: {e} ({addr})")));
+                            match e {
+                                DialError::DialPeerConditionFalse(_) => {
+                                    let _ = tx_swarm.send(AppEvent::PublishError(format!("already connected: {}", addr)));
+                                }
+                                other => {
+                                    let _ = tx_swarm.send(AppEvent::PublishError(format!("dial submit error: {other} ({addr})")));
+                                }
+                            }
                         } else {
                             let _ = tx_swarm.send(AppEvent::PublishError(format!("dial scheduled: {}", addr)));
                         }
