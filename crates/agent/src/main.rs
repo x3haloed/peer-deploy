@@ -12,6 +12,26 @@ use tracing_subscriber::EnvFilter;
 #[command(name = "realm")]
 #[command(about = "peer-deploy unified agent and CLI", version, author)]
 struct Cli {
+    /// Optional WASM module path to run at startup
+    #[arg(long)]
+    wasm: Option<String>,
+
+    /// Maximum memory in MB for the WASM instance
+    #[arg(long, default_value_t = 64)]
+    memory_max_mb: u64,
+
+    /// Initial fuel units to provide to WASM
+    #[arg(long, default_value_t = 5_000_000)]
+    fuel: u64,
+
+    /// Epoch deadline interval in milliseconds
+    #[arg(long, default_value_t = 100)]
+    epoch_ms: u64,
+
+    /// Roles/tags this agent advertises (repeat flag for multiple)
+    #[arg(long = "role")]
+    roles: Vec<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -176,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
         None => {
             let shutdown = setup_shutdown_handler();
             tokio::select! {
-                result = p2p::run_agent(None, 64, 5_000_000, 100, vec![]) => result,
+                result = p2p::run_agent(cli.wasm, cli.memory_max_mb, cli.fuel, cli.epoch_ms, cli.roles) => result,
                 _ = shutdown => {
                     info!("Shutdown signal received, stopping agent gracefully");
                     Ok(())
