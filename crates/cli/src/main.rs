@@ -116,6 +116,33 @@ enum Commands {
     },
     /// Print identities: CLI owner key, agent trusted owner, agent PeerId
     Whoami,
+    /// Build a cargo-component and push to agents
+    DeployComponent {
+        /// Path to the cargo project directory (containing Cargo.toml)
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        path: String,
+        /// Component package name (Cargo package name)
+        #[arg(long)]
+        package: Option<String>,
+        /// Build profile: debug or release
+        #[arg(long, default_value = "release")]
+        profile: String,
+        /// Additional cargo features (comma-separated)
+        #[arg(long, default_value = "component")]
+        features: String,
+        /// Target peers by PeerId (repeatable)
+        #[arg(long = "peer")]
+        target_peers: Vec<String>,
+        /// Target peers by tag/role (repeatable)
+        #[arg(long = "tag")]
+        target_tags: Vec<String>,
+        /// Component name for deployment (defaults to package name)
+        #[arg(long)]
+        name: Option<String>,
+        /// Start immediately after push
+        #[arg(long, default_value_t = true)]
+        start: bool,
+    },
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -150,6 +177,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::DiagQuic { addr } => cmd::diag_quic(addr).await,
         Commands::Whoami => cmd::whoami().await,
         Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
+        Commands::DeployComponent { path, package, profile, features, target_peers, target_tags, name, start } => cmd::deploy_component(path, package, profile, features, target_peers, target_tags, name, start).await,
     }
 }
 

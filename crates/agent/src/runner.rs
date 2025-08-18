@@ -10,6 +10,14 @@ use common::MountSpec;
 use wasmtime_wasi::pipe::AsyncWriteStream;
 use wasmtime_wasi::AsyncStdoutStream;
 use wasmtime_wasi::{DirPerms, FilePerms};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_http::bindings::http::types::Scheme;
+use wasmtime_wasi_http::bindings::ProxyPre;
+use wasmtime_wasi_http::body::HyperOutgoingBody;
+use hyper::body::Body;
+use http_body_util::{BodyExt, Full};
+use bytes::Bytes;
+use core::convert::Infallible;
 
 struct MemoryLimiter {
     max_bytes: usize,
@@ -215,18 +223,88 @@ pub async fn run_wasm_module_with_limits(
 /// For now, this returns 501 Not Implemented until WASI HTTP is wired.
 pub async fn invoke_http_component_once(
     wasm_path: &str,
-    _component_name: &str,
-    _method: &str,
-    _path: &str,
-    _headers: Vec<(String, String)>,
-    _body: Vec<u8>,
+    component_name: &str,
+    method: &str,
+    path: &str,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
 ) -> anyhow::Result<(u16, Vec<(String, String)>, Vec<u8>)> {
-    let _ = wasm_path;
-    // TODO: Integrate WASI HTTP incoming-handler and dispatch into the component.
-    let status = 501u16;
-    let headers = vec![
-        ("content-type".to_string(), "text/plain; charset=utf-8".to_string()),
-    ];
-    let body = b"not implemented".to_vec();
-    Ok((status, headers, body))
+    // Create a hyper Request with a body type compatible with wasi-http new_incoming_request
+    let body_full = Full::new(Bytes::from(body)).map_err(|_e: Infallible| match _e {});
+    let uri = if path.is_empty() { "http://component/".to_string() } else { format!("http://component/{}", path.trim_start_matches('/')) };
+    let mut req = hyper::Request::builder().method(method).uri(uri).body(body_full)?;
+    {
+        let h = req.headers_mut();
+        for (k, v) in headers {
+            if let Ok(name) = hyper::header::HeaderName::from_bytes(k.as_bytes()) {
+                if let Ok(val) = hyper::header::HeaderValue::from_str(&v) { h.append(name, val); }
+            }
+        }
+    }
+    let resp = invoke_http_component_hyper(wasm_path, component_name, req).await?;
+    let (parts, body) = resp.into_parts();
+    let collected = BodyExt::collect(body).await?;
+    let bytes = collected.to_bytes();
+    let mut out_headers = Vec::new();
+    for (k, v) in parts.headers.iter() { out_headers.push((k.to_string(), v.to_str().unwrap_or("").to_string())); }
+    Ok((parts.status.as_u16(), out_headers, bytes.to_vec()))
+}
+
+pub async fn invoke_http_component_hyper<B>(
+    wasm_path: &str,
+    component_name: &str,
+    req: hyper::Request<B>,
+) -> anyhow::Result<hyper::Response<HyperOutgoingBody>>
+where
+    B: Body<Data = Bytes, Error = hyper::Error> + Send + Sync + 'static,
+{
+    // Configure Wasmtime engine for components
+    let mut cfg = Config::new();
+    cfg.wasm_component_model(true).async_support(true);
+    let engine = Engine::new(&cfg)?;
+    let component = Component::from_file(&engine, wasm_path)?;
+    let mut linker = CLinker::<HttpStore>::new(&engine);
+    wasmtime_wasi::add_to_linker_sync(&mut linker)?;
+    wasmtime_wasi_http::add_to_linker_sync(&mut linker)?;
+    let pre = ProxyPre::new(linker.instantiate_pre(&component)?)?;
+
+    let mut store = wasmtime::Store::new(&engine, HttpStore::new(component_name));
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let incoming = store.data_mut().new_incoming_request(Scheme::Http, req)?;
+    let out = store.data_mut().new_response_outparam(sender)?;
+
+    let instance = pre.instantiate_async(&mut store).await?;
+    instance
+        .wasi_http_incoming_handler()
+        .call_handle(&mut store, incoming, out)
+        .await?;
+    match receiver.await {
+        Ok(Ok(resp)) => Ok(resp),
+        Ok(Err(e)) => Err(e.into()),
+        Err(e) => Err(anyhow::anyhow!(e)),
+    }
+}
+
+struct HttpStore {
+    table: ResourceTable,
+    wasi: wasmtime_wasi::WasiCtx,
+    http: WasiHttpCtx,
+    _name: String,
+}
+
+impl HttpStore {
+    fn new(name: &str) -> Self {
+        let wasi = wasmtime_wasi::WasiCtxBuilder::new().build();
+        Self { table: ResourceTable::new(), wasi, http: WasiHttpCtx::new(), _name: name.to_string() }
+    }
+}
+
+impl wasmtime_wasi::WasiView for HttpStore {
+    fn table(&mut self) -> &mut ResourceTable { &mut self.table }
+    fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx { &mut self.wasi }
+}
+
+impl WasiHttpView for HttpStore {
+    fn ctx(&mut self) -> &mut WasiHttpCtx { &mut self.http }
+    fn table(&mut self) -> &mut ResourceTable { &mut self.table }
 }

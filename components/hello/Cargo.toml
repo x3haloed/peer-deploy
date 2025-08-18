@@ -3,9 +3,14 @@ name = "hello"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
+[lib]
 name = "hello"
-path = "src/main.rs"
+path = "src/lib.rs"
 
 [dependencies]
+wit-bindgen = { version = "0.24.0", default-features = false, features = ["macros" ] }
+
+[features]
+default = []
+component = []
 

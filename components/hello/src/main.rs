@@ -1,6 +1,3 @@
 fn main() {
-    for i in 0..10 {
-        println!("hello: heartbeat {i}");
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
+    println!("hello component: build this crate as a WASI HTTP component using cargo-component to enable incoming-handler. For now, this binary just prints this message.");
 }

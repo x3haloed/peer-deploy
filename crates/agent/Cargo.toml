@@ -29,5 +29,10 @@ sysinfo = "0.30"
 # Host support for WASI HTTP (incoming-handler)
 wasmtime-wasi-http = "25.0"
 
+# HTTP server plumbing to feed requests into components
+hyper = { version = "1", features = ["server", "http1"] }
+http-body-util = "0.1"
+bytes = "1"
+
 common = { path = "../common" }
 clap.workspace = true

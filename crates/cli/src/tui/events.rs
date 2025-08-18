@@ -385,14 +385,7 @@ pub async fn handle_event(app: &mut AppState, evt: AppEvent) -> anyhow::Result<b
                         }
                     }
                     KeyCode::Char('w') | KeyCode::Char('W') => {
-                        let cmd = Command::Run {
-                            wasm_path: String::new(),
-                            memory_max_mb: 0,
-                            fuel: 0,
-                            epoch_ms: 0,
-                        };
-                        let _ = app.cmd_tx.send(cmd);
-                        app.overlay_msg = Some((Instant::now(), "run".to_string()));
+                        app.overlay_msg = Some((Instant::now(), "Deploy: use CLI 'realm deploy-component --path <dir> [--package ...]'".into()));
                     }
                     KeyCode::Char('/') => {
                         app.filter_input = Some(String::new());
