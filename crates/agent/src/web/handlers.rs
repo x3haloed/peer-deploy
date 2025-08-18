@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, Multipart},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -10,6 +10,7 @@ use super::types::*;
 use super::utils::format_timestamp;
 use crate::supervisor::DesiredComponent;
 use common::{ComponentSpec, Manifest};
+use crate::cmd;
 
 // API handlers with real data integration
 pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
@@ -237,6 +238,148 @@ pub async fn api_deploy(State(state): State<WebState>, Json(request): Json<Deplo
     ).await;
     
     (StatusCode::OK, "Component deployed successfully").into_response()
+}
+
+/// Multipart deploy endpoint used by the web UI to upload a .wasm file and metadata.
+pub async fn api_deploy_multipart(State(state): State<WebState>, mut multipart: Multipart) -> impl IntoResponse {
+    // Expected fields: name (text), file (file), replicas, memory, fuel, epoch_ms, tags
+    let mut name: Option<String> = None;
+    let mut replicas: Option<u32> = None;
+    let mut memory_max_mb: Option<u64> = None;
+    let mut fuel: Option<u64> = None;
+    let mut epoch_ms: Option<u64> = None;
+    let mut tags_csv: Option<String> = None;
+    let mut file_bytes: Option<Vec<u8>> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let fname = field.name().unwrap_or("").to_string();
+        match fname.as_str() {
+            "name" => { name = field.text().await.ok(); },
+            "replicas" => { replicas = field.text().await.ok().and_then(|s| s.parse().ok()); },
+            "memory" | "memory_max_mb" => { memory_max_mb = field.text().await.ok().and_then(|s| s.parse().ok()); },
+            "fuel" => { fuel = field.text().await.ok().and_then(|s| s.parse().ok()); },
+            "epoch" | "epoch_ms" => { epoch_ms = field.text().await.ok().and_then(|s| s.parse().ok()); },
+            "tags" => { tags_csv = field.text().await.ok(); },
+            "file" => { file_bytes = field.bytes().await.ok().map(|b| b.to_vec()); },
+            _ => {}
+        }
+    }
+
+    let name = match name { Some(n) if !n.is_empty() => n, _ => return (StatusCode::BAD_REQUEST, "Missing name").into_response() };
+    let bin = match file_bytes { Some(b) if !b.is_empty() => b, _ => return (StatusCode::BAD_REQUEST, "Missing file").into_response() };
+
+    // Compute digest and write to cache path
+    let digest = common::sha256_hex(&bin);
+    let stage_dir = crate::p2p::state::agent_data_dir().join("artifacts");
+    let _ = tokio::fs::create_dir_all(&stage_dir).await;
+    let file_path = stage_dir.join(format!("{}-{}.wasm", name, &digest[..16]));
+    if !file_path.exists() {
+        if tokio::fs::write(&file_path, &bin).await.is_err() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to write artifact").into_response();
+        }
+    }
+
+    let spec = ComponentSpec {
+        source: format!("cached:{}", digest),
+        sha256_hex: digest.clone(),
+        replicas,
+        memory_max_mb,
+        fuel,
+        epoch_ms,
+        mounts: None,
+        ports: None,
+        visibility: None,
+    };
+
+    // Upsert into supervisor and persist manifest
+    let desired_component = DesiredComponent { name: name.clone(), path: file_path.clone(), spec: spec.clone() };
+    state.supervisor.upsert_component(desired_component).await;
+    crate::p2p::state::update_persistent_manifest_with_component(&name, spec);
+
+    // Optional tags are informational here; selection is future work
+    let _ = tags_csv;
+
+    crate::p2p::metrics::push_log(&state.logs, "system", format!("Component '{}' deployed via multipart", name)).await;
+    (StatusCode::OK, "ok").into_response()
+}
+
+/// Return list of component names that have logs, similar to /logs listing in metrics server
+pub async fn api_log_components(State(state): State<WebState>) -> Json<Vec<String>> {
+    let map = state.logs.lock().await;
+    let mut out: Vec<String> = map.keys().cloned().collect();
+    out.sort();
+    Json(out)
+}
+
+/// Connect to a peer and persist bootstrap entry. Body: { addr: "/ip4/.../p2p/<PeerId>" }
+pub async fn api_connect_peer(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let addr = body.get("addr").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if addr.is_empty() {
+        return (StatusCode::BAD_REQUEST, "addr required").into_response();
+    }
+    // Persist into bootstrap list for the running agent to dial on next loop
+    let mut list = crate::cmd::util::read_bootstrap().await.unwrap_or_default();
+    if !list.iter().any(|s| s == &addr) {
+        list.push(addr.clone());
+        if crate::cmd::util::write_bootstrap(&list).await.is_err() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "failed to persist bootstrap").into_response();
+        }
+    }
+    (StatusCode::OK, "ok").into_response()
+}
+
+/// Multipart Push: mirrors CLI push with a single uploaded wasm and metadata for local agent
+pub async fn api_push_multipart(State(state): State<WebState>, mut multipart: Multipart) -> impl IntoResponse {
+    // similar to deploy-multipart but allows specifying advanced options in future
+    // For now, alias to deploy-multipart behavior
+    api_deploy_multipart(State(state), multipart).await
+}
+
+/// Multipart Upgrade: upload a new agent binary and publish upgrade command
+pub async fn api_upgrade_multipart(mut multipart: Multipart) -> impl IntoResponse {
+    // Collect fields: file (binary), version
+    let mut bin: Option<Vec<u8>> = None;
+    let mut version: u64 = 1;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("");
+        match name {
+            "file" => { bin = field.bytes().await.ok().map(|b| b.to_vec()); },
+            "version" => { version = field.text().await.ok().and_then(|s| s.parse().ok()).unwrap_or(1); },
+            _ => {}
+        }
+    }
+    let bin = match bin { Some(b) => b, None => return (StatusCode::BAD_REQUEST, "missing file").into_response() };
+    let upload_path = crate::p2p::state::agent_data_dir().join("upload-agent.bin");
+    if tokio::fs::write(&upload_path, &bin).await.is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "failed to stage upload").into_response();
+    }
+    match cmd::upgrade(upload_path.display().to_string(), version, vec![], vec![]).await {
+        Ok(_) => (StatusCode::OK, "ok").into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, format!("upgrade failed: {e}")).into_response(),
+    }
+}
+
+/// Multipart Apply: upload a realm.toml and publish signed manifest via CLI path
+pub async fn api_apply_multipart(mut multipart: Multipart) -> impl IntoResponse {
+    let mut version: u64 = 1;
+    let mut toml_text: Option<String> = None;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("");
+        match name {
+            "file" => { toml_text = field.text().await.ok(); },
+            "version" => { version = field.text().await.ok().and_then(|s| s.parse().ok()).unwrap_or(1); },
+            _ => {}
+        }
+    }
+    let toml_text = match toml_text { Some(t) => t, None => return (StatusCode::BAD_REQUEST, "missing file").into_response() };
+    let upload_path = crate::p2p::state::agent_data_dir().join("upload-manifest.toml");
+    if tokio::fs::write(&upload_path, toml_text.as_bytes()).await.is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "failed to stage manifest").into_response();
+    }
+    match cmd::apply(None, Some(upload_path.display().to_string()), version).await {
+        Ok(_) => (StatusCode::OK, "ok").into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, format!("apply failed: {e}")).into_response(),
+    }
 }
 
 pub async fn api_discover(State(state): State<WebState>) -> Json<serde_json::Value> {
@@ -500,4 +643,49 @@ fn remove_component_from_persistent_manifest(component_name: &str) -> Result<(),
     save_desired_manifest(&updated_toml);
     
     Ok(())
+}
+
+#[cfg(unix)]
+pub async fn api_install_cli() -> impl IntoResponse {
+	match crate::cmd::install_cli(false).await {
+		Ok(_) => (StatusCode::OK, "ok").into_response(),
+		Err(e) => (StatusCode::BAD_REQUEST, format!("install-cli failed: {e}")).into_response(),
+	}
+}
+
+#[cfg(not(unix))]
+pub async fn api_install_cli() -> impl IntoResponse {
+	(StatusCode::NOT_IMPLEMENTED, "unsupported platform").into_response()
+}
+
+pub async fn api_install_agent(mut multipart: Multipart) -> impl IntoResponse {
+	#[cfg(not(unix))]
+	{
+		return (StatusCode::NOT_IMPLEMENTED, "unsupported platform").into_response();
+	}
+	#[cfg(unix)]
+	{
+		let mut bin_path: Option<String> = None;
+		let mut system_flag: bool = false;
+		let mut bin_bytes: Option<Vec<u8>> = None;
+		while let Ok(Some(field)) = multipart.next_field().await {
+			let name = field.name().unwrap_or("");
+			match name {
+				"binary" => { bin_bytes = field.bytes().await.ok().map(|b| b.to_vec()); },
+				"system" => { system_flag = field.text().await.ok().map(|s| s == "true" || s == "1").unwrap_or(false); },
+				_ => {}
+			}
+		}
+		if let Some(bytes) = bin_bytes {
+			let tmp = crate::p2p::state::agent_data_dir().join("upload-agent.bin");
+			if tokio::fs::write(&tmp, &bytes).await.is_err() {
+				return (StatusCode::INTERNAL_SERVER_ERROR, "failed to stage agent").into_response();
+			}
+			bin_path = Some(tmp.display().to_string());
+		}
+		match crate::cmd::install(bin_path, system_flag).await {
+			Ok(_) => (StatusCode::OK, "ok").into_response(),
+			Err(e) => (StatusCode::BAD_REQUEST, format!("install-agent failed: {e}")).into_response(),
+		}
+	}
 }

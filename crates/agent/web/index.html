@@ -27,6 +27,7 @@
             <button class="nav-item" data-view="nodes">Nodes</button>
             <button class="nav-item" data-view="components">Components</button>
             <button class="nav-item" data-view="deploy">Deploy</button>
+            <button class="nav-item" data-view="ops">Ops</button>
             <button class="nav-item" data-view="logs">Logs</button>
         </nav>
 
@@ -154,7 +155,7 @@
                     <div class="form-group">
                         <label for="target-tags">Target Tags (comma-separated)</label>
                         <input type="text" id="target-tags" name="tags" placeholder="production, edge, gpu">
-                        <small>Leave empty to deploy to all nodes</small>
+                        <small>Optional; selection by tags is reserved for P2P push flows</small>
                     </div>
                     
                     <div class="form-actions">
@@ -162,6 +163,63 @@
                         <button type="button" class="btn btn-secondary" id="deploy-cancel">Cancel</button>
                     </div>
                 </form>
+            </section>
+
+            <!-- Ops View -->
+            <section id="ops-view" class="view">
+                <div class="view-header">
+                    <h2>Operations</h2>
+                </div>
+                <div class="cards ops-grid">
+                    <div class="card">
+                        <h3>Apply Manifest</h3>
+                        <form id="apply-form" class="form">
+                            <div class="form-group">
+                                <label for="manifest-file">realm.toml</label>
+                                <input type="file" id="manifest-file" name="file" accept=".toml" required>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="manifest-version">Version</label>
+                                    <input type="number" id="manifest-version" name="version" value="1" min="1">
+                                </div>
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary">Apply</button>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="card">
+                        <h3>Upgrade Agent</h3>
+                        <form id="upgrade-form" class="form">
+                            <div class="form-group">
+                                <label for="upgrade-file">Agent Binary</label>
+                                <input type="file" id="upgrade-file" name="file" accept="*/*" required>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="upgrade-version">Version</label>
+                                    <input type="number" id="upgrade-version" name="version" value="1" min="1">
+                                </div>
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary">Upgrade</button>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="card">
+                        <h3>Connect Peer</h3>
+                        <form id="connect-form" class="form">
+                            <div class="form-group">
+                                <label for="peer-addr">libp2p Multiaddr</label>
+                                <input type="text" id="peer-addr" name="addr" placeholder="/ip4/1.2.3.4/udp/4444/quic-v1/p2p/..">
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary">Connect</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
             </section>
 
             <!-- Logs View -->

@@ -383,6 +383,13 @@ body {
     margin-top: 2rem;
 }
 
+/* Ops grid */
+.ops-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+}
+
 /* Logs */
 .log-controls {
     display: flex;

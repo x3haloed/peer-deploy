@@ -52,6 +52,51 @@ class RealmApp {
             this.discoverNodes();
         });
 
+        // Ops: Apply manifest
+        const applyForm = document.getElementById('apply-form');
+        if (applyForm) {
+            applyForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const fd = new FormData(applyForm);
+                try {
+                    this.showLoading('Applying manifest...');
+                    const res = await fetch('/api/apply', { method: 'POST', headers: { 'Authorization': `Bearer ${this.sessionToken}` }, body: fd });
+                    if (res.ok) { this.showSuccess('Manifest applied'); this.addActivity('Applied manifest'); }
+                    else { this.showError('Apply failed'); }
+                } finally { this.hideLoading(); }
+            });
+        }
+
+        // Ops: Upgrade agent
+        const upgradeForm = document.getElementById('upgrade-form');
+        if (upgradeForm) {
+            upgradeForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const fd = new FormData(upgradeForm);
+                try {
+                    this.showLoading('Upgrading agent...');
+                    const res = await fetch('/api/upgrade', { method: 'POST', headers: { 'Authorization': `Bearer ${this.sessionToken}` }, body: fd });
+                    if (res.ok) { this.showSuccess('Upgrade published'); this.addActivity('Agent upgrade published'); }
+                    else { this.showError('Upgrade failed'); }
+                } finally { this.hideLoading(); }
+            });
+        }
+
+        // Ops: Connect peer
+        const connectForm = document.getElementById('connect-form');
+        if (connectForm) {
+            connectForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const addr = document.getElementById('peer-addr').value.trim();
+                if (!addr) return;
+                try {
+                    this.showLoading('Connecting to peer...');
+                    const res = await this.apiCall('/api/connect', { method: 'POST', body: JSON.stringify({ addr }) });
+                    if (res.ok) { this.showSuccess('Peer added to bootstrap'); this.addActivity(`Connect: ${addr}`); }
+                } finally { this.hideLoading(); }
+            });
+        }
+
         // Log controls
         document.getElementById('auto-scroll').addEventListener('click', (e) => {
             this.autoScroll = !this.autoScroll;
@@ -104,6 +149,8 @@ class RealmApp {
                 break;
             case 'components':
                 await this.loadComponentsData();
+                break;
+            case 'ops':
                 break;
             case 'logs':
                 await this.loadLogsData();
@@ -230,18 +277,15 @@ class RealmApp {
     async handleDeploy() {
         const form = document.getElementById('deploy-form');
         const formData = new FormData(form);
-        
         try {
             this.showLoading('Deploying component...');
-            
-            const response = await fetch('/api/deploy', {
+            const response = await fetch('/api/deploy-multipart', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${this.sessionToken}`,
                 },
                 body: formData
             });
-
             if (response.ok) {
                 this.showSuccess('Component deployed successfully');
                 form.reset();
@@ -251,7 +295,6 @@ class RealmApp {
                 const error = await response.text();
                 this.showError(`Deployment failed: ${error}`);
             }
-
         } catch (error) {
             console.error('Deployment error:', error);
             this.showError('Deployment failed: Network error');
