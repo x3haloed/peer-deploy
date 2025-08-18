@@ -14,7 +14,7 @@ pub async fn status() -> anyhow::Result<()> {
         &mut swarm,
         "/ip4/0.0.0.0/udp/0/quic-v1"
             .parse::<libp2p::Multiaddr>()
-            .unwrap(),
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
     )?;
 
     // Warm up discovery and dial bootstrap before publishing to avoid InsufficientPeers

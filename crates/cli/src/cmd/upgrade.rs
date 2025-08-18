@@ -14,8 +14,10 @@ pub async fn upgrade(
     target_tags: Vec<String>,
 ) -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap())?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/tcp/0".parse::<libp2p::Multiaddr>().unwrap())?;
+    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/tcp/0".parse::<libp2p::Multiaddr>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
 
     mdns_warmup(&mut swarm).await;
 

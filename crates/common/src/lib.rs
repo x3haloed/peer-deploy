@@ -176,7 +176,9 @@ pub fn sign_bytes_ed25519(private_hex: &str, data: &[u8]) -> anyhow::Result<Vec<
     if sk_bytes.len() != 32 {
         anyhow::bail!("bad key len: expected 32-byte ed25519 private key; run `realm init` to regenerate");
     }
-    let signing = SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap());
+    let sk_array: [u8; 32] = sk_bytes.as_slice().try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid private key length"))?;
+    let signing = SigningKey::from_bytes(&sk_array);
     let sig = signing.sign(data);
     Ok(sig.to_bytes().to_vec())
 }

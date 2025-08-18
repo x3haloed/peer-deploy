@@ -73,7 +73,8 @@ pub async fn deploy_component(
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(
         &mut swarm,
-        "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap(),
+        "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
     )?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;

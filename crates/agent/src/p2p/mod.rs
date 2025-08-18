@@ -130,16 +130,20 @@ pub async fn run_agent(
 
     // Use a persisted UDP port if available to keep stable multiaddrs across restarts
     let listen_addr: Multiaddr = if let Some(port) = load_listen_port() {
-        format!("/ip4/0.0.0.0/udp/{}/quic-v1", port).parse().unwrap()
+        format!("/ip4/0.0.0.0/udp/{}/quic-v1", port).parse()
+            .map_err(|e| anyhow!("Failed to parse UDP multiaddr: {}", e))?
     } else {
-        "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap()
+        "/ip4/0.0.0.0/udp/0/quic-v1".parse()
+            .map_err(|e| anyhow!("Failed to parse UDP multiaddr: {}", e))?
     };
     Swarm::listen_on(&mut swarm, listen_addr)?;
     // Also listen on TCP to support environments where UDP/QUIC is unavailable; reuse persisted port if any
     let listen_tcp: Multiaddr = if let Some(port) = load_listen_port_tcp() {
-        format!("/ip4/0.0.0.0/tcp/{}", port).parse().unwrap()
+        format!("/ip4/0.0.0.0/tcp/{}", port).parse()
+            .map_err(|e| anyhow!("Failed to parse TCP multiaddr: {}", e))?
     } else {
-        "/ip4/0.0.0.0/tcp/0".parse().unwrap()
+        "/ip4/0.0.0.0/tcp/0".parse()
+            .map_err(|e| anyhow!("Failed to parse TCP multiaddr: {}", e))?
     };
     Swarm::listen_on(&mut swarm, listen_tcp)?;
     // Dial configured bootstrap peers
