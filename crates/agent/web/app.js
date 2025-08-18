@@ -26,11 +26,11 @@ class RealmApp {
     }
 
     setupNavigation() {
-        const navItems = document.querySelectorAll('.nav-item');
-        navItems.forEach(item => {
+        this.navItems = Array.from(document.querySelectorAll('.nav-item'));
+        this.navItems.forEach(item => {
             item.addEventListener('click', (e) => {
-                const view = e.target.dataset.view;
-                this.switchView(view);
+                const view = e.currentTarget.dataset.view;
+                if (view) this.switchView(view);
             });
         });
     }
@@ -97,11 +97,21 @@ class RealmApp {
             });
         }
 
+        // Navigate to Deploy from Components header action
+        const newComponentBtn = document.getElementById('new-component');
+        if (newComponentBtn) {
+            newComponentBtn.addEventListener('click', () => this.switchView('deploy'));
+        }
+
         // Log controls
         document.getElementById('auto-scroll').addEventListener('click', (e) => {
             this.autoScroll = !this.autoScroll;
-            e.target.dataset.active = this.autoScroll;
-            e.target.textContent = this.autoScroll ? 'Auto-scroll' : 'Manual';
+            e.currentTarget.dataset.active = this.autoScroll;
+            e.currentTarget.textContent = this.autoScroll ? 'Auto-scroll' : 'Manual';
+            e.currentTarget.classList.toggle('bg-green-600', this.autoScroll);
+            e.currentTarget.classList.toggle('text-white', this.autoScroll);
+            e.currentTarget.classList.toggle('border', !this.autoScroll);
+            e.currentTarget.classList.toggle('border-graphite', !this.autoScroll);
         });
 
         document.getElementById('clear-logs').addEventListener('click', () => {
@@ -113,25 +123,36 @@ class RealmApp {
             btn.addEventListener('click', () => this.hideModal());
         });
 
-        document.querySelector('.modal-overlay').addEventListener('click', (e) => {
-            if (e.target.classList.contains('modal-overlay')) {
-                this.hideModal();
-            }
-        });
+        const overlay = document.getElementById('modal-overlay');
+        if (overlay) {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    this.hideModal();
+                }
+            });
+        }
     }
 
     switchView(viewName) {
-        // Update navigation
-        document.querySelectorAll('.nav-item').forEach(item => {
-            item.classList.remove('active');
-        });
-        document.querySelector(`[data-view="${viewName}"]`).classList.add('active');
+        // Update navigation styles
+        if (this.navItems && this.navItems.length) {
+            this.navItems.forEach(item => {
+                item.classList.remove('bg-neon-blue', 'text-white');
+                item.classList.add('text-gray-400');
+            });
+            const activeItem = this.navItems.find(i => i.dataset.view === viewName);
+            if (activeItem) {
+                activeItem.classList.add('bg-neon-blue', 'text-white');
+                activeItem.classList.remove('text-gray-400');
+            }
+        }
 
-        // Update view
+        // Update view visibility
         document.querySelectorAll('.view').forEach(view => {
-            view.classList.remove('active');
+            view.classList.add('hidden');
         });
-        document.getElementById(`${viewName}-view`).classList.add('active');
+        const activeView = document.getElementById(`${viewName}-view`);
+        if (activeView) activeView.classList.remove('hidden');
 
         this.currentView = viewName;
 
@@ -198,15 +219,18 @@ class RealmApp {
 
             nodes.forEach(node => {
                 const row = document.createElement('tr');
+                const statusHtml = node.online
+                    ? '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-900/30 text-green-400">Online</span>'
+                    : '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-900/30 text-red-400">Offline</span>';
                 row.innerHTML = `
-                    <td title="${node.id}">${node.id.substring(0, 12)}...</td>
-                    <td><span class="status ${node.online ? 'status-online' : 'status-offline'}">${node.online ? 'Online' : 'Offline'}</span></td>
-                    <td>${node.roles.join(', ')}</td>
-                    <td>${node.components_running}/${node.components_desired}</td>
-                    <td>${node.cpu_percent}%</td>
-                    <td>${node.mem_percent}%</td>
-                    <td>
-                        <button class="btn btn-secondary" onclick="app.viewNodeDetails('${node.id}')">Details</button>
+                    <td class="p-4" title="${node.id}">${node.id.substring(0, 12)}...</td>
+                    <td class="p-4">${statusHtml}</td>
+                    <td class="p-4">${node.roles.join(', ')}</td>
+                    <td class="p-4">${node.components_running}/${node.components_desired}</td>
+                    <td class="p-4">${node.cpu_percent}%</td>
+                    <td class="p-4">${node.mem_percent}%</td>
+                    <td class="p-4">
+                        <button class="border border-graphite px-2 py-1 rounded text-sm hover:bg-graphite" onclick="app.viewNodeDetails('${node.id}')">Details</button>
                     </td>
                 `;
                 tbody.appendChild(row);
@@ -231,21 +255,38 @@ class RealmApp {
                 return;
             }
 
+            let total = 0, running = 0, stopped = 0;
             components.forEach(component => {
+                total += 1;
+                if (component.running) running += 1; else stopped += 1;
                 const row = document.createElement('tr');
+                const statusHtml = component.running
+                    ? '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-900/30 text-green-400">Running</span>'
+                    : '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-900/30 text-red-400">Stopped</span>';
+                row.className = 'border-b border-graphite hover:bg-graphite';
                 row.innerHTML = `
-                    <td>${component.name}</td>
-                    <td><span class="status ${component.running ? 'status-running' : 'status-stopped'}">${component.running ? 'Running' : 'Stopped'}</span></td>
-                    <td>${component.replicas_running}/${component.replicas_desired}</td>
-                    <td>${component.memory_mb}MB</td>
-                    <td>${component.nodes.join(', ')}</td>
-                    <td>
-                        <button class="btn btn-secondary" onclick="app.restartComponent('${component.name}')">Restart</button>
-                        <button class="btn btn-danger" onclick="app.stopComponent('${component.name}')">Stop</button>
+                    <td class="p-4">${component.name}</td>
+                    <td class="p-4">${statusHtml}</td>
+                    <td class="p-4"><span class="bg-azure/20 text-azure px-2 py-1 rounded text-xs">${component.replicas_running}/${component.replicas_desired}</span></td>
+                    <td class="p-4">${component.memory_mb}MB</td>
+                    <td class="p-4">${component.nodes.join(', ')}</td>
+                    <td class="p-4">
+                        <div class="flex gap-2">
+                            <button class="text-azure hover:text-neon-blue" onclick="app.restartComponent('${component.name}')">Restart</button>
+                            <button class="text-red-400 hover:text-red-300" onclick="app.stopComponent('${component.name}')">Stop</button>
+                        </div>
                     </td>
                 `;
                 tbody.appendChild(row);
             });
+
+            // Update summary stats if present
+            const totalEl = document.getElementById('comp-total');
+            if (totalEl) totalEl.textContent = total;
+            const runningEl = document.getElementById('comp-running');
+            if (runningEl) runningEl.textContent = running;
+            const stoppedEl = document.getElementById('comp-stopped');
+            if (stoppedEl) stoppedEl.textContent = stopped;
 
         } catch (error) {
             console.error('Failed to load components data:', error);
@@ -406,11 +447,11 @@ class RealmApp {
     addLogLine(timestamp, component, message) {
         const container = document.getElementById('logs-container');
         const line = document.createElement('div');
-        line.className = 'log-line';
+        line.className = 'flex gap-4 mb-1 whitespace-nowrap';
         line.innerHTML = `
-            <span class="log-time">${timestamp}</span>
-            <span class="log-component">${component}</span>
-            <span class="log-message">${message}</span>
+            <span class="text-gray-400 min-w-[150px]">${timestamp}</span>
+            <span class="text-yellow-400 min-w-[100px]">${component}</span>
+            <span class="text-gray-100 whitespace-pre-wrap">${message}</span>
         `;
         container.appendChild(line);
 
@@ -465,7 +506,9 @@ class RealmApp {
     showModal(title, body, onConfirm = null) {
         document.getElementById('modal-title').textContent = title;
         document.getElementById('modal-body').innerHTML = body;
-        document.getElementById('modal-overlay').style.display = 'flex';
+        const overlay = document.getElementById('modal-overlay');
+        overlay.classList.remove('hidden');
+        overlay.style.display = 'flex';
         
         const confirmBtn = document.querySelector('.modal-confirm');
         if (onConfirm) {
@@ -480,7 +523,9 @@ class RealmApp {
     }
 
     hideModal() {
-        document.getElementById('modal-overlay').style.display = 'none';
+        const overlay = document.getElementById('modal-overlay');
+        overlay.style.display = 'none';
+        overlay.classList.add('hidden');
     }
 
     showSuccess(message) {

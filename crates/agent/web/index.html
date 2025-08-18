@@ -3,261 +3,363 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Realm Management</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%234f46e5'/></svg>">
+    <title>Realm</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script> window.FontAwesomeConfig = { autoReplaceSvg: 'nest'};</script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        graphite: '#1C1C1E',
+                        charcoal: '#27272D',
+                        azure: '#1264a3',
+                        'neon-blue': '#1b40db',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&display=swap">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%231b40db'/></svg>">
+    <style>
+        ::-webkit-scrollbar { display: none; }
+        html, body { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+    <meta name="color-scheme" content="dark light">
+    <meta name="theme-color" content="#1C1C1E">
+    <meta name="description" content="Realm management UI">
 </head>
-<body>
-    <div id="app">
-        <header class="header">
-            <div class="header-content">
-                <h1 class="logo">
-                    <span class="logo-icon">⚡</span>
-                    Realm Management
-                </h1>
-                <div class="header-actions">
-                    <span id="session-info" class="session-info">Session active</span>
-                    <button id="refresh-btn" class="btn btn-secondary">↻ Refresh</button>
+<body class="bg-graphite text-white min-h-screen">
+    <div id="app" class="flex flex-col h-screen">
+        <!-- Header -->
+        <header class="bg-charcoal border-b border-graphite p-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-8 h-8 bg-neon-blue rounded-lg flex items-center justify-center">
+                            <i class="fa-solid fa-cube text-white text-sm"></i>
+                        </div>
+                        <h1 class="text-xl font-bold">Realm</h1>
+                    </div>
+                    <div class="text-sm text-gray-400">/ Management</div>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <span id="session-info" class="text-green-400 text-sm">Session active</span>
+                    <button id="refresh-btn" class="bg-neon-blue hover:bg-azure px-3 py-2 rounded-lg text-sm font-medium">↻ Refresh</button>
                 </div>
             </div>
         </header>
 
-        <nav class="nav">
-            <button class="nav-item active" data-view="overview">Overview</button>
-            <button class="nav-item" data-view="nodes">Nodes</button>
-            <button class="nav-item" data-view="components">Components</button>
-            <button class="nav-item" data-view="deploy">Deploy</button>
-            <button class="nav-item" data-view="ops">Ops</button>
-            <button class="nav-item" data-view="logs">Logs</button>
-        </nav>
+        <div class="flex flex-1 overflow-hidden">
+            <!-- Sidebar -->
+            <aside id="sidebar" class="w-64 bg-charcoal border-r border-graphite h-full overflow-y-auto">
+                <nav class="p-4">
+                    <div class="space-y-2">
+                        <div class="nav-item flex items-center space-x-3 p-3 bg-neon-blue rounded-lg cursor-pointer" data-view="overview">
+                            <i class="fa-solid fa-chart-line text-white"></i>
+                            <span class="font-medium">Overview</span>
+                        </div>
+                        <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="nodes">
+                            <i class="fa-solid fa-network-wired"></i>
+                            <span>Nodes</span>
+                        </div>
+                        <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="components">
+                            <i class="fa-solid fa-cube"></i>
+                            <span>Components</span>
+                        </div>
+                        <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="deploy">
+                            <i class="fa-solid fa-rocket"></i>
+                            <span>Deploy</span>
+                        </div>
+                        <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="ops">
+                            <i class="fa-solid fa-cog"></i>
+                            <span>Ops</span>
+                        </div>
+                        <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="logs">
+                            <i class="fa-solid fa-scroll"></i>
+                            <span>Logs</span>
+                        </div>
+                    </div>
+                </nav>
+            </aside>
 
-        <main class="main">
-            <!-- Overview View -->
-            <section id="overview-view" class="view active">
-                <div class="cards">
-                    <div class="card">
-                        <h3>Network Status</h3>
-                        <div class="metric">
-                            <span class="metric-value" id="node-count">-</span>
-                            <span class="metric-label">Nodes Connected</span>
+            <!-- Main content -->
+            <main id="main-content" class="flex-1 p-5 overflow-y-auto">
+                <!-- Overview View -->
+                <section id="overview-view" class="view">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <h3 class="text-gray-400 text-sm mb-2">Nodes Connected</h3>
+                            <div class="text-2xl font-bold" id="node-count">-</div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <h3 class="text-gray-400 text-sm mb-2">Active Components</h3>
+                            <div class="text-2xl font-bold" id="component-count">-</div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <h3 class="text-gray-400 text-sm mb-2">Memory</h3>
+                            <div class="text-2xl font-bold" id="system-load">-</div>
                         </div>
                     </div>
-                    <div class="card">
-                        <h3>Components</h3>
-                        <div class="metric">
-                            <span class="metric-value" id="component-count">-</span>
-                            <span class="metric-label">Active Components</span>
-                        </div>
-                    </div>
-                    <div class="card">
-                        <h3>System Load</h3>
-                        <div class="metric">
-                            <span class="metric-value" id="system-load">-</span>
-                            <span class="metric-label">Average CPU</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="section">
-                    <h2>Recent Activity</h2>
-                    <div id="recent-activity" class="activity-list">
-                        <div class="activity-item">
-                            <span class="activity-time">Just now</span>
-                            <span class="activity-desc">Management session started</span>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Nodes View -->
-            <section id="nodes-view" class="view">
-                <div class="view-header">
-                    <h2>Network Nodes</h2>
-                    <button class="btn btn-primary" id="discover-nodes">Discover Nodes</button>
-                </div>
-                <div id="nodes-list" class="table-container">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Node ID</th>
-                                <th>Status</th>
-                                <th>Roles</th>
-                                <th>Components</th>
-                                <th>CPU</th>
-                                <th>Memory</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="nodes-tbody">
-                            <tr>
-                                <td colspan="7" class="loading">Loading nodes...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-
-            <!-- Components View -->
-            <section id="components-view" class="view">
-                <div class="view-header">
-                    <h2>Deployed Components</h2>
-                    <button class="btn btn-primary" id="new-component">Deploy Component</button>
-                </div>
-                <div id="components-list" class="table-container">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Status</th>
-                                <th>Replicas</th>
-                                <th>Memory</th>
-                                <th>Nodes</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="components-tbody">
-                            <tr>
-                                <td colspan="6" class="loading">Loading components...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-
-            <!-- Deploy View -->
-            <section id="deploy-view" class="view">
-                <div class="view-header">
-                    <h2>Deploy Component</h2>
-                </div>
-                <form id="deploy-form" class="form">
-                    <div class="form-group">
-                        <label for="component-name">Component Name</label>
-                        <input type="text" id="component-name" name="name" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="component-file">WASM Component File</label>
-                        <input type="file" id="component-file" name="file" accept=".wasm" required>
-                        <small>Select a WebAssembly component (.wasm file)</small>
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="replicas">Replicas</label>
-                            <input type="number" id="replicas" name="replicas" value="1" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label for="memory-limit">Memory Limit (MB)</label>
-                            <input type="number" id="memory-limit" name="memory" value="64" min="1">
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="target-tags">Target Tags (comma-separated)</label>
-                        <input type="text" id="target-tags" name="tags" placeholder="production, edge, gpu">
-                        <small>Optional; selection by tags is reserved for P2P push flows</small>
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="submit" class="btn btn-primary">Deploy Component</button>
-                        <button type="button" class="btn btn-secondary" id="deploy-cancel">Cancel</button>
-                    </div>
-                </form>
-            </section>
-
-            <!-- Ops View -->
-            <section id="ops-view" class="view">
-                <div class="view-header">
-                    <h2>Operations</h2>
-                </div>
-                <div class="cards ops-grid">
-                    <div class="card">
-                        <h3>Apply Manifest</h3>
-                        <form id="apply-form" class="form">
-                            <div class="form-group">
-                                <label for="manifest-file">realm.toml</label>
-                                <input type="file" id="manifest-file" name="file" accept=".toml" required>
+                    <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                        <h2 class="text-lg font-semibold mb-4">Recent Activity</h2>
+                        <div id="recent-activity" class="flex flex-col gap-2">
+                            <div class="flex gap-4 p-2 bg-graphite rounded">
+                                <span class="text-gray-400 text-sm">Just now</span>
+                                <span>Management session started</span>
                             </div>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="manifest-version">Version</label>
-                                    <input type="number" id="manifest-version" name="version" value="1" min="1">
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Nodes View -->
+                <section id="nodes-view" class="view hidden">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 class="text-2xl font-bold">Network Nodes</h2>
+                        <button class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium" id="discover-nodes">
+                            <i class="fa-solid fa-compass mr-2"></i>Discover Nodes
+                        </button>
+                    </div>
+                    <div class="bg-charcoal border border-graphite rounded-lg overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-graphite">
+                                <tr class="text-left text-sm text-gray-400">
+                                    <th class="p-4">Node ID</th>
+                                    <th class="p-4">Status</th>
+                                    <th class="p-4">Roles</th>
+                                    <th class="p-4">Components</th>
+                                    <th class="p-4">CPU</th>
+                                    <th class="p-4">Memory</th>
+                                    <th class="p-4">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="nodes-tbody">
+                                <tr>
+                                    <td colspan="7" class="p-4 text-gray-400">Loading nodes...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Components View -->
+                <section id="components-view" class="view hidden">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h2 class="text-2xl font-bold mb-2">Component Inventory</h2>
+                            <p class="text-gray-400">Manage and monitor all WASM components across the network</p>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <div class="relative">
+                                <input type="text" placeholder="Search components..." class="bg-charcoal border border-graphite rounded-lg px-4 py-2 pl-10 text-sm focus:outline-none focus:border-azure">
+                                <i class="fa-solid fa-search absolute left-3 top-3 text-gray-400 text-sm"></i>
+                            </div>
+                            <button id="new-component" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium">
+                                <i class="fa-solid fa-plus mr-2"></i>Deploy New
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="text-2xl font-bold" id="comp-total">-</div>
+                                    <div class="text-sm text-gray-400">Total Components</div>
+                                </div>
+                                <i class="fa-solid fa-cube text-azure text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="text-2xl font-bold text-green-400" id="comp-running">-</div>
+                                    <div class="text-sm text-gray-400">Running</div>
+                                </div>
+                                <i class="fa-solid fa-play-circle text-green-400 text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="text-2xl font-bold text-red-400" id="comp-stopped">-</div>
+                                    <div class="text-sm text-gray-400">Stopped</div>
+                                </div>
+                                <i class="fa-solid fa-stop-circle text-red-400 text-xl"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-charcoal border border-graphite rounded-lg">
+                        <div class="p-5 border-b border-graphite">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-semibold">Components</h3>
+                                <div class="flex items-center space-x-3">
+                                    <select class="bg-graphite border border-graphite rounded px-3 py-1 text-sm">
+                                        <option>All Status</option>
+                                        <option>Running</option>
+                                        <option>Stopped</option>
+                                    </select>
+                                    <select class="bg-graphite border border-graphite rounded px-3 py-1 text-sm">
+                                        <option>All Nodes</option>
+                                    </select>
                                 </div>
                             </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn-primary">Apply</button>
-                            </div>
-                        </form>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full">
+                                <thead class="bg-graphite">
+                                    <tr class="text-left text-sm text-gray-400">
+                                        <th class="p-4">Component</th>
+                                        <th class="p-4">Status</th>
+                                        <th class="p-4">Replicas</th>
+                                        <th class="p-4">Memory</th>
+                                        <th class="p-4">Node Distribution</th>
+                                        <th class="p-4">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="components-tbody">
+                                    <tr>
+                                        <td colspan="6" class="p-4 text-gray-400">Loading components...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                    <div class="card">
-                        <h3>Upgrade Agent</h3>
-                        <form id="upgrade-form" class="form">
-                            <div class="form-group">
-                                <label for="upgrade-file">Agent Binary</label>
-                                <input type="file" id="upgrade-file" name="file" accept="*/*" required>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="upgrade-version">Version</label>
-                                    <input type="number" id="upgrade-version" name="version" value="1" min="1">
-                                </div>
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn-primary">Upgrade</button>
-                            </div>
-                        </form>
-                    </div>
-                    <div class="card">
-                        <h3>Connect Peer</h3>
-                        <form id="connect-form" class="form">
-                            <div class="form-group">
-                                <label for="peer-addr">libp2p Multiaddr</label>
-                                <input type="text" id="peer-addr" name="addr" placeholder="/ip4/1.2.3.4/udp/4444/quic-v1/p2p/..">
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn-primary">Connect</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </section>
+                </section>
 
-            <!-- Logs View -->
-            <section id="logs-view" class="view">
-                <div class="view-header">
-                    <h2>System Logs</h2>
-                    <div class="log-controls">
-                        <select id="log-component">
-                            <option value="__all__">All Components</option>
-                        </select>
-                        <button class="btn btn-secondary" id="clear-logs">Clear</button>
-                        <button class="btn btn-secondary" id="auto-scroll" data-active="true">Auto-scroll</button>
+                <!-- Deploy View -->
+                <section id="deploy-view" class="view hidden">
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold">Deploy Component</h2>
                     </div>
-                </div>
-                <div id="logs-container" class="logs-container">
-                    <div class="log-line">
-                        <span class="log-time">2024-01-01 00:00:00</span>
-                        <span class="log-component">system</span>
-                        <span class="log-message">Management interface initialized</span>
+                    <form id="deploy-form" class="bg-charcoal border border-graphite rounded-lg p-6 space-y-4">
+                        <div>
+                            <label for="component-name" class="block text-sm text-gray-300 mb-1">Component Name</label>
+                            <input type="text" id="component-name" name="name" required class="w-full bg-graphite border border-graphite rounded px-3 py-2 focus:outline-none focus:border-azure">
+                        </div>
+                        <div>
+                            <label for="component-file" class="block text-sm text-gray-300 mb-1">WASM Component File</label>
+                            <input type="file" id="component-file" name="file" accept=".wasm" required class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                            <p class="text-xs text-gray-400 mt-1">Select a WebAssembly component (.wasm file)</p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="replicas" class="block text-sm text-gray-300 mb-1">Replicas</label>
+                                <input type="number" id="replicas" name="replicas" value="1" min="1" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                            </div>
+                            <div>
+                                <label for="memory-limit" class="block text-sm text-gray-300 mb-1">Memory Limit (MB)</label>
+                                <input type="number" id="memory-limit" name="memory" value="64" min="1" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                            </div>
+                        </div>
+                        <div>
+                            <label for="target-tags" class="block text-sm text-gray-300 mb-1">Target Tags (comma-separated)</label>
+                            <input type="text" id="target-tags" name="tags" placeholder="production, edge, gpu" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                            <p class="text-xs text-gray-400 mt-1">Optional; selection by tags is reserved for P2P push flows</p>
+                        </div>
+                        <div class="flex gap-3">
+                            <button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium">Deploy Component</button>
+                            <button type="button" class="border border-graphite px-4 py-2 rounded-lg text-sm" id="deploy-cancel">Cancel</button>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- Ops View -->
+                <section id="ops-view" class="view hidden">
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold">Operations</h2>
                     </div>
-                </div>
-            </section>
-        </main>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="bg-charcoal border border-graphite rounded-lg p-6">
+                            <h3 class="font-semibold mb-4">Apply Manifest</h3>
+                            <form id="apply-form" class="space-y-4">
+                                <div>
+                                    <label for="manifest-file" class="block text-sm text-gray-300 mb-1">realm.toml</label>
+                                    <input type="file" id="manifest-file" name="file" accept=".toml" required class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                </div>
+                                <div>
+                                    <label for="manifest-version" class="block text-sm text-gray-300 mb-1">Version</label>
+                                    <input type="number" id="manifest-version" name="version" value="1" min="1" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                </div>
+                                <div>
+                                    <button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium">Apply</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-6">
+                            <h3 class="font-semibold mb-4">Upgrade Agent</h3>
+                            <form id="upgrade-form" class="space-y-4">
+                                <div>
+                                    <label for="upgrade-file" class="block text-sm text-gray-300 mb-1">Agent Binary</label>
+                                    <input type="file" id="upgrade-file" name="file" accept="*/*" required class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                </div>
+                                <div>
+                                    <label for="upgrade-version" class="block text-sm text-gray-300 mb-1">Version</label>
+                                    <input type="number" id="upgrade-version" name="version" value="1" min="1" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                </div>
+                                <div>
+                                    <button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium">Upgrade</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-6">
+                            <h3 class="font-semibold mb-4">Connect Peer</h3>
+                            <form id="connect-form" class="space-y-4">
+                                <div>
+                                    <label for="peer-addr" class="block text-sm text-gray-300 mb-1">libp2p Multiaddr</label>
+                                    <input type="text" id="peer-addr" name="addr" placeholder="/ip4/1.2.3.4/udp/4444/quic-v1/p2p/.." class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                </div>
+                                <div>
+                                    <button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium">Connect</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Logs View -->
+                <section id="logs-view" class="view hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-2xl font-bold">System Logs</h2>
+                        <div class="flex items-center gap-2">
+                            <select id="log-component" class="bg-graphite border border-graphite rounded px-3 py-2 text-sm">
+                                <option value="__all__">All Components</option>
+                            </select>
+                            <button class="border border-graphite px-3 py-2 rounded text-sm" id="clear-logs">Clear</button>
+                            <button class="px-3 py-2 rounded text-sm bg-green-600 text-white" id="auto-scroll" data-active="true">Auto-scroll</button>
+                        </div>
+                    </div>
+                    <div id="logs-container" class="bg-gray-900 text-gray-100 p-4 rounded font-mono text-sm h-[400px] overflow-y-auto">
+                        <div class="flex gap-4 mb-1 whitespace-nowrap">
+                            <span class="text-gray-400 min-w-[150px]">2024-01-01 00:00:00</span>
+                            <span class="text-yellow-400 min-w-[100px]">system</span>
+                            <span class="text-gray-100 whitespace-pre-wrap">Management interface initialized</span>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
     </div>
 
-    <!-- Modals -->
-    <div id="modal-overlay" class="modal-overlay" style="display: none;">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 id="modal-title">Modal Title</h3>
-                <button class="modal-close">&times;</button>
+    <!-- Modal -->
+    <div id="modal-overlay" class="hidden fixed inset-0 bg-black/50 z-50 items-center justify-center" style="display: none;">
+        <div class="bg-charcoal border border-graphite rounded-lg w-[90%] max-w-lg max-h-[90vh] overflow-hidden">
+            <div class="flex items-center justify-between p-4 border-b border-graphite">
+                <h3 id="modal-title" class="text-lg font-semibold">Modal Title</h3>
+                <button class="modal-close text-gray-400 hover:text-white">&times;</button>
             </div>
-            <div class="modal-body" id="modal-body">
-                Modal content
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary modal-cancel">Cancel</button>
-                <button class="btn btn-primary modal-confirm">Confirm</button>
+            <div class="p-4" id="modal-body">Modal content</div>
+            <div class="p-4 border-t border-graphite flex items-center justify-end gap-2">
+                <button class="border border-graphite px-4 py-2 rounded modal-cancel">Cancel</button>
+                <button class="bg-neon-blue hover:bg-azure px-4 py-2 rounded modal-confirm">Confirm</button>
             </div>
         </div>
     </div>
