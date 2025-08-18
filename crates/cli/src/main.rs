@@ -68,8 +68,8 @@ enum Commands {
         /// Declare service ports (repeatable), e.g. 8080/tcp or 9090/udp
         #[arg(long = "port")]
         ports: Vec<String>,
-        /// Static route (repeatable): path=/web[,host=app.local],dir=/abs/dir
-        #[arg(long = "route-static")]
+        /// [deprecated] Static routes removed; HTTP is handled via WASI HTTP inside components.
+        #[arg(long = "route-static", hide = true)]
         routes_static: Vec<String>,
         /// Gateway bind policy: local|public
         #[arg(long)]

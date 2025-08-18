@@ -210,3 +210,23 @@ pub async fn run_wasm_module_with_limits(
     let _ = metrics;
     Ok(())
 }
+
+/// One-shot HTTP handler invocation placeholder.
+/// For now, this returns 501 Not Implemented until WASI HTTP is wired.
+pub async fn invoke_http_component_once(
+    wasm_path: &str,
+    _component_name: &str,
+    _method: &str,
+    _path: &str,
+    _headers: Vec<(String, String)>,
+    _body: Vec<u8>,
+) -> anyhow::Result<(u16, Vec<(String, String)>, Vec<u8>)> {
+    let _ = wasm_path;
+    // TODO: Integrate WASI HTTP incoming-handler and dispatch into the component.
+    let status = 501u16;
+    let headers = vec![
+        ("content-type".to_string(), "text/plain; charset=utf-8".to_string()),
+    ];
+    let body = b"not implemented".to_vec();
+    Ok((status, headers, body))
+}

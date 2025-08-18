@@ -1,7 +1,7 @@
 use anyhow::Context;
 use base64::Engine;
 
-use common::{sha256_hex, sign_bytes_ed25519, serialize_message, Command, OwnerKeypair, PushPackage, PushUnsigned, MountSpec, ServicePort, Protocol, HttpRoute, Visibility};
+use common::{sha256_hex, sign_bytes_ed25519, serialize_message, Command, OwnerKeypair, PushPackage, PushUnsigned, MountSpec, ServicePort, Protocol, Visibility};
 
 use super::util::{mdns_warmup, new_swarm, owner_dir};
 
@@ -14,7 +14,7 @@ pub async fn push(
     epoch_ms: u64,
     mounts_cli: Vec<String>,
     ports_cli: Vec<String>,
-    routes_static_cli: Vec<String>,
+    _routes_static_cli: Vec<String>,
     visibility_cli: Option<String>,
     target_peers: Vec<String>,
     target_tags: Vec<String>,
@@ -78,30 +78,7 @@ pub async fn push(
         if out.is_empty() { None } else { Some(out) }
     };
 
-    // Parse static routes: path=/web[,host=app.local],dir=/abs/dir
-    let routes: Option<Vec<HttpRoute>> = if routes_static_cli.is_empty() { None } else {
-        let mut out = Vec::new();
-        for r in routes_static_cli.iter() {
-            let mut host: Option<String> = None;
-            let mut path_prefix: Option<String> = None;
-            let mut dir: Option<String> = None;
-            for part in r.split(',') {
-                let mut kv = part.splitn(2, '=');
-                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
-                    match k.trim() {
-                        "host" => host = Some(v.trim().to_string()),
-                        "path" | "path_prefix" => path_prefix = Some(v.trim().to_string()),
-                        "dir" | "static_dir" => dir = Some(v.trim().to_string()),
-                        _ => {}
-                    }
-                }
-            }
-            if let (Some(pfx), Some(d)) = (path_prefix, dir) {
-                out.push(HttpRoute { host, path_prefix: pfx, to_port: None, static_dir: Some(d) });
-            }
-        }
-        if out.is_empty() { None } else { Some(out) }
-    };
+    // Static routes removed; WASI HTTP handles requests inside components now.
 
     let visibility = visibility_cli.and_then(|v| match v.as_str() {
         "local" | "Local" => Some(Visibility::Local),
@@ -123,7 +100,6 @@ pub async fn push(
         binary_sha256_hex: digest,
         mounts,
         ports,
-        routes,
         visibility,
     };
     let unsigned_bytes = serde_json::to_vec(&unsigned)?;

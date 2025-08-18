@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::supervisor::Supervisor;
+use crate::runner::invoke_http_component_once;
 use crate::p2p::metrics::Metrics;
 
 fn guess_content_type(path: &Path) -> &'static str {
@@ -43,7 +44,7 @@ pub async fn serve_gateway(supervisor: Arc<Supervisor>, metrics: Option<Arc<Metr
             return;
         }
     };
-    info!(address=%bind_addr, "gateway listening (static /www)");
+    info!(address=%bind_addr, "gateway listening (WASI HTTP)");
 
     loop {
         let (mut stream, _addr) = match listener.accept().await {
@@ -61,82 +62,42 @@ pub async fn serve_gateway(supervisor: Arc<Supervisor>, metrics: Option<Arc<Metr
             ).await;
             let req = String::from_utf8_lossy(&buf);
             let mut path = "/";
+            let mut method = "GET";
             if let Some(line) = req.lines().next() {
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 { path = parts[1]; }
+                if parts.len() >= 2 { method = parts[0]; path = parts[1]; }
             }
 
-            let (status_line, content_type, body): (&str, &str, Vec<u8>) = if path == "/" {
-                // Simple index listing components with /www mounts
-                let desired = sup.get_desired_snapshot().await;
-                let mut html = String::from("<html><body><h1>realm gateway</h1><ul>\n");
-                for (name, comp) in desired.into_iter() {
-                    if let Some(mnts) = comp.spec.mounts.clone() {
-                        if mnts.iter().any(|m| m.guest == "/www") {
-                            html.push_str(&format!("<li><a href=\"/{}/\">{}</a></li>\n", name, name));
+            // Dispatch to component via WASI HTTP incoming-handler
+            let segs: Vec<&str> = path.trim_start_matches('/').splitn(2, '/').collect();
+            let comp = segs.get(0).copied().unwrap_or("");
+            let rest = segs.get(1).copied().unwrap_or("");
+            let (status_line, content_type, body): (&str, String, Vec<u8>) = if comp.is_empty() {
+                ("HTTP/1.1 404 Not Found", "text/plain; charset=utf-8".to_string(), b"not found".to_vec())
+            } else if let Some(desired) = sup.get_component(comp).await {
+                match invoke_http_component_once(&desired.path.to_string_lossy(), comp, method, rest, vec![], vec![]).await {
+                    Ok((code, headers, body)) => {
+                        let status_line = match code {
+                            200 => "HTTP/1.1 200 OK",
+                            404 => "HTTP/1.1 404 Not Found",
+                            500 => "HTTP/1.1 500 Internal Server Error",
+                            501 => "HTTP/1.1 501 Not Implemented",
+                            403 => "HTTP/1.1 403 Forbidden",
+                            400 => "HTTP/1.1 400 Bad Request",
+                            _ => "HTTP/1.1 200 OK",
+                        };
+                        let mut ct = "application/octet-stream".to_string();
+                        for (k, v) in headers.into_iter() {
+                            if k.eq_ignore_ascii_case("content-type") { ct = v; break; }
                         }
+                        (status_line, ct, body)
+                    }
+                    Err(_) => {
+                        ("HTTP/1.1 500 Internal Server Error", "text/plain; charset=utf-8".to_string(), b"error".to_vec())
                     }
                 }
-                html.push_str("</ul></body></html>");
-                ("HTTP/1.1 200 OK", "text/html; charset=utf-8", html.into_bytes())
             } else {
-                // Expect /{component}/... => map to static_dir route if present, else /www mount
-                let segs: Vec<&str> = path.trim_start_matches('/').splitn(2, '/').collect();
-                let comp = segs.get(0).copied().unwrap_or("");
-                let rest = segs.get(1).copied().unwrap_or("");
-
-                if comp.is_empty() {
-                    ("HTTP/1.1 404 Not Found", "text/plain; charset=utf-8", b"not found".to_vec())
-                } else if let Some(desired) = sup.get_component(comp).await {
-                    // Prefer explicit static route if configured; honor path_prefix
-                    let route = desired
-                        .spec
-                        .routes
-                        .as_ref()
-                        .and_then(|list| list.iter().find(|r| r.static_dir.is_some()));
-                    let (base_host_dir, effective_rest) = if let Some(r) = route {
-                        let base = PathBuf::from(r.static_dir.as_ref().unwrap());
-                        let pfx = r.path_prefix.trim_start_matches('/');
-                        let rest_trimmed = rest.trim_start_matches('/');
-                        if pfx.is_empty() || rest_trimmed.starts_with(pfx) {
-                            let after = if pfx.is_empty() {
-                                rest_trimmed
-                            } else {
-                                rest_trimmed.trim_start_matches(pfx).trim_start_matches('/')
-                            };
-                            (Some(base), after.to_string())
-                        } else {
-                            (None, String::new())
-                        }
-                    } else {
-                        // Fallback to /www mount and full rest
-                        let base = desired
-                            .spec
-                            .mounts
-                            .clone()
-                            .and_then(|v| v.into_iter().find(|m| m.guest == "/www"))
-                            .map(|m| PathBuf::from(m.host));
-                        (base, rest.to_string())
-                    };
-                    if let Some(base) = base_host_dir {
-                        let sanitized = sanitize_rest(&effective_rest);
-                        let rel = if sanitized.is_empty() { "index.html".to_string() } else { sanitized };
-                        let file_path: PathBuf = base.join(rel);
-                        match tokio::fs::read(&file_path).await {
-                            Ok(bytes) => {
-                                let ct = guess_content_type(&file_path);
-                                ("HTTP/1.1 200 OK", ct, bytes)
-                            }
-                            Err(_) => {
-                                ("HTTP/1.1 404 Not Found", "text/plain; charset=utf-8", b"not found".to_vec())
-                            }
-                        }
-                    } else {
-                        ("HTTP/1.1 404 Not Found", "text/plain; charset=utf-8", b"no /www mount".to_vec())
-                    }
-                } else {
-                    ("HTTP/1.1 404 Not Found", "text/plain; charset=utf-8", b"unknown component".to_vec())
-                }
+                ("HTTP/1.1 404 Not Found", "text/plain; charset=utf-8".to_string(), b"unknown component".to_vec())
             };
 
             let header = format!(

@@ -57,8 +57,8 @@ pub struct PushWizard {
     pub epoch_ms: u64,
     pub tags_csv: String,
     pub start: bool,
-    pub static_dir: String,
-    pub route_path_prefix: String,
+    pub static_dir: String,           // deprecated
+    pub route_path_prefix: String,    // deprecated
 }
 
 impl Default for PushWizard {

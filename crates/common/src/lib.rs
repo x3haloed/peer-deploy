@@ -106,7 +106,6 @@ pub struct PushUnsigned {
     pub binary_sha256_hex: String,  // digest of binary_b64
     pub mounts: Option<Vec<MountSpec>>, // preopened directories for ad-hoc push
     pub ports: Option<Vec<ServicePort>>, // declared guest ports
-    pub routes: Option<Vec<HttpRoute>>,  // HTTP routes
     pub visibility: Option<Visibility>,  // gateway binding policy
 }
 
@@ -132,7 +131,6 @@ pub struct ComponentSpec {
     pub replicas: Option<u32>,
     pub mounts: Option<Vec<MountSpec>>, // preopened directories
     pub ports: Option<Vec<ServicePort>>, // declared guest ports (Service)
-    pub routes: Option<Vec<HttpRoute>>,  // HTTP routing (Exposure)
     pub visibility: Option<Visibility>,  // gateway binding policy
 }
 
@@ -160,13 +158,7 @@ pub enum Protocol {
 
 fn default_protocol() -> Protocol { Protocol::Tcp }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpRoute {
-    pub host: Option<String>,     // match host if provided
-    pub path_prefix: String,      // e.g., "/app"
-    pub to_port: Option<u16>,     // target ServicePort.port (for proxying)
-    pub static_dir: Option<String>, // serve static files from host directory
-}
+// Removed legacy static file routing; HTTP is now handled via WASI HTTP.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Visibility {

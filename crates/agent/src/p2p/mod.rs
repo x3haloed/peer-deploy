@@ -494,7 +494,7 @@ pub async fn run_agent(
                                                                                     replicas: Some(pkg.unsigned.replicas),
                                                                                     mounts: pkg.unsigned.mounts.clone(),
                                                                                     ports: pkg.unsigned.ports.clone(),
-                                                                                    routes: pkg.unsigned.routes.clone(),
+                                                                                    
                                                                                     visibility: pkg.unsigned.visibility.clone(),
                                                                                 };
                                                                                 let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec };

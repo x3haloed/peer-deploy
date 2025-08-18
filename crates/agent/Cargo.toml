@@ -26,5 +26,8 @@ toml.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 sysinfo = "0.30"
 
+# Host support for WASI HTTP (incoming-handler)
+wasmtime-wasi-http = "25.0"
+
 common = { path = "../common" }
 clap.workspace = true
