@@ -107,6 +107,21 @@ impl Supervisor {
         let mem = desired.spec.memory_max_mb.unwrap_or(64);
         let fuel = desired.spec.fuel.unwrap_or(5_000_000);
         let epoch = desired.spec.epoch_ms.unwrap_or(100);
+        
+        // Check if this is an HTTP component by inspecting the binary for HTTP handler exports
+        if let Ok(wasm_bytes) = std::fs::read(&path) {
+            // Simple string search in the binary for HTTP handler export signature
+            let wasm_string = String::from_utf8_lossy(&wasm_bytes);
+            if wasm_string.contains("wasi:http/incoming-handler") {
+                info!(component=%name, "HTTP component detected, skipping persistent process launch - will be invoked on-demand via gateway");
+                // For HTTP components, just mark as "running" but don't actually start a persistent process
+                metrics.inc_components_running();
+                count.fetch_add(1, Ordering::Relaxed);
+                push_log(&logs, &name, format!("HTTP component staged from {path}, ready for gateway invocation")).await;
+                return;
+            }
+        }
+        
         push_log(&logs, &name, format!("launching replica from {path}")).await;
         metrics.inc_components_running();
         count.fetch_add(1, Ordering::Relaxed);
