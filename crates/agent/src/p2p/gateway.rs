@@ -92,7 +92,8 @@ pub async fn serve_gateway(supervisor: Arc<Supervisor>, metrics: Option<Arc<Metr
                         }
                         (status_line, ct, body)
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        warn!(component=%comp, error=%e, "HTTP component invocation failed");
                         ("HTTP/1.1 500 Internal Server Error", "text/plain; charset=utf-8".to_string(), b"error".to_vec())
                     }
                 }

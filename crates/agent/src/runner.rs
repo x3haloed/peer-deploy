@@ -272,8 +272,9 @@ where
     let engine = Engine::new(&cfg)?;
     let component = Component::from_file(&engine, wasm_path)?;
     let mut linker = CLinker::<HttpStore>::new(&engine);
-    wasmtime_wasi::add_to_linker_sync(&mut linker)?;
-    wasmtime_wasi_http::add_to_linker_sync(&mut linker)?;
+    linker.allow_shadowing(true);
+    wasmtime_wasi::add_to_linker_async(&mut linker)?;
+    wasmtime_wasi_http::add_to_linker_async(&mut linker)?;
     let pre = ProxyPre::new(linker.instantiate_pre(&component)?)?;
 
     let mut store = wasmtime::Store::new(&engine, HttpStore::new(component_name));
