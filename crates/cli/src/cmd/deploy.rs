@@ -45,13 +45,26 @@ pub async fn deploy_component(
         let value: toml::Value = toml::from_str(&text)?;
         value.get("package").and_then(|t| t.get("name")).and_then(|n| n.as_str()).unwrap_or("component").to_string()
     } else { pkg.clone() };
-    let artifact = std::path::Path::new(&path)
-        .join("target/wasm32-wasip1")
-        .join(prof)
-        .join(format!("{}.wasm", pkg_name.replace('-', "_")));
-    if !artifact.exists() {
-        anyhow::bail!(format!("artifact not found: {}", artifact.display()));
-    }
+    let filename = format!("{}.wasm", pkg_name.replace('-', "_"));
+    let rel = std::path::Path::new("wasm32-wasip1").join(prof).join(&filename);
+
+    // Candidate 1: component-local target dir
+    let candidate_local = std::path::Path::new(&path).join("target").join(&rel);
+    // Candidate 2: workspace/global target dir (respects CARGO_TARGET_DIR if set)
+    let target_root = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".into());
+    let candidate_workspace = std::path::Path::new(&target_root).join(&rel);
+
+    let artifact = if candidate_local.exists() {
+        candidate_local
+    } else if candidate_workspace.exists() {
+        candidate_workspace
+    } else {
+        anyhow::bail!(format!(
+            "artifact not found. looked for: {} and {}",
+            candidate_local.display(),
+            candidate_workspace.display()
+        ));
+    };
 
     // Set a default deployment name
     let deploy_name = name_override.unwrap_or_else(|| pkg_name.clone());
