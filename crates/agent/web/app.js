@@ -328,6 +328,9 @@ class RealmApp {
 
     handleWebSocketMessage(data) {
         switch (data.type) {
+            case 'metrics':
+                this.updateMetrics(data.data);
+                break;
             case 'log':
                 this.addLogLine(data.timestamp, data.component, data.message);
                 break;
@@ -341,6 +344,20 @@ class RealmApp {
                 this.addActivity(data.message);
                 break;
         }
+    }
+
+    updateMetrics(metrics) {
+        // Update overview cards with real-time data
+        document.getElementById('node-count').textContent = metrics.nodes || 1;
+        document.getElementById('component-count').textContent = metrics.components_running || 0;
+        document.getElementById('system-load').textContent = `${Math.round((metrics.mem_current_bytes || 0) / (1024 * 1024))}MB`;
+        
+        // Add activity for significant changes
+        if (metrics.components_running !== this.lastMetrics?.components_running) {
+            this.addActivity(`Components running: ${metrics.components_running || 0}`);
+        }
+        
+        this.lastMetrics = metrics;
     }
 
     addLogLine(timestamp, component, message) {
