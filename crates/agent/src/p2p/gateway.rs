@@ -27,12 +27,12 @@ pub async fn serve_gateway(supervisor: Arc<Supervisor>, metrics: Option<Arc<Metr
     let listener = match TcpListener::bind(addr).await {
         Ok(listener) => listener,
         Err(e) => {
-            error!(address=%bind_addr, error=%e, "Gateway bind failed");
+            error!(address=%bind_addr, error=%e, "Failed to bind HTTP gateway");
             return;
         }
     };
 
-    info!(address=%bind_addr, "Gateway listening (WASI HTTP)");
+    info!(address=%bind_addr, "HTTP gateway listening");
 
     loop {
         let (stream, remote_addr) = match listener.accept().await {

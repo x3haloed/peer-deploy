@@ -109,7 +109,7 @@ impl Supervisor {
             for handle in handles {
                 handle.abort();
             }
-            info!(component=%component_name, "Cleaned up component tasks");
+            info!(component=%component_name, "Component tasks cleaned up");
         }
     }
 
@@ -120,7 +120,7 @@ impl Supervisor {
             for handle in handles {
                 handle.abort();
             }
-            info!(component=%component, "Cleaned up all tasks");
+            info!(component=%component, "All component tasks cleaned up");
         }
     }
 
@@ -138,7 +138,7 @@ impl Supervisor {
             // Simple string search in the binary for HTTP handler export signature
             let wasm_string = String::from_utf8_lossy(&wasm_bytes);
             if wasm_string.contains("wasi:http/incoming-handler") {
-                info!(component=%name, "HTTP component detected, skipping persistent process launch - will be invoked on-demand via gateway");
+                                    info!(component=%name, "HTTP component detected - will be invoked on-demand via gateway");
                 // For HTTP components, just mark as "running" but don't actually start a persistent process
                 metrics.inc_components_running();
                 count.fetch_add(1, Ordering::Relaxed);
@@ -164,7 +164,7 @@ impl Supervisor {
         let mut tasks = self.tasks.lock().await;
         tasks.entry(name.clone()).or_insert_with(Vec::new).push(task_handle);
         
-        info!(component=%name, "replica started");
+        info!(component=%name, "Component replica started");
     }
 }
 

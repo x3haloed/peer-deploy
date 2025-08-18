@@ -3,6 +3,7 @@ mod runner;
 mod supervisor;
 
 use clap::Parser;
+use tracing::{info};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -52,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
             result
         }
         _ = shutdown => {
-            tracing::info!("Shutdown signal received, stopping agent gracefully");
+            info!("Shutdown signal received, stopping agent gracefully");
             Ok(())
         }
     }

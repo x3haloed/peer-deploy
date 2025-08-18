@@ -187,7 +187,7 @@ pub async fn run_wasm_module_with_limits(
     let mut linker = CLinker::<StoreData>::new(&engine);
     wasmtime_wasi::add_to_linker_async(&mut linker)?;
     let instance = linker.instantiate_async(&mut store, &component).await?;
-    info!(path = %wasm_path, "component instantiated with limits");
+    info!(path = %wasm_path, "Component instantiated with limits");
 
     // Try to call the command world's entrypoint: 'run'
     let mut invoked = false;
@@ -204,9 +204,9 @@ pub async fn run_wasm_module_with_limits(
         }
     }
     if invoked {
-        info!(path = %wasm_path, "component run() completed");
+        info!(path = %wasm_path, "Component run() completed");
     } else {
-        info!(path = %wasm_path, "component has no 'run' export or signature mismatch");
+        info!(path = %wasm_path, "Component has no 'run' export or signature mismatch");
     }
 
     // Update memory usage gauge if present
