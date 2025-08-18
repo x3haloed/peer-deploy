@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realm Management</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%234f46e5'/></svg>">
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <div class="header-content">
+                <h1 class="logo">
+                    <span class="logo-icon">⚡</span>
+                    Realm Management
+                </h1>
+                <div class="header-actions">
+                    <span id="session-info" class="session-info">Session active</span>
+                    <button id="refresh-btn" class="btn btn-secondary">↻ Refresh</button>
+                </div>
+            </div>
+        </header>
+
+        <nav class="nav">
+            <button class="nav-item active" data-view="overview">Overview</button>
+            <button class="nav-item" data-view="nodes">Nodes</button>
+            <button class="nav-item" data-view="components">Components</button>
+            <button class="nav-item" data-view="deploy">Deploy</button>
+            <button class="nav-item" data-view="logs">Logs</button>
+        </nav>
+
+        <main class="main">
+            <!-- Overview View -->
+            <section id="overview-view" class="view active">
+                <div class="cards">
+                    <div class="card">
+                        <h3>Network Status</h3>
+                        <div class="metric">
+                            <span class="metric-value" id="node-count">-</span>
+                            <span class="metric-label">Nodes Connected</span>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Components</h3>
+                        <div class="metric">
+                            <span class="metric-value" id="component-count">-</span>
+                            <span class="metric-label">Active Components</span>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>System Load</h3>
+                        <div class="metric">
+                            <span class="metric-value" id="system-load">-</span>
+                            <span class="metric-label">Average CPU</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2>Recent Activity</h2>
+                    <div id="recent-activity" class="activity-list">
+                        <div class="activity-item">
+                            <span class="activity-time">Just now</span>
+                            <span class="activity-desc">Management session started</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Nodes View -->
+            <section id="nodes-view" class="view">
+                <div class="view-header">
+                    <h2>Network Nodes</h2>
+                    <button class="btn btn-primary" id="discover-nodes">Discover Nodes</button>
+                </div>
+                <div id="nodes-list" class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Node ID</th>
+                                <th>Status</th>
+                                <th>Roles</th>
+                                <th>Components</th>
+                                <th>CPU</th>
+                                <th>Memory</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="nodes-tbody">
+                            <tr>
+                                <td colspan="7" class="loading">Loading nodes...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Components View -->
+            <section id="components-view" class="view">
+                <div class="view-header">
+                    <h2>Deployed Components</h2>
+                    <button class="btn btn-primary" id="new-component">Deploy Component</button>
+                </div>
+                <div id="components-list" class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Status</th>
+                                <th>Replicas</th>
+                                <th>Memory</th>
+                                <th>Nodes</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="components-tbody">
+                            <tr>
+                                <td colspan="6" class="loading">Loading components...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Deploy View -->
+            <section id="deploy-view" class="view">
+                <div class="view-header">
+                    <h2>Deploy Component</h2>
+                </div>
+                <form id="deploy-form" class="form">
+                    <div class="form-group">
+                        <label for="component-name">Component Name</label>
+                        <input type="text" id="component-name" name="name" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="component-file">WASM Component File</label>
+                        <input type="file" id="component-file" name="file" accept=".wasm" required>
+                        <small>Select a WebAssembly component (.wasm file)</small>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="replicas">Replicas</label>
+                            <input type="number" id="replicas" name="replicas" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="memory-limit">Memory Limit (MB)</label>
+                            <input type="number" id="memory-limit" name="memory" value="64" min="1">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="target-tags">Target Tags (comma-separated)</label>
+                        <input type="text" id="target-tags" name="tags" placeholder="production, edge, gpu">
+                        <small>Leave empty to deploy to all nodes</small>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Deploy Component</button>
+                        <button type="button" class="btn btn-secondary" id="deploy-cancel">Cancel</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Logs View -->
+            <section id="logs-view" class="view">
+                <div class="view-header">
+                    <h2>System Logs</h2>
+                    <div class="log-controls">
+                        <select id="log-component">
+                            <option value="__all__">All Components</option>
+                        </select>
+                        <button class="btn btn-secondary" id="clear-logs">Clear</button>
+                        <button class="btn btn-secondary" id="auto-scroll" data-active="true">Auto-scroll</button>
+                    </div>
+                </div>
+                <div id="logs-container" class="logs-container">
+                    <div class="log-line">
+                        <span class="log-time">2024-01-01 00:00:00</span>
+                        <span class="log-component">system</span>
+                        <span class="log-message">Management interface initialized</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="modal-overlay" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-title">Modal Title</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                Modal content
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary modal-cancel">Cancel</button>
+                <button class="btn btn-primary modal-confirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

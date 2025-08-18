@@ -3,6 +3,10 @@ name = "agent"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "realm"
+path = "src/main.rs"
+
 [dependencies]
 anyhow.workspace = true
 thiserror.workspace = true
@@ -15,6 +19,7 @@ base64.workspace = true
 rand.workspace = true
 dirs.workspace = true
 futures.workspace = true
+hostname.workspace = true
 
 libp2p.workspace = true
 
@@ -35,5 +40,19 @@ hyper-util = { version = "0.1", features = ["tokio", "server"] }
 http-body-util = "0.1"
 bytes = "1"
 
-common = { path = "../common" }
+# Web management interface
+axum = { version = "0.7", features = ["ws"] }
+tower = { version = "0.4" }
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+mime_guess = "2.0"
+include_dir = "0.7"
+uuid = { version = "1.0", features = ["v4"] }
+
+# CLI dependencies (merged from CLI crate)
 clap.workspace = true
+ratatui = { version = "0.26", default-features = false, features = ["crossterm"] }
+crossterm = "0.27"
+unicode-width = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+common = { path = "../common" }
