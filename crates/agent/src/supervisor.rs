@@ -170,6 +170,7 @@ impl Supervisor {
     }
 
     /// Clean up all running tasks
+    #[allow(dead_code)]
     pub async fn cleanup_all(&self) {
         let mut tasks = self.tasks.lock().await;
         for (component, handles) in tasks.drain() {

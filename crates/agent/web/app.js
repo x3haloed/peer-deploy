@@ -5,6 +5,7 @@ class RealmApp {
         this.sessionToken = this.getSessionToken();
         this.websocket = null;
         this.autoScroll = true;
+        this.selectedLogComponent = '__all__';
         
         this.init();
     }
@@ -118,6 +119,15 @@ class RealmApp {
             this.clearLogs();
         });
 
+        // Log component selector change
+        const logSelect = document.getElementById('log-component');
+        if (logSelect) {
+            logSelect.addEventListener('change', (e) => {
+                this.selectedLogComponent = e.currentTarget.value || '__all__';
+                this.loadLogsData();
+            });
+        }
+
         // Modal controls
         document.querySelectorAll('.modal-close, .modal-cancel').forEach(btn => {
             btn.addEventListener('click', () => this.hideModal());
@@ -174,6 +184,7 @@ class RealmApp {
             case 'ops':
                 break;
             case 'logs':
+                await this.populateLogComponents();
                 await this.loadLogsData();
                 break;
         }
@@ -296,7 +307,8 @@ class RealmApp {
 
     async loadLogsData() {
         try {
-            const response = await this.apiCall('/api/logs?tail=100');
+            const comp = encodeURIComponent(this.selectedLogComponent || '__all__');
+            const response = await this.apiCall(`/api/logs?tail=100&component=${comp}`);
             const logs = await response.json();
 
             const container = document.getElementById('logs-container');
@@ -312,6 +324,41 @@ class RealmApp {
 
         } catch (error) {
             console.error('Failed to load logs:', error);
+        }
+    }
+
+    async populateLogComponents() {
+        try {
+            const resp = await this.apiCall('/api/log-components');
+            const comps = await resp.json();
+            const select = document.getElementById('log-component');
+            if (!select) return;
+
+            const previous = this.selectedLogComponent || '__all__';
+            // Reset options
+            select.innerHTML = '';
+            const allOpt = document.createElement('option');
+            allOpt.value = '__all__';
+            allOpt.textContent = 'All Components';
+            select.appendChild(allOpt);
+
+            comps.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                select.appendChild(opt);
+            });
+
+            // Restore selection if present
+            if ([...select.options].some(o => o.value === previous)) {
+                select.value = previous;
+            } else {
+                select.value = '__all__';
+            }
+            this.selectedLogComponent = select.value;
+        } catch (e) {
+            // Non-fatal
+            console.warn('Failed to populate log components', e);
         }
     }
 

@@ -329,7 +329,7 @@ pub async fn api_connect_peer(Json(body): Json<serde_json::Value>) -> impl IntoR
 }
 
 /// Multipart Push: mirrors CLI push with a single uploaded wasm and metadata for local agent
-pub async fn api_push_multipart(State(state): State<WebState>, mut multipart: Multipart) -> impl IntoResponse {
+pub async fn api_push_multipart(State(state): State<WebState>, multipart: Multipart) -> impl IntoResponse {
     // similar to deploy-multipart but allows specifying advanced options in future
     // For now, alias to deploy-multipart behavior
     api_deploy_multipart(State(state), multipart).await
