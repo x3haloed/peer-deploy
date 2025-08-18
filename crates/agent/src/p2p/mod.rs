@@ -21,12 +21,13 @@ use common::{
 use state::{
     load_bootstrap_addrs, load_state, load_trusted_owner,
     load_listen_port, save_listen_port,
-    load_listen_port_tcp, save_listen_port_tcp
+    load_listen_port_tcp, save_listen_port_tcp,
+    update_persistent_manifest_with_component
 };
 
 mod handlers;
 pub mod metrics;
-mod state;
+pub mod state;  // Make state module public
 mod gateway;
 
 use handlers::{handle_apply_manifest, handle_upgrade};
@@ -71,8 +72,14 @@ pub async fn run_agent(
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
     let sys = std::sync::Arc::new(tokio::sync::Mutex::new(sysinfo::System::new_all()));
 
-    // Start supervisor loop
+    // Start supervisor and restore persistent state
     let supervisor = std::sync::Arc::new(Supervisor::new(logs.clone(), metrics.clone()));
+    
+    // CRITICAL: Restore persistent component state before starting reconciliation
+    if let Err(e) = supervisor.restore_from_disk().await {
+        warn!(error=%e, "Failed to restore component state from disk, starting fresh");
+    }
+    
     supervisor.clone().spawn_reconcile();
 
     let id_keys = load_or_create_node_key();
@@ -522,7 +529,7 @@ pub async fn run_agent(
                                                                             if pkg.unsigned.start {
                                                                                 info!("Component {} marked for start, creating spec and scheduling", pkg.unsigned.component_name);
                                                                                 let spec = common::ComponentSpec {
-                                                                                    source: format!("file:{}", file_path.display()),
+                                                                                    source: format!("cached:{}", pkg.unsigned.binary_sha256_hex.clone()),
                                                                                     sha256_hex: pkg.unsigned.binary_sha256_hex.clone(),
                                                                                     memory_max_mb: pkg.unsigned.memory_max_mb,
                                                                                     fuel: pkg.unsigned.fuel,
@@ -530,13 +537,16 @@ pub async fn run_agent(
                                                                                     replicas: Some(pkg.unsigned.replicas),
                                                                                     mounts: pkg.unsigned.mounts.clone(),
                                                                                     ports: pkg.unsigned.ports.clone(),
-                                                                                    
                                                                                     visibility: pkg.unsigned.visibility.clone(),
                                                                                 };
-                                                                                let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec };
+                                                                                let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec: spec.clone() };
                                                                                 info!("Calling supervisor.upsert_component for {}", pkg.unsigned.component_name);
                                                                                 supervisor.upsert_component(desired).await;
-                                                                                info!("Component {} successfully scheduled", pkg.unsigned.component_name);
+                                                                                
+                                                                                // CRITICAL: Persist the component to manifest for restart persistence
+                                                                                update_persistent_manifest_with_component(&pkg.unsigned.component_name, spec);
+                                                                                
+                                                                                info!("Component {} successfully scheduled and persisted", pkg.unsigned.component_name);
                                                                                 push_log(&logs, &pkg.unsigned.component_name, "scheduled (upsert)" ).await;
                                                                             }
                                                                         }
@@ -556,7 +566,7 @@ pub async fn run_agent(
                                                                         push_log(&logs, &pkg.unsigned.component_name, format!("pushed {} bytes (sha256={})", bin_bytes.len(), &digest[..16])).await;
                                                                         if pkg.unsigned.start {
                                                                             let spec = common::ComponentSpec {
-                                                                                source: format!("file:{}", file_path.display()),
+                                                                                source: format!("cached:{}", pkg.unsigned.binary_sha256_hex.clone()),
                                                                                 sha256_hex: pkg.unsigned.binary_sha256_hex.clone(),
                                                                                 memory_max_mb: pkg.unsigned.memory_max_mb,
                                                                                 fuel: pkg.unsigned.fuel,
@@ -566,8 +576,12 @@ pub async fn run_agent(
                                                                                 ports: pkg.unsigned.ports.clone(),
                                                                                 visibility: pkg.unsigned.visibility.clone(),
                                                                             };
-                                                                            let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec };
+                                                                            let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec: spec.clone() };
                                                                             supervisor.upsert_component(desired).await;
+                                                                            
+                                                                            // CRITICAL: Persist the component to manifest for restart persistence
+                                                                            update_persistent_manifest_with_component(&pkg.unsigned.component_name, spec);
+                                                                            
                                                                             push_log(&logs, &pkg.unsigned.component_name, "scheduled (upsert)" ).await;
                                                                         }
                                                                     }

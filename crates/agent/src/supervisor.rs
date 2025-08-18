@@ -6,8 +6,9 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::p2p::metrics::{push_log, Metrics, SharedLogs};
+use crate::p2p::state::{load_desired_manifest, agent_data_dir};
 use crate::runner::run_wasm_module_with_limits;
-use common::ComponentSpec;
+use common::{ComponentSpec, Manifest, sha256_hex};
 
 #[derive(Clone, Debug)]
 pub struct DesiredComponent {
@@ -36,6 +37,63 @@ impl Supervisor {
         }
     }
 
+    /// Restore desired state from disk on startup
+    pub async fn restore_from_disk(&self) -> anyhow::Result<()> {
+        if let Some(manifest_toml) = load_desired_manifest() {
+            info!("Restoring component state from persistent manifest");
+            
+            match toml::from_str::<Manifest>(&manifest_toml) {
+                Ok(manifest) => {
+                    let mut desired = BTreeMap::new();
+                    let stage_dir = agent_data_dir().join("artifacts");
+                    
+                    for (name, spec) in manifest.components {
+                        // Resolve artifact path from cache using the pattern from handlers.rs
+                        let artifact_path = stage_dir.join(format!("{}-{}.wasm", name, &spec.sha256_hex[..16]));
+                        
+                        if artifact_path.exists() {
+                            // Verify the cached artifact still matches the expected hash
+                            if let Ok(cached_bytes) = std::fs::read(&artifact_path) {
+                                let cached_digest = sha256_hex(&cached_bytes);
+                                if cached_digest == spec.sha256_hex {
+                                    desired.insert(name.clone(), DesiredComponent {
+                                        name: name.clone(),
+                                        path: artifact_path.clone(),
+                                        spec,
+                                    });
+                                    info!(component=%name, path=%artifact_path.display(), "Restored component from cache");
+                                } else {
+                                    warn!(component=%name, expected=%spec.sha256_hex, actual=%cached_digest, "Cached artifact hash mismatch, skipping");
+                                }
+                            } else {
+                                warn!(component=%name, path=%artifact_path.display(), "Failed to read cached artifact");
+                            }
+                        } else {
+                            warn!(component=%name, path=%artifact_path.display(), "Cached artifact not found, component will be unavailable until re-deployed");
+                        }
+                    }
+                    
+                    if !desired.is_empty() {
+                        self.set_desired(desired.clone()).await;
+                        info!(count=%desired.len(), "Successfully restored components from disk");
+                        
+                        for name in desired.keys() {
+                            push_log(&self.logs, name, "restored from persistent state".to_string()).await;
+                        }
+                    } else {
+                        info!("No components could be restored from cache");
+                    }
+                }
+                Err(e) => {
+                    warn!(error=%e, "Failed to parse persistent manifest, starting with empty state");
+                }
+            }
+        } else {
+            info!("No persistent manifest found, starting with empty state");
+        }
+        Ok(())
+    }
+
     pub async fn set_desired(&self, desired: BTreeMap<String, DesiredComponent>) {
         let mut d = self.desired.lock().await;
         *d = desired;
@@ -57,8 +115,6 @@ impl Supervisor {
         let mut counts = self.counts.lock().await;
         counts.entry(name).or_insert_with(|| Arc::new(AtomicUsize::new(0)));
     }
-
-
 
     pub fn spawn_reconcile(self: Arc<Self>) {
         tokio::spawn(async move {
@@ -167,5 +223,3 @@ impl Supervisor {
         info!(component=%name, "Component replica started");
     }
 }
-
-

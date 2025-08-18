@@ -98,13 +98,46 @@ pub fn save_state(state: &AgentState) {
     }
 }
 
+/// Load desired manifest TOML if present.
+pub fn load_desired_manifest() -> Option<String> {
+    fs::read_to_string(desired_manifest_path()).ok()
+}
+
 /// Persist desired manifest TOML for reconciliation.
 pub fn save_desired_manifest(toml: &str) {
     let _ = fs::create_dir_all(agent_data_dir());
     let _ = fs::write(desired_manifest_path(), toml.as_bytes());
 }
 
+/// Update the persistent manifest with a new component from PushComponent.
+/// This allows PushComponent commands to be restored on agent restart.
+pub fn update_persistent_manifest_with_component(component_name: &str, spec: common::ComponentSpec) {
+    let mut manifest = if let Some(toml_str) = load_desired_manifest() {
+        // Try to parse existing manifest
+        toml::from_str::<common::Manifest>(&toml_str).unwrap_or_else(|_| {
+            tracing::warn!("Failed to parse existing manifest, creating new one");
+            common::Manifest {
+                components: std::collections::BTreeMap::new(),
+            }
+        })
+    } else {
+        // Create new manifest
+        common::Manifest {
+            components: std::collections::BTreeMap::new(),
+        }
+    };
 
+    // Add or update the component
+    manifest.components.insert(component_name.to_string(), spec);
+
+    // Serialize and save
+    if let Ok(toml_str) = toml::to_string(&manifest) {
+        save_desired_manifest(&toml_str);
+        tracing::info!(component=%component_name, "Updated persistent manifest with component");
+    } else {
+        tracing::warn!(component=%component_name, "Failed to serialize manifest");
+    }
+}
 
 /// Load bootstrap multiaddrs if present.
 pub fn load_bootstrap_addrs() -> Vec<String> {
@@ -115,4 +148,3 @@ pub fn load_bootstrap_addrs() -> Vec<String> {
     }
     Vec::new()
 }
-
