@@ -29,11 +29,24 @@ use crate::tui::state::{
 };
 
 pub async fn run_tui() -> anyhow::Result<()> {
+    // Setup terminal
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    
+    // Ensure cleanup happens on exit
+    let result = run_tui_inner(&mut terminal).await;
+    
+    // Cleanup terminal state
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    
+    result
+}
+
+async fn run_tui_inner(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> anyhow::Result<()> {
     // Reset any lingering colors (from previous runs or terminals that persist bg attr)
     {
         let mut s = std::io::stdout();

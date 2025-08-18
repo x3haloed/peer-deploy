@@ -38,12 +38,46 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    p2p::run_agent(
-        args.wasm,
-        args.memory_max_mb,
-        args.fuel,
-        args.epoch_ms,
-        args.roles,
-    )
-    .await
+    // Set up graceful shutdown
+    let shutdown = setup_shutdown_handler();
+
+    tokio::select! {
+        result = p2p::run_agent(
+            args.wasm,
+            args.memory_max_mb,
+            args.fuel,
+            args.epoch_ms,
+            args.roles,
+        ) => {
+            result
+        }
+        _ = shutdown => {
+            tracing::info!("Shutdown signal received, stopping agent gracefully");
+            Ok(())
+        }
+    }
+}
+
+async fn setup_shutdown_handler() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }

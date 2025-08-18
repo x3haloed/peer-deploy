@@ -155,7 +155,15 @@ async fn main() -> anyhow::Result<()> {
 
     // If no args, launch TUI as default operating mode
     if std::env::args().len() == 1 {
-        return tui::run_tui().await;
+        // Set up graceful shutdown for TUI
+        let shutdown = setup_shutdown_handler();
+        return tokio::select! {
+            result = tui::run_tui() => result,
+            _ = shutdown => {
+                // TUI cleanup is handled internally
+                Ok(())
+            }
+        };
     }
 
     let cli = Cli::parse();
@@ -178,6 +186,30 @@ async fn main() -> anyhow::Result<()> {
         Commands::Whoami => cmd::whoami().await,
         Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start } => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
         Commands::DeployComponent { path, package, profile, features, target_peers, target_tags, name, start } => cmd::deploy_component(path, package, profile, features, target_peers, target_tags, name, start).await,
+    }
+}
+
+async fn setup_shutdown_handler() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
 }
 
