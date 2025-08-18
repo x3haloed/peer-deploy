@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, mdns,
+    gossipsub, mdns, noise, yamux, tcp,
     swarm::{Swarm, SwarmEvent},
     PeerId, SwarmBuilder,
 };
@@ -94,8 +94,13 @@ pub async fn new_swarm() -> anyhow::Result<(
         mdns: mdns_beh,
     };
 
-    let swarm = SwarmBuilder::with_existing_identity(id_keys)
+    let swarm = SwarmBuilder::with_existing_identity(id_keys.clone())
         .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )?
         .with_quic()
         .with_dns()?
         .with_behaviour(|_| Ok(behaviour))?

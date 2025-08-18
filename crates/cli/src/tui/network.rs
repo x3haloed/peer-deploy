@@ -1,4 +1,4 @@
-use libp2p::{gossipsub, identity, mdns, ping, PeerId, SwarmBuilder};
+use libp2p::{gossipsub, identity, mdns, noise, yamux, tcp, ping, PeerId, SwarmBuilder};
 
 use common::{REALM_CMD_TOPIC, REALM_STATUS_TOPIC};
 
@@ -35,8 +35,13 @@ pub async fn new_swarm_tui() -> anyhow::Result<(
         ping: ping_beh,
     };
     let local_peer_id = PeerId::from(id_keys.public());
-    let swarm = SwarmBuilder::with_existing_identity(id_keys)
+    let swarm = SwarmBuilder::with_existing_identity(id_keys.clone())
         .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )?
         .with_quic()
         .with_dns()?
         .with_behaviour(|_| Ok(behaviour))?

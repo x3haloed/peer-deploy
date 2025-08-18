@@ -26,5 +26,6 @@ pub use deploy::deploy_component;
 pub use configure::configure;
 pub use push::push;
 pub use diag::diag_quic;
+pub use diag::diag_quic as diag;
 pub use whoami::whoami;
 

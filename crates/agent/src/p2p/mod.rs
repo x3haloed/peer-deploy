@@ -7,6 +7,7 @@ use anyhow::anyhow;
 use futures::StreamExt;
 use libp2p::{
     gossipsub, identify, identity, kad, mdns,
+    noise, yamux, tcp,
     swarm::{Swarm, SwarmEvent},
     Multiaddr, PeerId, SwarmBuilder,
 };
@@ -17,7 +18,11 @@ use crate::runner::run_wasm_module_with_limits;
 use common::{
     deserialize_message, serialize_message, Command, Status, REALM_CMD_TOPIC, REALM_STATUS_TOPIC,
 };
-use state::{load_bootstrap_addrs, load_state, load_trusted_owner, load_listen_port, save_listen_port};
+use state::{
+    load_bootstrap_addrs, load_state, load_trusted_owner,
+    load_listen_port, save_listen_port,
+    load_listen_port_tcp, save_listen_port_tcp
+};
 
 mod handlers;
 pub mod metrics;
@@ -111,8 +116,13 @@ pub async fn run_agent(
         identify,
     };
 
-    let mut swarm = SwarmBuilder::with_existing_identity(id_keys)
+    let mut swarm = SwarmBuilder::with_existing_identity(id_keys.clone())
         .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )?
         .with_quic()
         .with_dns()?
         .with_behaviour(|_| Ok(behaviour))?
@@ -125,6 +135,13 @@ pub async fn run_agent(
         "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap()
     };
     Swarm::listen_on(&mut swarm, listen_addr)?;
+    // Also listen on TCP to support environments where UDP/QUIC is unavailable; reuse persisted port if any
+    let listen_tcp: Multiaddr = if let Some(port) = load_listen_port_tcp() {
+        format!("/ip4/0.0.0.0/tcp/{}", port).parse().unwrap()
+    } else {
+        "/ip4/0.0.0.0/tcp/0".parse().unwrap()
+    };
+    Swarm::listen_on(&mut swarm, listen_tcp)?;
     // Dial configured bootstrap peers
     for addr in load_bootstrap_addrs().into_iter() {
         if let Ok(ma) = addr.parse::<Multiaddr>() {
@@ -536,10 +553,9 @@ pub async fn run_agent(
                         // Persist PeerId for CLI whoami/debug
                         let _ = std::fs::create_dir_all(state::agent_data_dir());
                         let _ = std::fs::write(state::agent_data_dir().join("node.peer"), local_peer_id.to_string());
-                        // Persist the chosen UDP port for stable restarts
-                        if let Some(port) = address.iter().find_map(|p| match p { libp2p::multiaddr::Protocol::Udp(p) => Some(p), _ => None }) {
-                            save_listen_port(port);
-                        }
+                        // Persist the chosen UDP/TCP port for stable restarts
+                        if let Some(port) = address.iter().find_map(|p| match p { libp2p::multiaddr::Protocol::Udp(p) => Some(p), _ => None }) { save_listen_port(port); }
+                        if let Some(port) = address.iter().find_map(|p| match p { libp2p::multiaddr::Protocol::Tcp(p) => Some(p), _ => None }) { save_listen_port_tcp(port); }
                         info!(%dial, "listening");
                     }
                     SwarmEvent::ConnectionEstablished { .. } => {

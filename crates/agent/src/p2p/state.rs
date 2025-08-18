@@ -28,6 +28,10 @@ fn listen_port_path() -> PathBuf {
     agent_data_dir().join("listen_port")
 }
 
+fn listen_port_tcp_path() -> PathBuf {
+    agent_data_dir().join("listen_port_tcp")
+}
+
 pub fn load_trusted_owner() -> Option<String> {
     fs::read_to_string(trusted_owner_path())
         .ok()
@@ -52,6 +56,20 @@ pub fn load_listen_port() -> Option<u16> {
 pub fn save_listen_port(port: u16) {
     let _ = fs::create_dir_all(agent_data_dir());
     let _ = fs::write(listen_port_path(), port.to_string().as_bytes());
+}
+
+/// Load a persisted TCP listen port if present.
+pub fn load_listen_port_tcp() -> Option<u16> {
+    if let Ok(s) = fs::read_to_string(listen_port_tcp_path()) {
+        if let Ok(p) = s.trim().parse::<u16>() { return Some(p); }
+    }
+    None
+}
+
+/// Persist the TCP listen port for stable restarts.
+pub fn save_listen_port_tcp(port: u16) {
+    let _ = fs::create_dir_all(agent_data_dir());
+    let _ = fs::write(listen_port_tcp_path(), port.to_string().as_bytes());
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
