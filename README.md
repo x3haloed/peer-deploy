@@ -1,17 +1,19 @@
 ## peer-deploy
 
-“push → run everywhere” with hard isolation. Powered by Wasmtime + WASI and a libp2p control plane.
+"push → run everywhere" with hard isolation. Powered by Wasmtime + WASI and a libp2p control plane.
 
 ### What is this?
 - **Agent**: a single Rust binary that runs on your nodes. It hosts WASI components with strict resource limits and participates in a P2P control plane.
-- **CLI/TUI**: a single Rust binary named `realm` that gives you a text UI and commands to bootstrap, inspect, push components, and upgrade agents.
-- **Common protocol**: signed messages over libp2p gossipsub; agents provide a tiny HTTP endpoint for metrics and logs.
+- **CLI**: a unified command-line tool named `realm` with subcommands to bootstrap, inspect, push components, and upgrade agents.
+- **Web UI**: a management interface served by the agent for deployment, monitoring, and operations via browser.
+- **Common protocol**: signed messages over libp2p gossipsub; agents provide HTTP endpoints for metrics, logs, and management.
 
 ## Features
 - **WASI components** executed under Wasmtime with memory caps, fuel metering and epoch deadlines.
 - **P2P** discovery and command distribution (QUIC + Noise + mDNS + Kademlia).
 - **Signed intents**: owner key signs manifests and upgrades; agents enforce signature and TOFU owner trust.
 - **Metrics & Logs**: Prometheus metrics and lightweight log tailing served by the agent.
+- **Web Management**: browser-based UI for deployment, monitoring, operations, and real-time updates.
 - **Ad‑hoc or desired state**: push a single component, or apply a signed TOML manifest.
 - **Gateway & exposure**: local HTTP gateway on `127.0.0.1:8080` that dispatches HTTP requests into components via the WASI HTTP component model (`wasi:http/incoming-handler`). Optional public bind on peers tagged with `--role edge` when a component requests `visibility=Public`.
 
@@ -27,19 +29,25 @@
 cargo build --release
 ```
 - Outputs:
-  - `target/release/realm` (CLI/TUI)
-  - `target/release/agent` (agent)
+  - `target/release/realm` (unified CLI)
+  - `target/release/agent` (agent binary)
 
-### Run the TUI
+### Quick start
+- Run the agent (default command):
 ```bash
-./target/release/realm
+./target/release/realm --role dev
 ```
-- The TUI will open. Use the footer for keybinds.
+- Or launch the web management UI:
+```bash
+./target/release/realm manage --owner-key <your-key>
+```
 
-### Install binaries from the TUI
-- Press `I` to install and choose one:
-  - **c**: install the CLI/TUI as `realm`
-  - **a**: install the Agent as `realm-agent` (you’ll be prompted for the agent binary path)
+### Install binaries
+- Build and install via Cargo:
+```bash
+cargo install --path crates/agent --bin realm
+cargo install --path crates/agent --bin agent
+```
 
 What the installer does (user-mode on macOS/Linux):
 - Copies the binary to a versioned path, maintains a `current` symlink, and places a convenience symlink on your PATH:
@@ -66,9 +74,9 @@ realm configure --owner <ed25519:BASE58...> --bootstrap \
 ```
 Start the agent (example with tags/roles):
 ```bash
-realm-agent --role dev --role darwin --role arm64
+realm --role dev --role darwin --role arm64
 ```
-The agent exposes metrics and logs on `http://127.0.0.1:9920`.
+The agent exposes metrics, logs, and web management on `http://127.0.0.1:9920`.
 
 On startup, the agent prints a copy‑pastable libp2p multiaddr to stdout, for example:
 
@@ -81,7 +89,7 @@ REALM_LISTEN_PORT=60856 realm configure --owner <ed25519:...>
 ```
 
 ### Discover and view status
-From the TUI, peers discovered via mDNS will show up automatically. Or use the command:
+From the web UI, peers discovered via mDNS will show up automatically. Or use the command:
 ```bash
 realm status
 ```
@@ -99,7 +107,7 @@ realm push \
   --tag dev \
   --start
 ```
-- Or from the TUI: press `O` and follow the wizard.
+- Or from the web UI: navigate to Deploy and use the form.
 - Selection can target specific peer IDs (`--peer`) or any peers with matching tags (`--tag`).
 
 #### Expose a web app (WASI HTTP)
@@ -124,7 +132,7 @@ realm apply --file ./realm.toml --version 1
 - Agents verify signature, enforce TOFU on first owner, verify component digests, stage artifacts, and reconcile desired replicas.
 
 ### Upgrade agents remotely
-- From the TUI: press `U` and provide the path to the new agent binary, optionally targeting peers or tags.
+- From the web UI: navigate to Ops → Upgrade Agent and upload the new binary.
 - Or via CLI:
 ```bash
 realm upgrade --file ./target/release/agent --version 2 --tag dev
@@ -134,23 +142,23 @@ Upgrade behavior on agents:
 - Verifies sha256 digest
 - **Refuses downgrades** (requires higher version than running)
 - Writes versioned binary, updates `current` symlink, spawns new process, exits old
-- Emits progress to the agent logs so you can observe each phase in the TUI
+- Emits progress to the agent logs so you can observe each phase in the web UI
 
 ## Key commands
 - **Init owner key**: `realm init`
 - **Show owner public key**: `realm key show`
 - **Status query**: `realm status`
-- **Install from TUI**: press `I` → choose CLI or Agent
-- **Push component**: `realm push ...` or `O` in TUI
-- **Connect to peer in TUI**: on the Peers tab press `C`, paste a multiaddr, Enter
-- **Apply manifest**: `realm apply --file realm.toml --version N`
-- **Upgrade agents**: `realm upgrade --file ./agent --version N [--peer ...] [--tag ...]` or `U` in TUI
+- **Run agent (default)**: `realm --role dev --memory-max-mb 128`
+- **Launch web UI**: `realm manage --owner-key <key> --timeout 30`
+- **Push component**: `realm push ...` or use web UI Deploy tab
+- **Apply manifest**: `realm apply --file realm.toml --version N` or use web UI Ops tab
+- **Upgrade agents**: `realm upgrade --file ./agent --version N [--peer ...] [--tag ...]` or use web UI Ops tab
 - **Configure trust/bootstrap on node**: `realm configure --owner <pub> --bootstrap <addr>...`
 - **Invite/enroll (optional bootstrap UX)**:
   - Owner: `realm invite --bootstrap <addr> ...` → share token
   - Peer: `realm enroll --token <TOKEN>`
 
-## Agent command‑line (selected)
+## Agent command‑line options
 - `--role <tag>`: repeatable; advertised via libp2p identify
 - `--wasm <file>`: start a single WASI component immediately (ad‑hoc)
 - `--memory-max-mb`, `--fuel`, `--epoch-ms`: execution limits for ad‑hoc run
@@ -158,7 +166,8 @@ Upgrade behavior on agents:
 ## Metrics and logs
 - Metrics (Prometheus): `http://127.0.0.1:9920/metrics`
 - Logs (plain text): `http://127.0.0.1:9920/logs?component=__all__&tail=200`
-- TUI polls these endpoints to render overview tiles and logs.
+- Web UI (management): `http://127.0.0.1:9920/` (when launched via `realm manage`)
+- Web UI polls these endpoints to render overview tiles and logs.
   - Gateway metrics included: `gateway_requests_total`, `gateway_errors_total`, `gateway_last_latency_ms`
 
 ## Notes & limits
