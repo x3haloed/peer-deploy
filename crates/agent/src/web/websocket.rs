@@ -3,7 +3,6 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
-use tokio::time::{interval, Duration};
 use tracing::info;
 
 use super::types::{WebState, WebSocketUpdate};
