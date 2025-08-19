@@ -276,6 +276,9 @@ pub async fn run_agent(
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     let mut storage_announce_tick = tokio::time::interval(Duration::from_secs(60));
+    // Content index: digest -> set of peers that have announced it
+    let content_index: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let mut schedule_tick = tokio::time::interval(Duration::from_secs(60));
     // track msgs per second by counting status publishes
     let mut last_publish_count: u64 = 0;
@@ -420,23 +423,10 @@ pub async fn run_agent(
                                 metrics.commands_received_total.fetch_add(1, Ordering::Relaxed);
                                 match cmd {
                                     common::Command::StorageHave { digest, size: _ } => {
-                                        // Track which peers have which content (minimal for now)
-                                        // Future: maintain a map digest -> set of peers for locality
-                                        // For now, just update peer status to show activity
-                                        let s = Status {
-                                            node_id: local_peer_id.to_string(),
-                                            msg: format!("have:{}", &digest[..std::cmp::min(12, digest.len())]),
-                                            agent_version: metrics.agent_version.load(Ordering::Relaxed),
-                                            components_desired: metrics.components_desired.load(Ordering::Relaxed),
-                                            components_running: metrics.components_running.load(Ordering::Relaxed),
-                                            cpu_percent: 0,
-                                            mem_percent: 0,
-                                            tags: roles.clone(),
-                                            drift: 0,
-                                            trusted_owner_pub_bs58: load_trusted_owner(),
-                                            links: link_count as u64,
-                                        };
-                                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&s));
+                                        // Record in content index
+                                        let mut map = content_index.lock().await;
+                                        let set = map.entry(digest).or_insert_with(std::collections::HashSet::new);
+                                        set.insert(propagation_source.to_string());
                                     }
                                     Command::Hello { from } => {
                                         let (cpu_percent, mem_percent) = {
