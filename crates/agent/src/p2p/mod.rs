@@ -1137,13 +1137,36 @@ pub async fn run_agent(
                                                 // Handle different job types
                                                 match &job.job_type {
                                                     common::JobType::OneShot => {
-                                                        if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
-                                                        execute_oneshot_job_with_broadcast(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone(), Some(storage::P2PStorage::new(storage_tx.clone())), job_broadcast_tx_clone.clone(), node_id.clone()).await;
+                                                        // Spawn one-shot jobs in separate tasks to avoid blocking the main event loop
+                                                        let oneshot_job_mgr = job_mgr.clone();
+                                                        let oneshot_job_id = job_id.clone();
+                                                        let oneshot_job = job.clone();
+                                                        let oneshot_logs = logsj.clone();
+                                                        let oneshot_tx = txj.clone();
+                                                        let oneshot_storage_tx = storage_tx.clone();
+                                                        let oneshot_broadcast_tx = job_broadcast_tx_clone.clone();
+                                                        let oneshot_node_id = node_id.clone();
+                                                        
+                                                        tokio::spawn(async move {
+                                                            if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
+                                                            execute_oneshot_job_with_broadcast(oneshot_job_mgr, oneshot_job_id, oneshot_job, oneshot_logs, oneshot_tx, Some(storage::P2PStorage::new(oneshot_storage_tx)), oneshot_broadcast_tx, oneshot_node_id).await;
+                                                        });
                                                     },
                                                     common::JobType::Recurring => {
-                                                        // Recurring jobs are handled by the scheduler, treat execution as one-shot
-                                                        if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
-                                                        execute_oneshot_job_with_broadcast(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone(), Some(storage::P2PStorage::new(storage_tx.clone())), job_broadcast_tx_clone.clone(), node_id.clone()).await;
+                                                        // Spawn recurring jobs in separate tasks to avoid blocking the main event loop
+                                                        let recurring_job_mgr = job_mgr.clone();
+                                                        let recurring_job_id = job_id.clone();
+                                                        let recurring_job = job.clone();
+                                                        let recurring_logs = logsj.clone();
+                                                        let recurring_tx = txj.clone();
+                                                        let recurring_storage_tx = storage_tx.clone();
+                                                        let recurring_broadcast_tx = job_broadcast_tx_clone.clone();
+                                                        let recurring_node_id = node_id.clone();
+                                                        
+                                                        tokio::spawn(async move {
+                                                            if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
+                                                            execute_oneshot_job_with_broadcast(recurring_job_mgr, recurring_job_id, recurring_job, recurring_logs, recurring_tx, Some(storage::P2PStorage::new(recurring_storage_tx)), recurring_broadcast_tx, recurring_node_id).await;
+                                                        });
                                                     },
                                                     common::JobType::Service => {
                                                         // Create cancellation channel for service jobs
