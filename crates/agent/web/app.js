@@ -1,4 +1,9 @@
 // Realm Management Web Interface
+import { apiCall } from './js/api.js';
+import { showModal, hideModal, showSuccess, showError, showLoading, hideLoading, showNotification, addActivity, addLogLine, clearLogs } from './js/utils.js';
+import { setupJobsHandlers as setupJobsHandlersModule, loadJobsData as loadJobsDataModule, openJobSubmitModal as openJobSubmitModalModule, viewJob as viewJobModule, cancelJob as cancelJobModule } from './js/jobs.js';
+import { populateLogComponents as populateLogComponentsModule, loadLogsData as loadLogsDataModule } from './js/logs.js';
+
 class RealmApp {
     constructor() {
         this.currentView = 'overview';
@@ -195,14 +200,14 @@ class RealmApp {
                 await this.loadComponentsData();
                 break;
             case 'jobs':
-                await this.loadJobsData();
-                this.setupJobsHandlers();
+                await loadJobsDataModule(this);
+                setupJobsHandlersModule(this);
                 break;
             case 'ops':
                 break;
             case 'logs':
-                await this.populateLogComponents();
-                await this.loadLogsData();
+                await populateLogComponentsModule(this);
+                await loadLogsDataModule(this);
                 break;
         }
     }
@@ -218,7 +223,7 @@ class RealmApp {
 
     async loadOverviewData() {
         try {
-            const response = await this.apiCall('/api/status');
+            const response = await apiCall(this.sessionToken, '/api/status');
             const data = await response.json();
 
             // Update metrics
@@ -234,7 +239,7 @@ class RealmApp {
 
     async loadNodesData() {
         try {
-            const response = await this.apiCall('/api/nodes');
+            const response = await apiCall(this.sessionToken, '/api/nodes');
             const nodes = await response.json();
 
             const tbody = document.getElementById('nodes-tbody');
@@ -272,7 +277,7 @@ class RealmApp {
 
     async loadComponentsData() {
         try {
-            const response = await this.apiCall('/api/components');
+            const response = await apiCall(this.sessionToken, '/api/components');
             const components = await response.json();
 
             const tbody = document.getElementById('components-tbody');
@@ -478,79 +483,22 @@ class RealmApp {
         }
     }
 
-    openJobSubmitModal() {
-        const body = `
-            <form id="job-submit-form" class="space-y-3">
-                <div>
-                    <label class="block text-sm text-gray-300 mb-1">Job TOML</label>
-                    <textarea id="job-toml" rows="10" class="w-full bg-graphite border border-graphite rounded px-3 py-2" placeholder="[job]\nname='example'\n type='one-shot'\n\n[runtime]\n type='wasm'\n source='file:///path/to.wasm'\n memory_mb=64\n fuel=5000000\n epoch_ms=100\n"></textarea>
-                </div>
-                <div class="flex items-center justify-end gap-2">
-                    <button type="button" class="border border-graphite px-4 py-2 rounded" id="job-cancel">Close</button>
-                    <button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded">Submit</button>
-                </div>
-            </form>
-        `;
-        this.showModal('Submit Job', body, null);
-        const form = document.getElementById('job-submit-form');
-        const closeBtn = document.getElementById('job-cancel');
-        if (closeBtn) closeBtn.addEventListener('click', () => this.hideModal());
-        if (form) {
-            form.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const toml = document.getElementById('job-toml').value;
-                const fd = new FormData();
-                fd.append('job_toml', toml);
-                try {
-                    this.showLoading('Submitting job...');
-                    const res = await fetch('/api/jobs/submit', { method: 'POST', headers: { 'Authorization': `Bearer ${this.sessionToken}` }, body: fd });
-                    if (res.ok) { this.showSuccess('Job submitted'); this.hideModal(); this.loadJobsData(); }
-                    else { this.showError('Submit failed'); }
-                } finally { this.hideLoading(); }
-            });
-        }
-    }
+    openJobSubmitModal() { openJobSubmitModalModule(this); }
 
-    async viewJob(jobId) {
-        try {
-            const res = await this.apiCall(`/api/jobs/${encodeURIComponent(jobId)}`);
-            const job = await res.json();
-            const logsHtml = (job.logs || []).map(l => `<div class='text-xs text-gray-300'>${new Date(l.timestamp*1000).toLocaleTimeString()} [${l.level}] ${l.message}</div>`).join('');
-            this.showModal('Job Details', `
-                <div class='space-y-2'>
-                    <div><strong>ID:</strong> ${job.id}</div>
-                    <div><strong>Name:</strong> ${job.spec?.name || '-'}</div>
-                    <div><strong>Status:</strong> ${job.status}</div>
-                    <div><strong>Node:</strong> ${job.assigned_node || '-'}</div>
-                    <div><strong>Logs:</strong><div class='mt-2 max-h-64 overflow-y-auto bg-graphite p-2 rounded'>${logsHtml || 'No logs'}</div></div>
-                </div>
-            `);
-        } catch (e) {
-            this.showError('Failed to load job');
-        }
-    }
+    async viewJob(jobId) { return viewJobModule(this, jobId); }
 
-    async cancelJob(jobId) {
-        if (!confirm('Cancel this job?')) return;
-        try {
-            await this.apiCall(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
-            this.showSuccess('Job cancel requested');
-            this.loadJobsData();
-        } catch (e) {
-            this.showError('Cancel failed');
-        }
-    }
+    async cancelJob(jobId) { return cancelJobModule(this, jobId); }
 
     async discoverNodes() {
         try {
-            this.showLoading('Discovering nodes...');
-            await this.apiCall('/api/discover', { method: 'POST' });
-            this.showSuccess('Node discovery started');
+            showLoading('Discovering nodes...');
+            await apiCall(this.sessionToken, '/api/discover', { method: 'POST' });
+            showSuccess('Node discovery started');
             setTimeout(() => this.loadNodesData(), 3000);
         } catch (error) {
             this.showError('Failed to start node discovery');
         } finally {
-            this.hideLoading();
+            hideLoading();
         }
     }
 
@@ -558,12 +506,12 @@ class RealmApp {
         if (!confirm(`Restart component "${name}"?`)) return;
 
         try {
-            await this.apiCall(`/api/components/${name}/restart`, { method: 'POST' });
-            this.showSuccess(`Component "${name}" restart initiated`);
-            this.addActivity(`Restarted component: ${name}`);
+            await apiCall(this.sessionToken, `/api/components/${name}/restart`, { method: 'POST' });
+            showSuccess(`Component "${name}" restart initiated`);
+            addActivity(`Restarted component: ${name}`);
             this.loadComponentsData();
         } catch (error) {
-            this.showError(`Failed to restart component: ${error.message}`);
+            showError(`Failed to restart component: ${error.message}`);
         }
     }
 
@@ -571,12 +519,12 @@ class RealmApp {
         if (!confirm(`Stop component "${name}"?`)) return;
 
         try {
-            await this.apiCall(`/api/components/${name}/stop`, { method: 'POST' });
-            this.showSuccess(`Component "${name}" stopped`);
-            this.addActivity(`Stopped component: ${name}`);
+            await apiCall(this.sessionToken, `/api/components/${name}/stop`, { method: 'POST' });
+            showSuccess(`Component "${name}" stopped`);
+            addActivity(`Stopped component: ${name}`);
             this.loadComponentsData();
         } catch (error) {
-            this.showError(`Failed to stop component: ${error.message}`);
+            showError(`Failed to stop component: ${error.message}`);
         }
     }
 
@@ -588,7 +536,7 @@ class RealmApp {
         
         this.websocket.onopen = () => {
             console.log('WebSocket connected');
-            this.addActivity('Real-time updates connected');
+            addActivity('Real-time updates connected');
         };
         
         this.websocket.onmessage = (event) => {
@@ -613,7 +561,7 @@ class RealmApp {
                 this.updateMetrics(data.data);
                 break;
             case 'log':
-                this.addLogLine(data.timestamp, data.component, data.message);
+                addLogLine(data.timestamp, data.component, data.message, this.autoScroll);
                 break;
             case 'node_status':
                 this.updateNodeStatus(data.node_id, data.status);
@@ -622,7 +570,7 @@ class RealmApp {
                 this.updateComponentStatus(data.component, data.status);
                 break;
             case 'activity':
-                this.addActivity(data.message);
+                addActivity(data.message);
                 break;
         }
     }
@@ -662,9 +610,7 @@ class RealmApp {
         }
     }
 
-    clearLogs() {
-        document.getElementById('logs-container').innerHTML = '';
-    }
+    clearLogs() { clearLogs(); }
 
     addActivity(message) {
         const container = document.getElementById('recent-activity');
@@ -700,69 +646,13 @@ class RealmApp {
         return response;
     }
 
-    showModal(title, body, onConfirm = null) {
-        document.getElementById('modal-title').textContent = title;
-        document.getElementById('modal-body').innerHTML = body;
-        const overlay = document.getElementById('modal-overlay');
-        overlay.classList.remove('hidden');
-        overlay.style.display = 'flex';
-        
-        const confirmBtn = document.querySelector('.modal-confirm');
-        if (onConfirm) {
-            confirmBtn.style.display = 'block';
-            confirmBtn.onclick = () => {
-                onConfirm();
-                this.hideModal();
-            };
-        } else {
-            confirmBtn.style.display = 'none';
-        }
-    }
-
-    hideModal() {
-        const overlay = document.getElementById('modal-overlay');
-        overlay.style.display = 'none';
-        overlay.classList.add('hidden');
-    }
-
-    showSuccess(message) {
-        this.showNotification(message, 'success');
-    }
-
-    showError(message) {
-        this.showNotification(message, 'error');
-    }
-
-    showLoading(message) {
-        // You could implement a loading spinner here
-        console.log('Loading:', message);
-    }
-
-    hideLoading() {
-        // Hide loading spinner
-    }
-
-    showNotification(message, type) {
-        // Simple notification - you could enhance this with a proper toast system
-        const notification = document.createElement('div');
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            color: white;
-            font-weight: 500;
-            z-index: 1001;
-            background: ${type === 'success' ? '#059669' : '#ef4444'};
-        `;
-        notification.textContent = message;
-        document.body.appendChild(notification);
-
-        setTimeout(() => {
-            document.body.removeChild(notification);
-        }, 5000);
-    }
+    showModal(title, body, onConfirm = null) { showModal(title, body, onConfirm); }
+    hideModal() { hideModal(); }
+    showSuccess(message) { showSuccess(message); }
+    showError(message) { showError(message); }
+    showLoading(message) { showLoading(message); }
+    hideLoading() { hideLoading(); }
+    showNotification(message, type) { showNotification(message, type); }
 
     viewNodeDetails(nodeId) {
         this.showModal('Node Details', `
