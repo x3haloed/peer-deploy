@@ -90,7 +90,10 @@ pub async fn run_agent(
         warn!(error=%e, "Failed to restore component state from disk, starting fresh");
     }
     
-    supervisor.clone().spawn_reconcile();
+    // UI/ephemeral nodes should not reconcile desired state or schedule workloads
+    if !ephemeral {
+        supervisor.clone().spawn_reconcile();
+    }
 
     // Initialize job manager and restore job state
     let job_manager = std::sync::Arc::new(crate::job_manager::JobManager::new(
@@ -158,9 +161,9 @@ pub async fn run_agent(
         .with_behaviour(|_| Ok(behaviour))?
         .build();
 
-    // Use a persisted UDP port if available to keep stable multiaddrs across restarts
+    // Use loopback-only binds for ephemeral UI nodes; persist/reuse public binds for regular agents
     let listen_addr: Multiaddr = if ephemeral {
-        "/ip4/0.0.0.0/udp/0/quic-v1".parse()
+        "/ip4/127.0.0.1/udp/0/quic-v1".parse()
             .map_err(|e| anyhow!("Failed to parse UDP multiaddr: {}", e))?
     } else if let Some(port) = load_listen_port() {
         format!("/ip4/0.0.0.0/udp/{}/quic-v1", port).parse()
@@ -172,7 +175,7 @@ pub async fn run_agent(
     Swarm::listen_on(&mut swarm, listen_addr)?;
     // Also listen on TCP to support environments where UDP/QUIC is unavailable; reuse persisted port if any
     let listen_tcp: Multiaddr = if ephemeral {
-        "/ip4/0.0.0.0/tcp/0".parse()
+        "/ip4/127.0.0.1/tcp/0".parse()
             .map_err(|e| anyhow!("Failed to parse TCP multiaddr: {}", e))?
     } else if let Some(port) = load_listen_port_tcp() {
         format!("/ip4/0.0.0.0/tcp/{}", port).parse()

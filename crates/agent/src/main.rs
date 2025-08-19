@@ -347,13 +347,22 @@ async fn main() -> anyhow::Result<()> {
             let memory_max_mb = cli.memory_max_mb;
             let fuel = cli.fuel;
             let epoch_ms = cli.epoch_ms;
-            let roles = cli.roles.clone();
-            tokio::spawn(async move {
+            // Ensure the ephemeral UI agent is tagged for clarity and gating
+            let mut roles = cli.roles.clone();
+            if !roles.iter().any(|r| r == "ui") {
+                roles.push("ui".to_string());
+            }
+            // Spawn ephemeral agent and tie its lifetime to the manage session
+            let agent_handle = tokio::spawn(async move {
                 if let Err(e) = p2p::run_agent(wasm, memory_max_mb, fuel, epoch_ms, roles, true).await {
                     warn!(error=%e, "temporary agent exited");
                 }
             });
-            web::start_management_session(owner_key, timeout_duration).await
+            let res = web::start_management_session(owner_key, timeout_duration).await;
+            // On manage exit (timeout/CTRL-C), cancel the ephemeral agent task
+            agent_handle.abort();
+            let _ = agent_handle.await;
+            res
         },
         Some(Commands::Job(job_cmd)) => match job_cmd {
             JobCommands::Submit { file } => cmd::submit_job(file).await,

@@ -161,12 +161,17 @@ pub async fn start_management_session(
     let app = create_app(state, session_id);
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
     
-    // Set up shutdown handler
-    let shutdown_signal = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install CTRL+C signal handler");
-        info!("Shutdown signal received");
+    // Set up shutdown handler: either CTRL+C or timeout ends the session
+    let td = timeout_duration;
+    let shutdown_signal = async move {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Shutdown signal received");
+            }
+            _ = tokio::time::sleep(td) => {
+                info!("Timeout reached, stopping management interface");
+            }
+        }
     };
     
     // Start the server with graceful shutdown
