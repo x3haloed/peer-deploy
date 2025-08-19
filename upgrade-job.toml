@@ -1,0 +1,32 @@
+# Realm Self-Upgrade Job: Upgrade the agent with freshly built binary
+name = "self-upgrade-agent"
+job_type = "one-shot"
+
+[runtime]
+type = "native"
+binary = "/usr/bin/bash"
+args = ["-c", """
+set -e
+echo "=== Preparing self-upgrade ==="
+chmod +x /tmp/artifacts/realm-linux-x86_64
+ls -la /tmp/artifacts/realm-linux-x86_64
+
+echo "=== Performing self-upgrade via init ==="
+# Use init to gracefully replace the running agent
+/tmp/artifacts/realm-linux-x86_64 init
+
+echo "=== Verifying upgrade ==="
+sleep 2
+realm status
+echo "=== Self-upgrade complete! ==="
+"""]
+memory_mb = 512
+
+[execution]
+working_dir = "/tmp"
+timeout_minutes = 10
+
+[targeting]
+platform = "linux/x86_64"
+# Target your specific server
+peer_ids = ["12D3KooWNXg8GbGBoS3c2XpdbCJAEXM6TbDUphn6RPxCYZeGyrgw"]

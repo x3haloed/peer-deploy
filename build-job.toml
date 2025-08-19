@@ -1,0 +1,42 @@
+# Realm CI/CD Job: Build peer-deploy project on remote Debian server
+name = "build-peer-deploy"
+job_type = "one-shot"
+
+[runtime]
+type = "native"
+binary = "/usr/bin/bash"
+args = ["-c", """
+set -e
+echo "=== Setting up build environment ==="
+cd /tmp
+rm -rf peer-deploy
+# We'll include the source as part of the job submission
+tar -xzf workspace.tar.gz
+cd peer-deploy
+
+echo "=== Installing Rust if needed ==="
+if ! command -v cargo &> /dev/null; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source ~/.cargo/env
+fi
+
+echo "=== Building project ==="
+cargo build --release --bin realm
+
+echo "=== Build complete! ==="
+ls -la target/release/realm
+"""]
+memory_mb = 4096
+
+[execution]
+working_dir = "/tmp"
+timeout_minutes = 45
+# Capture the built binary as an artifact
+artifacts = [
+    { path = "/tmp/peer-deploy/target/release/realm", name = "realm-linux-x86_64" }
+]
+
+[targeting]
+platform = "linux/x86_64"
+# Target your specific server
+peer_ids = ["12D3KooWNXg8GbGBoS3c2XpdbCJAEXM6TbDUphn6RPxCYZeGyrgw"]
