@@ -1,8 +1,10 @@
 #![allow(clippy::collapsible_match, clippy::double_ended_iterator_last)]
 
+use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use std::sync::{atomic::Ordering, Arc};
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
-use std::time::Duration;
 
 use anyhow::anyhow;
 use futures::StreamExt;
@@ -38,6 +40,22 @@ mod gateway;
 
 use handlers::{handle_apply_manifest, handle_upgrade};
 use jobs::{execute_oneshot_job, execute_oneshot_job_with_broadcast, execute_service_job};
+
+struct PendingJob {
+    cmd: Command,
+    peers: HashSet<PeerId>,
+    last_sent: Instant,
+}
+
+fn job_status_key(cmd: &Command) -> Option<(String, String)> {
+    match cmd {
+        Command::JobAccepted { job_id, .. } => Some((job_id.clone(), "accepted".to_string())),
+        Command::JobStarted { job_id, .. } => Some((job_id.clone(), "started".to_string())),
+        Command::JobCompleted { job_id, .. } => Some((job_id.clone(), "completed".to_string())),
+        Command::JobFailed { job_id, .. } => Some((job_id.clone(), "failed".to_string())),
+        _ => None,
+    }
+}
 use metrics::{push_log, serve_metrics, Metrics, SharedLogs};
 use crate::supervisor::Supervisor;
 
@@ -319,6 +337,8 @@ pub async fn run_agent(
         }
     }
 
+    let mut pending_job_broadcasts: HashMap<(String, String), PendingJob> = HashMap::new();
+
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     let mut storage_announce_tick = tokio::time::interval(Duration::from_secs(60));
     let mut peer_announce_tick = tokio::time::interval(Duration::from_secs(60));
@@ -343,6 +363,13 @@ pub async fn run_agent(
         tokio::select! {
             // Handle job status broadcasts
             Some(job_broadcast) = job_broadcast_rx.recv() => {
+                if let Some((job_id, status)) = job_status_key(&job_broadcast) {
+                    let peers: HashSet<PeerId> = swarm.connected_peers().cloned().collect();
+                    pending_job_broadcasts.insert(
+                        (job_id.clone(), status.clone()),
+                        PendingJob { cmd: job_broadcast.clone(), peers, last_sent: Instant::now() },
+                    );
+                }
                 let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&job_broadcast));
             }
             // Handle incoming run/job/storage events
@@ -443,6 +470,12 @@ pub async fn run_agent(
                 } else {
                     metrics.status_published_total.fetch_add(1, Ordering::Relaxed);
                     last_publish_count = last_publish_count.saturating_add(1);
+                }
+                for pending in pending_job_broadcasts.values_mut() {
+                    if !pending.peers.is_empty() && pending.last_sent.elapsed() >= Duration::from_secs(5) {
+                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&pending.cmd));
+                        pending.last_sent = Instant::now();
+                    }
                 }
             }
             _ = storage_announce_tick.tick() => {
@@ -1077,18 +1110,36 @@ pub async fn run_agent(
                                             let _ = job_manager.update_job_assignment(&job_id, &assigned_node).await;
                                             let _ = push_log(&logs, "system", format!("Job {} accepted by node {}", job_id, assigned_node)).await;
                                         }
+                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "accepted".to_string(), from: local_peer_id.to_string() };
+                                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                     }
                                     Command::JobStarted { job_id, assigned_node } => {
                                         let _ = job_manager.start_job(&job_id).await;
                                         let _ = push_log(&logs, "system", format!("Job {} started on node {}", job_id, assigned_node)).await;
+                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "started".to_string(), from: local_peer_id.to_string() };
+                                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                     }
                                     Command::JobCompleted { job_id, assigned_node, exit_code } => {
                                         let _ = job_manager.complete_job(&job_id, exit_code).await;
                                         let _ = push_log(&logs, "system", format!("Job {} completed on node {} with exit code {}", job_id, assigned_node, exit_code)).await;
+                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "completed".to_string(), from: local_peer_id.to_string() };
+                                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                     }
                                     Command::JobFailed { job_id, assigned_node, error } => {
                                         let _ = job_manager.fail_job(&job_id, error.clone()).await;
                                         let _ = push_log(&logs, "system", format!("Job {} failed on node {}: {}", job_id, assigned_node, error)).await;
+                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "failed".to_string(), from: local_peer_id.to_string() };
+                                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
+                                    }
+                                    Command::JobStatusAck { job_id, status, from } => {
+                                        if let Ok(pid) = PeerId::from_str(&from) {
+                                            if let Some(p) = pending_job_broadcasts.get_mut(&(job_id.clone(), status.clone())) {
+                                                p.peers.remove(&pid);
+                                                if p.peers.is_empty() {
+                                                    pending_job_broadcasts.remove(&(job_id.clone(), status.clone()));
+                                                }
+                                            }
+                                        }
                                     }
                                     Command::AnnouncePeers { peers } => {
                                         // Gossip-based peer exchange: dial and add explicit peers

@@ -37,10 +37,12 @@ pub enum Command {
     StorageData { digest: String, bytes_b64: String },
     /// Job acceptance broadcast - node claims job execution
     JobAccepted { job_id: String, assigned_node: String },
-    /// Job status update broadcasts  
+    /// Job status update broadcasts
     JobStarted { job_id: String, assigned_node: String },
     JobCompleted { job_id: String, assigned_node: String, exit_code: i32 },
     JobFailed { job_id: String, assigned_node: String, error: String },
+    /// Acknowledge receipt of a job status update
+    JobStatusAck { job_id: String, status: String, from: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
