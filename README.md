@@ -164,6 +164,17 @@ Upgrade behavior on agents:
   - Owner: `realm invite --bootstrap <addr> ...` → share token
   - Peer: `realm enroll --token <TOKEN>`
 
+## Packages and Mount Lifecycle
+- You can bundle a component and assets into a single `.realm` file and deploy it:
+  - Create: `realm package create --dir ./my-web-app --name web-app`
+  - Deploy: `realm deploy-package --file ./my-web-app.realm`
+- Package manifest supports mount kinds with clear data lifecycle semantics:
+  - **static**: read‑only assets from the package, content‑addressed under `artifacts/packages/{digest}/…`; swapped on upgrade.
+  - **config**: read‑only initial configuration from the package.
+  - **work**: read‑write ephemeral working directory. The agent allocates a unique per‑replica subdirectory under `work/components/{name}/{replica-id}` for isolation and removes it when the replica exits or the component is stopped.
+  - **state**: read‑write persistent volume under `state/components/{volume}` that survives restarts/upgrades. Optional `seed` copies data from the package into an empty volume on first install only.
+- The Web UI (Deploy tab → “Deploy Package”) lets you upload a `.realm`, inspect its manifest and proposed mounts, and view/manage persistent volumes under Ops → Volumes.
+
 ## Agent command‑line options
 - `--role <tag>`: repeatable; advertised via libp2p identify
 - `--wasm <file>`: start a single WASI component immediately (ad‑hoc)

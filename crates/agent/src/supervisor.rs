@@ -167,6 +167,16 @@ impl Supervisor {
             }
             info!(component=%component_name, "Component tasks cleaned up");
         }
+        // Best-effort cleanup of component-level work directory (ephemeral). Any
+        // per-replica subdirectories created for running replicas will be removed
+        // on their normal exit path; if we forcibly stopped tasks, clear the tree.
+        let work_root = crate::p2p::state::agent_data_dir()
+            .join("work")
+            .join("components")
+            .join(component_name);
+        if work_root.exists() {
+            let _ = std::fs::remove_dir_all(&work_root);
+        }
     }
 
     /// Clean up all running tasks
@@ -204,13 +214,57 @@ impl Supervisor {
             }
         }
         
+        // Resolve per-replica work mount directory. Package 'work' mounts are resolved to
+        // agent_data_dir()/work/components/{name}. Here we allocate a unique subdirectory
+        // per replica and rewrite any matching mount host paths to that subdir. The subdir
+        // is removed when the replica exits.
+        let base_work_dir = crate::p2p::state::agent_data_dir()
+            .join("work")
+            .join("components")
+            .join(&name);
+        let mut effective_mounts: Option<Vec<common::MountSpec>> = desired.spec.mounts.clone();
+        let mut replica_work_dir: Option<std::path::PathBuf> = None;
+        if let Some(ref mut ms) = effective_mounts {
+            let has_work_mount = ms.iter().any(|m| {
+                let host_path = std::path::Path::new(&m.host);
+                host_path.starts_with(&base_work_dir)
+            });
+            if has_work_mount {
+                let replica_id = format!(
+                    "{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+                        .as_micros()
+                );
+                let dir = base_work_dir.join(replica_id);
+                let _ = std::fs::create_dir_all(&dir);
+                replica_work_dir = Some(dir.clone());
+                for m in ms.iter_mut() {
+                    let host_path = std::path::Path::new(&m.host);
+                    if host_path.starts_with(&base_work_dir) {
+                        m.host = dir.display().to_string();
+                    }
+                }
+                if let Some(dir_log) = replica_work_dir.as_ref() {
+                    push_log(&logs, &name, format!("allocated work dir {}", dir_log.display())).await;
+                }
+            }
+        }
+        
         push_log(&logs, &name, format!("launching replica from {path}")).await;
         metrics.inc_components_running();
         count.fetch_add(1, Ordering::Relaxed);
         let name_run = name.clone();
+        let mounts_for_run = effective_mounts.clone();
+        let cleanup_work_dir = replica_work_dir.clone();
         let task_handle = tokio::spawn(async move {
-            let res = run_wasm_module_with_limits(&path, &name_run, logs.clone(), mem, fuel, epoch, Some(metrics.clone()), desired.spec.mounts.clone()).await;
+            let res = run_wasm_module_with_limits(&path, &name_run, logs.clone(), mem, fuel, epoch, Some(metrics.clone()), mounts_for_run).await;
             if let Err(e) = &res { warn!(component=%name_run, error=%e, "replica crashed"); }
+            // Best-effort cleanup of per-replica work directory after exit
+            if let Some(dir) = cleanup_work_dir.as_ref() {
+                let _ = std::fs::remove_dir_all(dir);
+            }
             // restart on crash by decrementing and letting next reconcile add back
             metrics.dec_components_running();
             metrics.inc_restarts_total();
