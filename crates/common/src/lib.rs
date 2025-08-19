@@ -14,6 +14,7 @@ pub enum Command {
     ApplyManifest(SignedManifest),
     UpgradeAgent(AgentUpgrade),
     PushComponent(PushPackage),
+    SubmitJob(JobSpec),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,4 +224,74 @@ pub struct InviteUnsigned {
 pub struct InviteToken {
     pub unsigned: InviteUnsigned,
     pub signature_b64: String,
+}
+
+// ===================== Job Orchestration (Phase 2) =====================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobSpec {
+    pub name: String,
+    #[serde(default = "default_job_type")]
+    pub job_type: JobType, // one-shot | recurring | service
+    #[serde(default)]
+    pub schedule: Option<String>, // cron expr for recurring jobs
+
+    pub runtime: JobRuntime,
+    pub execution: JobExecution,
+    #[serde(default)]
+    pub targeting: Option<JobTargeting>,
+}
+
+fn default_job_type() -> JobType { JobType::OneShot }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum JobType {
+    OneShot,
+    Recurring,
+    Service,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum JobRuntime {
+    #[serde(rename = "wasm")]
+    Wasm {
+        /// File or URL. Examples: file:/abs/path.wasm, https://host/path.wasm
+        source: String,
+        /// Optional pinned digest for integrity
+        #[serde(default)]
+        sha256_hex: Option<String>,
+        #[serde(default = "default_mem_mb")] 
+        memory_mb: u64,
+        #[serde(default = "default_fuel")] 
+        fuel: u64,
+        #[serde(default = "default_epoch_ms")] 
+        epoch_ms: u64,
+    },
+    // Future: native, container, qemu
+}
+
+fn default_mem_mb() -> u64 { 64 }
+fn default_fuel() -> u64 { 5_000_000 }
+fn default_epoch_ms() -> u64 { 100 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobExecution {
+    /// Optional working directory semantic for non-wasm runtimes; ignored for wasm currently
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    /// Optional timeout in minutes
+    #[serde(default)]
+    pub timeout_minutes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobTargeting {
+    #[serde(default)]
+    pub platform: Option<String>, // linux/x86_64, macos/aarch64, etc
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub node_ids: Vec<String>,
 }

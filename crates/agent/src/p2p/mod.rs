@@ -613,6 +613,63 @@ pub async fn run_agent(
                                             }
                                         }
                                     }
+                                    Command::SubmitJob(job) => {
+                                        let txj = tx.clone();
+                                        let logsj = logs.clone();
+                                        let rolesj = roles.clone();
+                                        tokio::spawn(async move {
+                                            // basic targeting: platform + tags + node_ids
+                                            let mut selected = true;
+                                            if let Some(t) = &job.targeting {
+                                                if let Some(p) = &t.platform {
+                                                    let host = format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH);
+                                                    if &host != p { selected = false; }
+                                                }
+                                                if selected && !t.tags.is_empty() {
+                                                    selected = t.tags.iter().any(|tag| rolesj.contains(tag));
+                                                }
+                                            }
+                                            if selected {
+                                                // Only WASM runtime for now
+                                                match job.runtime {
+                                                    common::JobRuntime::Wasm { source, sha256_hex, memory_mb, fuel, epoch_ms } => {
+                                                        let label = format!("job:{}", job.name);
+                                                        push_log(&logsj, &label, format!("staging wasm from {source}")).await;
+                                                        let bytes = match handlers::fetch_bytes(&source).await {
+                                                            Ok(b) => b,
+                                                            Err(e) => {
+                                                                let _ = txj.send(Err(format!("job failed: fetch: {e}")));
+                                                                return;
+                                                            }
+                                                        };
+                                                        if let Some(hex) = sha256_hex {
+                                                            let d = common::sha256_hex(&bytes);
+                                                            if d != hex { let _ = txj.send(Err("job failed: digest mismatch".into())); return; }
+                                                        }
+                                                        let stage_dir = state::agent_data_dir().join("jobs");
+                                                        let _ = tokio::fs::create_dir_all(&stage_dir).await;
+                                                        let digest = common::sha256_hex(&bytes);
+                                                        let file_path = stage_dir.join(format!("{}-{}.wasm", job.name, &digest[..16]));
+                                                        if !file_path.exists() { let _ = tokio::fs::write(&file_path, &bytes).await; }
+                                                        push_log(&logsj, &label, format!("starting wasm with limits mem={}MB fuel={} epoch_ms={}", memory_mb, fuel, epoch_ms)).await;
+                                                        let res = run_wasm_module_with_limits(
+                                                            &file_path.display().to_string(),
+                                                            &label,
+                                                            logsj.clone(),
+                                                            memory_mb,
+                                                            fuel,
+                                                            epoch_ms,
+                                                            None,
+                                                            None,
+                                                        ).await
+                                                        .map(|_| format!("job ok: {}", job.name))
+                                                        .map_err(|e| format!("job error: {}: {}", job.name, e));
+                                                        let _ = txj.send(res);
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
                                 }
                             }
                         }

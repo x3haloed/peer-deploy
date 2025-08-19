@@ -4,6 +4,7 @@ pub mod apply;
 pub mod status;
 pub mod install;
 pub mod upgrade;
+pub mod job;
 pub mod invite;
 pub mod enroll;
 pub mod deploy;
@@ -20,6 +21,7 @@ pub use install::install;
 #[cfg(unix)]
 pub use install::install_cli;
 pub use upgrade::{upgrade, upgrade_multi};
+pub use job::submit_job;
 pub use invite::invite;
 pub use enroll::enroll;
 pub use deploy::deploy_component;

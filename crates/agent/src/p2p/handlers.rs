@@ -284,7 +284,7 @@ pub async fn handle_upgrade(
     std::process::exit(0);
 }
 
-async fn fetch_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
+pub(super) async fn fetch_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
     if let Some(rest) = url.strip_prefix("file:") {
         let path = std::path::Path::new(rest);
         return Ok(tokio::fs::read(path).await?);

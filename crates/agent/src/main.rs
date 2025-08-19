@@ -179,6 +179,12 @@ enum Commands {
         #[arg(long, default_value_t = true)]
         start: bool,
     },
+    /// Job orchestration commands
+    JobSubmit {
+        /// Path to job TOML
+        #[arg(long)]
+        file: String,
+    },
     /// Start management web interface
     Manage {
         /// Authentication method (for now, always authenticates)
@@ -236,6 +242,7 @@ async fn main() -> anyhow::Result<()> {
             let timeout_duration = Duration::from_secs(timeout * 60);
             web::start_management_session(owner_key, timeout_duration).await
         },
+        Some(Commands::JobSubmit { file }) => cmd::submit_job(file).await,
     }
 }
 
