@@ -148,3 +148,32 @@ pub fn load_bootstrap_addrs() -> Vec<String> {
     }
     Vec::new()
 }
+
+// Implement persistent known-peers store
+fn peers_path() -> PathBuf {
+    agent_data_dir().join("peers.json")
+}
+
+pub fn load_known_peers() -> Vec<String> {
+    if let Ok(bytes) = fs::read(peers_path()) {
+        if let Ok(list) = serde_json::from_slice::<Vec<String>>(&bytes) {
+            return list;
+        }
+    }
+    Vec::new()
+}
+
+pub fn save_known_peers(peers: &[String]) {
+    let _ = fs::create_dir_all(agent_data_dir());
+    if let Ok(bytes) = serde_json::to_vec(peers) {
+        let _ = fs::write(peers_path(), &bytes);
+    }
+}
+
+pub fn add_known_peer(addr: &str) {
+    let mut peers = load_known_peers();
+    if !peers.contains(&addr.to_string()) {
+        peers.push(addr.to_string());
+        save_known_peers(&peers);
+    }
+}

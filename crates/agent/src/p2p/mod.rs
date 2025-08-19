@@ -20,7 +20,7 @@ use common::{
     deserialize_message, serialize_message, Command, Status, REALM_CMD_TOPIC, REALM_STATUS_TOPIC,
 };
 use state::{
-    load_bootstrap_addrs, load_state, load_trusted_owner,
+    load_bootstrap_addrs, load_known_peers, add_known_peer, load_state, load_trusted_owner,
     load_listen_port, save_listen_port,
     load_listen_port_tcp, save_listen_port_tcp,
     update_persistent_manifest_with_component
@@ -202,6 +202,20 @@ pub async fn run_agent(
             let _ = libp2p::Swarm::dial(&mut swarm, ma);
         }
     }
+    // Dial persistent known peers from peer store and add to Kademlia
+    for addr in load_known_peers().into_iter() {
+        if let Ok(ma) = addr.parse::<Multiaddr>() {
+            // Extract PeerId from multiaddr if present for Kademlia
+            if let Some(peer_id) = ma.iter().find_map(|p| {
+                if let libp2p::multiaddr::Protocol::P2p(hash) = p {
+                    PeerId::from_multihash(hash.into()).ok()
+                } else { None }
+            }) {
+                swarm.behaviour_mut().kademlia.add_address(&peer_id, ma.clone());
+            }
+            let _ = libp2p::Swarm::dial(&mut swarm, ma);
+        }
+    }
 
     // Track current number of established connections to report in Status
     let mut link_count: usize = 0;
@@ -304,7 +318,7 @@ pub async fn run_agent(
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     let mut storage_announce_tick = tokio::time::interval(Duration::from_secs(60));
-    let mut peer_announce_tick = tokio::time::interval(Duration::from_secs(30));
+    let mut peer_announce_tick = tokio::time::interval(Duration::from_secs(60));
     let mut dht_bootstrap_tick = tokio::time::interval(Duration::from_secs(120));
     // Content index: digest -> set of peers that have announced it
     let content_index: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>> =
@@ -318,7 +332,6 @@ pub async fn run_agent(
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let mut schedule_tick = tokio::time::interval(Duration::from_secs(60));
     // Periodic peer announcement for peer exchange
-    let mut peer_announce_tick = tokio::time::interval(Duration::from_secs(60));
     // track msgs per second by counting status publishes
     let mut last_publish_count: u64 = 0;
     let mut last_sample_time = std::time::Instant::now();
@@ -470,9 +483,15 @@ pub async fn run_agent(
             }
             // Periodic peer announcement for gossip-based peer exchange
             _ = peer_announce_tick.tick() => {
-                let peers = load_bootstrap_addrs();
+                // Announce both bootstrap and known peers
+                let mut peers = load_bootstrap_addrs();
+                for peer in load_known_peers() {
+                    if !peers.contains(&peer) {
+                        peers.push(peer);
+                    }
+                }
                 if !peers.is_empty() {
-                    warn!("Announcing {} bootstrap peers", peers.len());
+                    warn!("Announcing {} peers", peers.len());
                     let msg = Command::AnnouncePeers { peers: peers.clone() };
                     let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg));
                 }
@@ -490,6 +509,8 @@ pub async fn run_agent(
                         match ev {
                             mdns::Event::Discovered(list) => {
                                 for (peer, addr) in list { 
+                                    // Persist discovered MDNS peer address
+                                    add_known_peer(&addr.to_string());
                                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
                                     // Also add to Kademlia DHT routing table
                                     swarm.behaviour_mut().kademlia.add_address(&peer, addr);
@@ -545,8 +566,10 @@ pub async fn run_agent(
                         match ev {
                             identify::Event::Received { peer_id, info, .. } => {
                                 info!("Identify received from {}: agent={}", peer_id, info.agent_version);
-                                // Add peer addresses to Kademlia
                                 for addr in info.listen_addrs {
+                                    // Persist discovered Identify peer address
+                                    add_known_peer(&addr.to_string());
+                                    // Add peer addresses to Kademlia
                                     swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                                 }
                             }
