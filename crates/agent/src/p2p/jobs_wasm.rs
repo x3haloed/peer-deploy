@@ -14,19 +14,52 @@ pub async fn execute_wasm_job(
     mounts: Option<Vec<common::MountSpec>>,
     logs: &metrics::SharedLogs,
     cancel_rx: Option<&mut tokio::sync::oneshot::Receiver<()>>,
+    storage: Option<crate::p2p::storage::P2PStorage>,
 ) -> Result<String, String> {
-    use crate::p2p::{metrics::push_log, state};
+    use crate::p2p::metrics::push_log;
 
     let label = format!("job:{}", job.name);
     push_log(logs, &label, format!("staging wasm from {source}")).await;
     let _ = job_mgr.add_job_log(job_id, "info".to_string(), format!("Staging WASM from {}", source)).await;
 
-    let bytes = match handlers::fetch_bytes(source).await {
-        Ok(b) => b,
-        Err(e) => {
-            let error_msg = format!("job failed: fetch: {e}");
-            return Err(error_msg);
+    let bytes = if let Some(hex) = &sha256_hex {
+        // Try CAS/P2P first if source isn't directly fetchable or to avoid external transfer
+        if source.starts_with("cached:") || source.starts_with("cas:") {
+            let digest = hex.clone();
+            let store = ContentStore::open();
+            if let Some(path) = store.get_path(&digest) {
+                tokio::fs::read(path).await.map_err(|e| format!("cas read failed: {e}"))?
+            } else if let Some(sto) = &storage {
+                if let Some(bytes) = sto.get(digest.clone(), std::time::Duration::from_secs(5)).await {
+                    // Save into CAS
+                    let _ = store.put_bytes(&bytes);
+                    bytes
+                } else {
+                    return Err("job failed: digest not available via P2P".to_string());
+                }
+            } else {
+                return Err("job failed: digest not local and no P2P storage available".to_string());
+            }
+        } else {
+            // Prefer direct fetch; fallback to P2P if http/file unsupported
+            match handlers::fetch_bytes(source).await {
+                Ok(b) => b,
+                Err(_) => {
+                    if let Some(sto) = &storage {
+                        if let Some(bytes) = sto.get(hex.clone(), std::time::Duration::from_secs(5)).await {
+                            bytes
+                        } else {
+                            return Err("job failed: fetch unavailable and P2P fetch failed".to_string());
+                        }
+                    } else {
+                        return Err("job failed: unsupported source and no P2P storage".to_string());
+                    }
+                }
+            }
         }
+    } else {
+        // No digest provided; direct fetch only
+        match handlers::fetch_bytes(source).await { Ok(b) => b, Err(e) => { return Err(format!("job failed: fetch: {e}")); } }
     };
 
     if let Some(hex) = sha256_hex {

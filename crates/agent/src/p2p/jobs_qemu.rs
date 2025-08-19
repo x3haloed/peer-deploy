@@ -15,8 +15,9 @@ pub async fn execute_qemu_job(
     qemu_binary: Option<String>,
     logs: &metrics::SharedLogs,
     cancel_rx: Option<&mut tokio::sync::oneshot::Receiver<()>>,
+    storage: Option<crate::p2p::storage::P2PStorage>,
 ) -> Result<String, String> {
-    use crate::p2p::{metrics::push_log, handlers, state};
+    use crate::p2p::{metrics::push_log, handlers};
     use tokio::process::Command;
 
     let policy: ExecutionPolicy = load_policy();
@@ -32,10 +33,23 @@ pub async fn execute_qemu_job(
     push_log(logs, &label, format!("staging qemu binary from {binary}")).await;
     let _ = job_mgr.add_job_log(job_id, "info".to_string(), format!("Staging QEMU target from {}", binary)).await;
 
-    let bytes = match handlers::fetch_bytes(binary).await {
-        Ok(b) => b,
-        Err(e) => { return Err(format!("job failed: fetch: {e}")); }
-    };
+    let bytes = if let Some(hex) = &sha256_hex {
+        if binary.starts_with("cached:") || binary.starts_with("cas:") {
+            let store = ContentStore::open();
+            if let Some(path) = store.get_path(hex) {
+                tokio::fs::read(path).await.map_err(|e| format!("cas read failed: {e}"))?
+            } else if let Some(sto) = &storage {
+                if let Some(bytes) = sto.get(hex.clone(), std::time::Duration::from_secs(5)).await { let _ = store.put_bytes(&bytes); bytes } else { return Err("job failed: digest not available via P2P".to_string()); }
+            } else { return Err("job failed: digest not local and no P2P storage available".to_string()); }
+        } else {
+            match handlers::fetch_bytes(binary).await {
+                Ok(b) => b,
+                Err(_) => {
+                    if let Some(sto) = &storage { if let Some(bytes) = sto.get(hex.clone(), std::time::Duration::from_secs(5)).await { bytes } else { return Err("job failed: fetch unavailable and P2P fetch failed".to_string()); } } else { return Err("job failed: unsupported source and no P2P storage".to_string()); }
+                }
+            }
+        }
+    } else { match handlers::fetch_bytes(binary).await { Ok(b) => b, Err(e) => { return Err(format!("job failed: fetch: {e}")); } } };
 
     if let Some(hex) = sha256_hex {
         let d = common::sha256_hex(&bytes);

@@ -26,6 +26,7 @@ use state::{
 };
 
 mod handlers;
+pub mod storage;
 mod jobs;
 mod jobs_wasm;
 mod jobs_native;
@@ -279,6 +280,10 @@ pub async fn run_agent(
     // Content index: digest -> set of peers that have announced it
     let content_index: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    // Minimal P2P storage request/response plumbing
+    let (storage_req_tx, mut storage_req_rx) = tokio::sync::mpsc::unbounded_channel::<storage::StorageRequest>();
+    let pending_storage: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<tokio::sync::oneshot::Sender<Option<Vec<u8>>>>>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let mut schedule_tick = tokio::time::interval(Duration::from_secs(60));
     // track msgs per second by counting status publishes
     let mut last_publish_count: u64 = 0;
@@ -395,6 +400,26 @@ pub async fn run_agent(
                     if count >= 8 { break; }
                 }
             }
+            Some(req) = storage_req_rx.recv() => {
+                // Local storage client request: serve from CAS or broadcast StorageGet
+                let digest = req.digest.clone();
+                let store = crate::storage::ContentStore::open();
+                if let Some(path) = store.get_path(&digest) {
+                    match tokio::fs::read(path).await {
+                        Ok(bytes) => { let _ = req.resp.send(Some(bytes)); }
+                        Err(_) => { let _ = req.resp.send(None); }
+                    }
+                } else {
+                    {
+                        let mut pend = pending_storage.lock().await;
+                        pend.entry(digest.clone()).or_default().push(req.resp);
+                    }
+                    let _ = swarm.behaviour_mut().gossipsub.publish(
+                        topic_cmd.clone(),
+                        serialize_message(&common::Command::StorageGet { digest }),
+                    );
+                }
+            }
             _ = schedule_tick.tick() => {
                 // Evaluate recurring job schedules
                 if let Ok(due_specs) = job_manager.evaluate_schedules().await {
@@ -427,6 +452,35 @@ pub async fn run_agent(
                                         let mut map = content_index.lock().await;
                                         let set = map.entry(digest).or_insert_with(std::collections::HashSet::new);
                                         set.insert(propagation_source.to_string());
+                                    }
+                                    common::Command::StorageGet { digest } => {
+                                        // If we have the blob, and it's not too large, respond inline
+                                        let store = crate::storage::ContentStore::open();
+                                        if let Some(path) = store.get_path(&digest) {
+                                            if let Ok(meta) = tokio::fs::metadata(&path).await {
+                                                let size = meta.len();
+                                                if size <= 8 * 1024 * 1024 {
+                                                    if let Ok(bytes) = tokio::fs::read(&path).await {
+                                                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                                                        let _ = swarm.behaviour_mut().gossipsub.publish(
+                                                            topic_cmd.clone(),
+                                                            serialize_message(&common::Command::StorageData { digest, bytes_b64: b64 }),
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    common::Command::StorageData { digest, bytes_b64 } => {
+                                        // Wake up any pending local requests
+                                        let mut pend = pending_storage.lock().await;
+                                        if let Some(waiters) = pend.remove(&digest) {
+                                            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(bytes_b64.as_bytes()) {
+                                                for w in waiters { let _ = w.send(Some(bytes.clone())); }
+                                            } else {
+                                                for w in waiters { let _ = w.send(None); }
+                                            }
+                                        }
                                     }
                                     Command::Hello { from } => {
                                         let (cpu_percent, mem_percent) = {
@@ -670,6 +724,8 @@ pub async fn run_agent(
                                         let rolesj = roles.clone();
                                         let job_mgr = job_manager.clone();
                                         let node_id = local_peer_id.to_string();
+                                        let content_index2 = content_index.clone();
+                                        let storage_tx = storage_req_tx.clone();
                                         tokio::spawn(async move {
                                             // Create job instance and track it
                                             let job_id = match job_mgr.submit_job(job.clone()).await {
@@ -691,6 +747,28 @@ pub async fn run_agent(
                                                     selected = t.tags.iter().any(|tag| rolesj.contains(tag));
                                                 }
                                             }
+                                            // Locality preference: if job has digest and others have it, delay start here
+                                            let mut locality_delay_ms: u64 = 0;
+                                            let job_digest: Option<String> = match &job.runtime {
+                                                common::JobRuntime::Wasm { sha256_hex, .. } => sha256_hex.clone(),
+                                                common::JobRuntime::Native { sha256_hex, .. } => sha256_hex.clone(),
+                                                common::JobRuntime::Qemu { sha256_hex, .. } => sha256_hex.clone(),
+                                            };
+                                            if let Some(d) = &job_digest {
+                                                let store = crate::storage::ContentStore::open();
+                                                let has_local = store.has(d);
+                                                if !has_local {
+                                                    let peers_with = {
+                                                        let map = content_index2.lock().await;
+                                                        map.get(d).map(|s| s.len()).unwrap_or(0)
+                                                    };
+                                                    if peers_with > 0 {
+                                                        let h = common::sha256_hex(node_id.as_bytes());
+                                                        let nib = u64::from_str_radix(&h[..4], 16).unwrap_or(0);
+                                                        locality_delay_ms = 500 + (nib % 1500);
+                                                    }
+                                                }
+                                            }
                                             if selected {
                                                 // Mark job as started
                                                 let _ = job_mgr.start_job(&job_id, node_id).await;
@@ -699,11 +777,13 @@ pub async fn run_agent(
                                                 // Handle different job types
                                                 match &job.job_type {
                                                     common::JobType::OneShot => {
-                                                        execute_oneshot_job(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone()).await;
+                                                        if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
+                                                        execute_oneshot_job(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone(), Some(storage::P2PStorage::new(storage_tx.clone()))).await;
                                                     },
                                                     common::JobType::Recurring => {
                                                         // Recurring jobs are handled by the scheduler, treat execution as one-shot
-                                                        execute_oneshot_job(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone()).await;
+                                                        if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
+                                                        execute_oneshot_job(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone(), Some(storage::P2PStorage::new(storage_tx.clone()))).await;
                                                     },
                                                     common::JobType::Service => {
                                                         // Create cancellation channel for service jobs
@@ -716,7 +796,8 @@ pub async fn run_agent(
                                                         let service_tx = txj.clone();
                                                         
                                                         let handle = tokio::spawn(async move {
-                                                            execute_service_job(service_job_mgr, service_job_id, service_job, service_logs, service_tx, cancel_rx).await;
+                                                            if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
+                                                            execute_service_job(service_job_mgr, service_job_id, service_job, service_logs, service_tx, cancel_rx, Some(storage::P2PStorage::new(storage_tx.clone()))).await;
                                                         });
                                                         
                                                         // Register the running job for cancellation support

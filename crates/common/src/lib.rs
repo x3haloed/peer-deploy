@@ -22,6 +22,11 @@ pub enum Command {
     QueryJobLogs { job_id: String, tail: usize },
     // Phase 5A: Storage discovery announcements
     StorageHave { digest: String, size: u64 },
+    // Phase 5B: Minimal P2P artifact transfer
+    /// Request blob by digest from peers
+    StorageGet { digest: String },
+    /// Response with blob bytes base64-encoded. Intended for small artifacts only.
+    StorageData { digest: String, bytes_b64: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
