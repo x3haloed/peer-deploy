@@ -149,6 +149,59 @@ pub struct MountSpec {
     pub ro: bool,
 }
 
+// ===================== Package Format (Phase 3) =====================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MountKind {
+    /// Read-only, from package contents, content-addressed
+    Static,
+    /// Read-only, from package, intended for initial configuration files
+    Config,
+    /// Read-write, ephemeral, per-replica working directory
+    Work,
+    /// Read-write, persistent state across restarts/upgrades
+    State,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageMountSpec {
+    pub kind: MountKind,
+    /// Guest path inside WASI sandbox
+    pub guest: String,
+    /// For kind = static|config: path within the package directory (e.g., "static/", "config/")
+    #[serde(default)]
+    pub source: Option<String>,
+    /// For kind = work: optional size limit in MB
+    #[serde(default)]
+    pub size_mb: Option<u64>,
+    /// For kind = state: optional named volume (defaults to "default")
+    #[serde(default)]
+    pub volume: Option<String>,
+    /// For kind = state: optional path within package used to seed the volume on first install only
+    #[serde(default)]
+    pub seed: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageComponent {
+    /// Human-readable component name
+    pub name: String,
+    /// Path of the main WASM file within the package (e.g., "component.wasm")
+    pub wasm: String,
+    /// Optional pinned sha256 digest of the WASM file
+    #[serde(default)]
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageManifest {
+    pub component: PackageComponent,
+    /// Mount specifications describing how package assets map into the guest
+    #[serde(default)]
+    pub mounts: Vec<PackageMountSpec>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServicePort {
     pub name: Option<String>,

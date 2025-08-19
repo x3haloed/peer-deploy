@@ -53,6 +53,31 @@ class RealmApp {
             this.handleDeploy();
         });
 
+        // Deploy package form
+        const deployPkgForm = document.getElementById('deploy-pkg-form');
+        if (deployPkgForm) {
+            deployPkgForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const fd = new FormData(deployPkgForm);
+                try {
+                    this.showLoading('Deploying package...');
+                    const res = await fetch('/api/deploy-package', { method: 'POST', headers: { 'Authorization': `Bearer ${this.sessionToken}` }, body: fd });
+                    if (res.ok) {
+                        const info = await res.json().catch(() => null);
+                        this.showSuccess('Package deployed');
+                        this.addActivity(`Deployed package${info?.name ? `: ${info.name}` : ''}`);
+                        deployPkgForm.reset();
+                        this.switchView('components');
+                    } else {
+                        const t = await res.text();
+                        this.showError(`Package deploy failed: ${t}`);
+                    }
+                } finally {
+                    this.hideLoading();
+                }
+            });
+        }
+
         // Discover nodes
         document.getElementById('discover-nodes').addEventListener('click', () => {
             this.discoverNodes();

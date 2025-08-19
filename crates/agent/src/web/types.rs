@@ -165,6 +165,8 @@ pub struct JobQuery {
     pub limit: Option<u32>,
 }
 
+// No additional types required for package deploy; using multipart
+
 // WebSocket types
 #[derive(Serialize)]
 pub struct WebSocketUpdate {

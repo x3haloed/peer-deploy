@@ -274,6 +274,23 @@
                             <button type="button" class="border border-graphite px-4 py-2 rounded-lg text-sm" id="deploy-cancel">Cancel</button>
                         </div>
                     </form>
+                    <div class="mt-8">
+                        <h3 class="text-xl font-semibold mb-3">Deploy Package (.realm)</h3>
+                        <form id="deploy-pkg-form" class="bg-charcoal border border-graphite rounded-lg p-6 space-y-4">
+                            <div>
+                                <label class="block text-sm text-gray-300 mb-1">Package Name (optional override)</label>
+                                <input type="text" name="name" placeholder="my-web-app" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-gray-300 mb-1">.realm Package File</label>
+                                <input type="file" name="file" accept=".realm,.zip" required class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                <p class="text-xs text-gray-400 mt-1">Upload a package bundle with manifest.toml, component.wasm and assets</p>
+                            </div>
+                            <div>
+                                <button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium">Deploy Package</button>
+                            </div>
+                        </form>
+                    </div>
                 </section>
 
                 <!-- Jobs View -->

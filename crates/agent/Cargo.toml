@@ -48,6 +48,9 @@ mime_guess = "2.0"
 include_dir = "0.7"
 uuid = { version = "1.0", features = ["v4"] }
 
+# Zip processing for .realm packages
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+
 # CLI dependencies (no TUI)
 clap.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
