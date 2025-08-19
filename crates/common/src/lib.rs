@@ -324,6 +324,10 @@ pub struct JobInstance {
     pub error_message: Option<String>,
     pub assigned_node: Option<String>,
     pub logs: Vec<JobLogEntry>,
+    #[serde(default)]
+    pub last_scheduled_at: Option<u64>,
+    #[serde(default)]
+    pub schedule_next_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -349,6 +353,8 @@ impl JobInstance {
             error_message: None,
             assigned_node: None,
             logs: Vec::new(),
+            last_scheduled_at: None,
+            schedule_next_at: None,
         }
     }
     

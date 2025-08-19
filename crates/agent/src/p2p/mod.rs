@@ -268,6 +268,7 @@ pub async fn run_agent(
     }
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
+    let mut schedule_tick = tokio::time::interval(Duration::from_secs(60));
     // track msgs per second by counting status publishes
     let mut last_publish_count: u64 = 0;
     let mut last_sample_time = std::time::Instant::now();
@@ -367,6 +368,15 @@ pub async fn run_agent(
                 } else {
                     metrics.status_published_total.fetch_add(1, Ordering::Relaxed);
                     last_publish_count = last_publish_count.saturating_add(1);
+                }
+            }
+            _ = schedule_tick.tick() => {
+                // Evaluate recurring job schedules
+                if let Ok(due_specs) = job_manager.evaluate_schedules().await {
+                    for spec in due_specs {
+                        // Re-publish the SubmitJob command so eligible nodes can take it
+                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&common::Command::SubmitJob(spec)));
+                    }
                 }
             }
             event = swarm.select_next_some() => {

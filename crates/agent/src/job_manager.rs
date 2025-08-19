@@ -179,4 +179,64 @@ impl JobManager {
         // Logs will be saved when job state changes
         Ok(())
     }
+
+    /// For recurring jobs, decide if they are due and create a new pending instance
+    pub async fn evaluate_schedules(&self) -> Result<Vec<JobSpec>> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mut due: Vec<JobSpec> = Vec::new();
+
+        let mut state = self.state.lock().await;
+        for (_id, job) in state.jobs.iter_mut() {
+            if matches!(&job.spec.job_type, common::JobType::Recurring) {
+                if let Some(expr) = &job.spec.schedule {
+                    // Very small scheduler: support patterns like "*/N * * * *" or "0 H * * *"
+                    let is_due = is_cron_due(expr, now, job.last_scheduled_at);
+                    if is_due {
+                        job.last_scheduled_at = Some(now);
+                        due.push(job.spec.clone());
+                    }
+                }
+            }
+        }
+        Ok(due)
+    }
+}
+
+fn is_cron_due(expr: &str, now: u64, last_run: Option<u64>) -> bool {
+    // Extremely simplified: only minute and hour fields are considered
+    // Patterns supported:
+    //  - "*/N * * * *" every N minutes
+    //  - "0 H * * *" at minute 0 of hour H
+    fn minutes_since_epoch(sec: u64) -> u64 { sec / 60 }
+    let parts: Vec<&str> = expr.split_whitespace().collect();
+    if parts.len() < 5 { return false; }
+    let minute = parts[0];
+    let hour = parts[1];
+    let now_min = minutes_since_epoch(now);
+    let last_min = last_run.map(minutes_since_epoch);
+
+    // every N minutes
+    if minute.starts_with("*/") && (hour == "*" || hour == "*") {
+        if let Ok(n) = minute.trim_start_matches("*/").parse::<u64>() {
+            if n == 0 { return false; }
+            // fire when changed bucket and divisible by n
+            let due_now = now_min % n == 0;
+            let not_already_fired = match last_min { Some(prev) => prev != now_min, None => true };
+            return due_now && not_already_fired;
+        }
+    }
+    // at specific hour, minute 0
+    if minute == "0" && hour != "*" {
+        if let Ok(h) = hour.parse::<u64>() {
+            let mins_in_day = 24 * 60;
+            let day_min = now_min % mins_in_day;
+            let target = h * 60;
+            if day_min == target {
+                let not_already_fired = match last_min { Some(prev) => prev != now_min, None => true };
+                return not_already_fired;
+            }
+        }
+    }
+    false
 }
