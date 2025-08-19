@@ -7,6 +7,11 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 use rand::{thread_rng, Rng};
 use lru::LruCache;
+use uuid::Uuid;
+// Maximum number of pending broadcasts to track (evict oldest beyond this)
+const MAX_PENDING_BROADCASTS: usize = 50000;
+// Pending broadcast entry TTL before automatic prune
+const PENDING_ENTRY_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 use anyhow::anyhow;
 use futures::StreamExt;
@@ -46,26 +51,27 @@ use jobs::{execute_oneshot_job_with_broadcast, execute_service_job};
 struct PendingJob {
     cmd: Command,
     peers: HashSet<PeerId>,
+    created: Instant,
     last_sent: Instant,
     retry_count: u32,
 }
 
-fn job_status_key(cmd: &Command) -> Option<(String, String)> {
+fn job_status_key(cmd: &Command) -> Option<(String, String, String)> {
     match cmd {
-        Command::JobAccepted { job_id, .. } => Some((job_id.clone(), "accepted".to_string())),
-        Command::JobStarted { job_id, .. } => Some((job_id.clone(), "started".to_string())),
-        Command::JobCompleted { job_id, .. } => Some((job_id.clone(), "completed".to_string())),
-        Command::JobFailed { job_id, .. } => Some((job_id.clone(), "failed".to_string())),
+        Command::JobAccepted { job_id, message_id, .. } => Some((job_id.clone(), "accepted".to_string(), message_id.clone())),
+        Command::JobStarted { job_id, message_id, .. } => Some((job_id.clone(), "started".to_string(), message_id.clone())),
+        Command::JobCompleted { job_id, message_id, .. } => Some((job_id.clone(), "completed".to_string(), message_id.clone())),
+        Command::JobFailed { job_id, message_id, .. } => Some((job_id.clone(), "failed".to_string(), message_id.clone())),
         _ => None,
     }
 }
 
-fn job_status_tuple(cmd: &Command) -> Option<(String, String, String)> {
+fn job_status_tuple(cmd: &Command) -> Option<(String, String, String, String)> {
     match cmd {
-        Command::JobAccepted { job_id, assigned_node } => Some((job_id.clone(), "accepted".to_string(), assigned_node.clone())),
-        Command::JobStarted { job_id, assigned_node } => Some((job_id.clone(), "started".to_string(), assigned_node.clone())),
-        Command::JobCompleted { job_id, assigned_node, .. } => Some((job_id.clone(), "completed".to_string(), assigned_node.clone())),
-        Command::JobFailed { job_id, assigned_node, .. } => Some((job_id.clone(), "failed".to_string(), assigned_node.clone())),
+        Command::JobAccepted { job_id, assigned_node, message_id } => Some((job_id.clone(), "accepted".to_string(), assigned_node.clone(), message_id.clone())),
+        Command::JobStarted { job_id, assigned_node, message_id } => Some((job_id.clone(), "started".to_string(), assigned_node.clone(), message_id.clone())),
+        Command::JobCompleted { job_id, assigned_node, message_id, .. } => Some((job_id.clone(), "completed".to_string(), assigned_node.clone(), message_id.clone())),
+        Command::JobFailed { job_id, assigned_node, message_id, .. } => Some((job_id.clone(), "failed".to_string(), assigned_node.clone(), message_id.clone())),
         _ => None,
     }
 }
@@ -350,7 +356,7 @@ pub async fn run_agent(
         }
     }
 
-    let mut pending_job_broadcasts: HashMap<(String, String), PendingJob> = HashMap::new();
+    let mut pending_job_broadcasts: HashMap<(String, String, String), PendingJob> = HashMap::new();
     let seen_cache = Arc::new(AsyncMutex::new(LruCache::new(30000)));
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -377,11 +383,11 @@ pub async fn run_agent(
         tokio::select! {
             // Handle job status broadcasts
             Some(job_broadcast) = job_broadcast_rx.recv() => {
-                if let Some((job_id, status)) = job_status_key(&job_broadcast) {
+                if let Some((job_id, status, message_id)) = job_status_key(&job_broadcast) {
                     let peers: HashSet<PeerId> = swarm.connected_peers().cloned().collect();
                     pending_job_broadcasts.insert(
-                        (job_id.clone(), status.clone()),
-                        PendingJob { cmd: job_broadcast.clone(), peers, last_sent: Instant::now(), retry_count: 0 },
+                        (job_id.clone(), status.clone(), message_id.clone()),
+                        PendingJob { cmd: job_broadcast.clone(), peers, created: Instant::now(), last_sent: Instant::now(), retry_count: 0 },
                     );
                 }
                 let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&job_broadcast));
@@ -484,6 +490,28 @@ pub async fn run_agent(
                 } else {
                     metrics.status_published_total.fetch_add(1, Ordering::Relaxed);
                     last_publish_count = last_publish_count.saturating_add(1);
+                }
+                // Prune stale pending broadcasts beyond TTL
+                {
+                    let now = Instant::now();
+                    let stale: Vec<_> = pending_job_broadcasts.iter()
+                        .filter_map(|(key, p)| if now.duration_since(p.created) > PENDING_ENTRY_TTL { Some(key.clone()) } else { None })
+                        .collect();
+                    for key in stale {
+                        pending_job_broadcasts.remove(&key);
+                        warn!("Pruned stale pending broadcast: {:?}", key);
+                    }
+                }
+                // Evict oldest pending broadcasts if over capacity
+                if pending_job_broadcasts.len() > MAX_PENDING_BROADCASTS {
+                    let excess = pending_job_broadcasts.len() - MAX_PENDING_BROADCASTS;
+                    for _ in 0..excess {
+                        if let Some((oldest_key, _)) = pending_job_broadcasts.iter().min_by_key(|(_, p)| p.created) {
+                            let key = oldest_key.clone();
+                            pending_job_broadcasts.remove(&key);
+                            warn!("Evicted pending broadcast due to capacity: {:?}", key);
+                        }
+                    }
                 }
                 // Retry pending job broadcasts with exponential backoff and jitter
                 for pending in pending_job_broadcasts.values_mut() {
@@ -655,11 +683,11 @@ pub async fn run_agent(
                             }
                             if let Ok(cmd) = deserialize_message::<Command>(&message.data) {
                                 // Deduplicate job status messages
-                                if let Some((job_id, status, assigned_node)) = job_status_tuple(&cmd) {
+                                if let Some((job_id, status, assigned_node, message_id)) = job_status_tuple(&cmd) {
                                     let mut cache = seen_cache.lock().await;
                                     let key = (job_id.clone(), status.clone(), assigned_node.clone());
                                     if cache.contains(&key) {
-                                        let ack = Command::JobStatusAck { job_id, status, from: local_peer_id.to_string() };
+                                        let ack = Command::JobStatusAck { job_id, status, from: local_peer_id.to_string(), message_id: message_id.clone() };
                                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                         continue;
                                     }
@@ -1038,7 +1066,8 @@ pub async fn run_agent(
                                             // Broadcast job acceptance to prevent other nodes from taking it
                                             let acceptance_msg = Command::JobAccepted { 
                                                 job_id: job_id.clone(), 
-                                                assigned_node: node_id.clone() 
+                                                assigned_node: node_id.clone(), 
+                                                message_id: Uuid::new_v4().to_string(),
                                             };
                                             let _ = job_broadcast_tx_clone.send(acceptance_msg);
                                             
@@ -1077,7 +1106,8 @@ pub async fn run_agent(
                                                 // Broadcast job started status
                                                 let start_msg = Command::JobStarted { 
                                                     job_id: job_id.clone(), 
-                                                    assigned_node: node_id.clone() 
+                                                    assigned_node: node_id.clone(), 
+                                                    message_id: Uuid::new_v4().to_string(),
                                                 };
                                                 let _ = job_broadcast_tx_clone.send(start_msg);
                                                 
@@ -1141,40 +1171,41 @@ pub async fn run_agent(
                                             let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), response);
                                         }
                                     }
-                                    Command::JobAccepted { job_id, assigned_node } => {
+                                    Command::JobAccepted { job_id, assigned_node, message_id } => {
                                         // Another node accepted this job - mark it in our local job store
                                         if let Some(mut job) = job_manager.get_job(&job_id).await {
                                             job.assigned_node = Some(assigned_node.clone());
                                             let _ = job_manager.update_job_assignment(&job_id, &assigned_node).await;
                                             let _ = push_log(&logs, "system", format!("Job {} accepted by node {}", job_id, assigned_node)).await;
                                         }
-                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "accepted".to_string(), from: local_peer_id.to_string() };
+                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "accepted".to_string(), from: local_peer_id.to_string(), message_id: message_id.clone() };
                                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                     }
-                                    Command::JobStarted { job_id, assigned_node } => {
+                                    Command::JobStarted { job_id, assigned_node, message_id } => {
                                         let _ = job_manager.start_job(&job_id).await;
                                         let _ = push_log(&logs, "system", format!("Job {} started on node {}", job_id, assigned_node)).await;
-                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "started".to_string(), from: local_peer_id.to_string() };
+                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "started".to_string(), from: local_peer_id.to_string(), message_id: message_id.clone() };
                                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                     }
-                                    Command::JobCompleted { job_id, assigned_node, exit_code } => {
+                                    Command::JobCompleted { job_id, assigned_node, exit_code, message_id } => {
                                         let _ = job_manager.complete_job(&job_id, exit_code).await;
                                         let _ = push_log(&logs, "system", format!("Job {} completed on node {} with exit code {}", job_id, assigned_node, exit_code)).await;
-                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "completed".to_string(), from: local_peer_id.to_string() };
+                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "completed".to_string(), from: local_peer_id.to_string(), message_id: message_id.clone() };
                                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                     }
-                                    Command::JobFailed { job_id, assigned_node, error } => {
+                                    Command::JobFailed { job_id, assigned_node, error, message_id } => {
                                         let _ = job_manager.fail_job(&job_id, error.clone()).await;
                                         let _ = push_log(&logs, "system", format!("Job {} failed on node {}: {}", job_id, assigned_node, error)).await;
-                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "failed".to_string(), from: local_peer_id.to_string() };
+                                        let ack = Command::JobStatusAck { job_id: job_id.clone(), status: "failed".to_string(), from: local_peer_id.to_string(), message_id: message_id.clone() };
                                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                     }
-                                    Command::JobStatusAck { job_id, status, from } => {
+                                    Command::JobStatusAck { job_id, status, from, message_id } => {
                                         if let Ok(pid) = PeerId::from_str(&from) {
-                                            if let Some(p) = pending_job_broadcasts.get_mut(&(job_id.clone(), status.clone())) {
+                                            let key = (job_id.clone(), status.clone(), message_id.clone());
+                                            if let Some(p) = pending_job_broadcasts.get_mut(&key) {
                                                 p.peers.remove(&pid);
                                                 if p.peers.is_empty() {
-                                                    pending_job_broadcasts.remove(&(job_id.clone(), status.clone()));
+                                                    pending_job_broadcasts.remove(&key);
                                                 }
                                             }
                                         }

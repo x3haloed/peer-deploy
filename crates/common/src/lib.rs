@@ -36,13 +36,13 @@ pub enum Command {
     /// Response with blob bytes base64-encoded. Intended for small artifacts only.
     StorageData { digest: String, bytes_b64: String },
     /// Job acceptance broadcast - node claims job execution
-    JobAccepted { job_id: String, assigned_node: String },
+    JobAccepted { job_id: String, assigned_node: String, message_id: String },
     /// Job status update broadcasts
-    JobStarted { job_id: String, assigned_node: String },
-    JobCompleted { job_id: String, assigned_node: String, exit_code: i32 },
-    JobFailed { job_id: String, assigned_node: String, error: String },
+    JobStarted { job_id: String, assigned_node: String, message_id: String },
+    JobCompleted { job_id: String, assigned_node: String, exit_code: i32, message_id: String },
+    JobFailed { job_id: String, assigned_node: String, error: String, message_id: String },
     /// Acknowledge receipt of a job status update
-    JobStatusAck { job_id: String, status: String, from: String },
+    JobStatusAck { job_id: String, status: String, from: String, message_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

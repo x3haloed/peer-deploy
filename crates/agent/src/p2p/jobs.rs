@@ -2,6 +2,7 @@ use crate::job_manager::JobManager;
 use crate::p2p::metrics;
 use crate::p2p::metrics::push_log;
 use common::Command;
+use uuid::Uuid;
 
 pub async fn execute_oneshot_job_with_broadcast(
     job_mgr: std::sync::Arc<JobManager>,
@@ -23,8 +24,9 @@ pub async fn execute_oneshot_job_with_broadcast(
                     let _ = job_mgr.complete_job(&job_id, 0).await;
                     let _ = broadcast_tx.send(Command::JobCompleted { 
                         job_id: job_id.clone(), 
-                        assigned_node: node_id, 
-                        exit_code: 0 
+                        assigned_node: node_id.clone(), 
+                        exit_code: 0, 
+                        message_id: Uuid::new_v4().to_string(),
                     });
                     let _ = tx.send(Ok(success_msg));
                 },
@@ -32,8 +34,9 @@ pub async fn execute_oneshot_job_with_broadcast(
                     let _ = job_mgr.fail_job(&job_id, error_msg.clone()).await;
                     let _ = broadcast_tx.send(Command::JobFailed { 
                         job_id: job_id.clone(), 
-                        assigned_node: node_id, 
-                        error: error_msg.clone() 
+                        assigned_node: node_id.clone(), 
+                        error: error_msg.clone(), 
+                        message_id: Uuid::new_v4().to_string(),
                     });
                     let _ = tx.send(Err(error_msg));
                 }
@@ -47,8 +50,9 @@ pub async fn execute_oneshot_job_with_broadcast(
                     let _ = job_mgr.complete_job(&job_id, 0).await;
                     let _ = broadcast_tx.send(Command::JobCompleted { 
                         job_id: job_id.clone(), 
-                        assigned_node: node_id, 
-                        exit_code: 0 
+                        assigned_node: node_id.clone(), 
+                        exit_code: 0, 
+                        message_id: Uuid::new_v4().to_string(),
                     });
                     let _ = tx.send(Ok(success_msg));
                 },
@@ -56,8 +60,9 @@ pub async fn execute_oneshot_job_with_broadcast(
                     let _ = job_mgr.fail_job(&job_id, error_msg.clone()).await;
                     let _ = broadcast_tx.send(Command::JobFailed { 
                         job_id: job_id.clone(), 
-                        assigned_node: node_id, 
-                        error: error_msg.clone() 
+                        assigned_node: node_id.clone(), 
+                        error: error_msg.clone(), 
+                        message_id: Uuid::new_v4().to_string(),
                     });
                     let _ = tx.send(Err(error_msg));
                 }
@@ -71,8 +76,9 @@ pub async fn execute_oneshot_job_with_broadcast(
                     let _ = job_mgr.complete_job(&job_id, 0).await;
                     let _ = broadcast_tx.send(Command::JobCompleted { 
                         job_id: job_id.clone(), 
-                        assigned_node: node_id, 
-                        exit_code: 0 
+                        assigned_node: node_id.clone(), 
+                        exit_code: 0, 
+                        message_id: Uuid::new_v4().to_string(),
                     });
                     let _ = tx.send(Ok(success_msg));
                 },
@@ -80,8 +86,9 @@ pub async fn execute_oneshot_job_with_broadcast(
                     let _ = job_mgr.fail_job(&job_id, error_msg.clone()).await;
                     let _ = broadcast_tx.send(Command::JobFailed { 
                         job_id: job_id.clone(), 
-                        assigned_node: node_id, 
-                        error: error_msg.clone() 
+                        assigned_node: node_id.clone(), 
+                        error: error_msg.clone(), 
+                        message_id: Uuid::new_v4().to_string(),
                     });
                     let _ = tx.send(Err(error_msg));
                 }
