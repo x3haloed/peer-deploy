@@ -29,10 +29,19 @@ pub async fn execute_native_job(
     }
 
     let label = format!("job:{}", job.name);
-    push_log(logs, &label, format!("staging native binary from {binary}")).await;
-    let _ = job_mgr.add_job_log(job_id, "info".to_string(), format!("Staging native from {}", binary)).await;
+    
+    // Handle system binaries (absolute paths) vs downloadable binaries
+    let binary_path = if std::path::Path::new(binary).is_absolute() {
+        // System binary like /usr/bin/bash - use directly
+        push_log(logs, &label, format!("using system binary: {binary}")).await;
+        let _ = job_mgr.add_job_log(job_id, "info".to_string(), format!("Using system binary: {}", binary)).await;
+        binary.to_string()
+    } else {
+        // Remote/downloadable binary - fetch and stage
+        push_log(logs, &label, format!("staging native binary from {binary}")).await;
+        let _ = job_mgr.add_job_log(job_id, "info".to_string(), format!("Staging native from {}", binary)).await;
 
-    let bytes = if let Some(hex) = &sha256_hex {
+        let bytes = if let Some(hex) = &sha256_hex {
         if binary.starts_with("cached:") || binary.starts_with("cas:") {
             let store = ContentStore::open();
             if let Some(path) = store.get_path(hex) {
@@ -55,30 +64,33 @@ pub async fn execute_native_job(
                 }
             }
         }
-    } else {
-        match handlers::fetch_bytes(binary).await { Ok(b) => b, Err(e) => { return Err(format!("job failed: fetch: {e}")); } }
+        } else {
+            match handlers::fetch_bytes(binary).await { Ok(b) => b, Err(e) => { return Err(format!("job failed: fetch: {e}")); } }
+        };
+
+        if let Some(hex) = sha256_hex {
+            let d = common::sha256_hex(&bytes);
+            if d != hex { return Err("job failed: digest mismatch".to_string()); }
+        }
+
+        // Store in CAS
+        let store = ContentStore::open();
+        let digest = store.put_bytes(&bytes).map_err(|e| format!("cas put failed: {e}"))?;
+        let file_path = store.get_path(&digest).ok_or_else(|| "cas path missing".to_string())?;
+        // Ensure executable bit on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = tokio::fs::metadata(&file_path).await { let mut p = meta.permissions(); p.set_mode(0o755); let _ = tokio::fs::set_permissions(&file_path, p).await; }
+        }
+        
+        file_path.display().to_string()
     };
 
-    if let Some(hex) = sha256_hex {
-        let d = common::sha256_hex(&bytes);
-        if d != hex { return Err("job failed: digest mismatch".to_string()); }
-    }
-
-    // Store in CAS
-    let store = ContentStore::open();
-    let digest = store.put_bytes(&bytes).map_err(|e| format!("cas put failed: {e}"))?;
-    let file_path = store.get_path(&digest).ok_or_else(|| "cas path missing".to_string())?;
-    // Ensure executable bit on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = tokio::fs::metadata(&file_path).await { let mut p = meta.permissions(); p.set_mode(0o755); let _ = tokio::fs::set_permissions(&file_path, p).await; }
-    }
-
-    push_log(logs, &label, format!("starting native job: {} {}", file_path.display(), args.join(" "))).await;
+    push_log(logs, &label, format!("starting native job: {} {}", binary_path, args.join(" "))).await;
     let _ = job_mgr.add_job_log(job_id, "info".to_string(), "Executing native binary".to_string()).await;
 
-    let mut cmd = Command::new(&file_path);
+    let mut cmd = Command::new(&binary_path);
     cmd.args(&args);
     // set environment
     for (k, v) in env.into_iter() { cmd.env(k, v); }
