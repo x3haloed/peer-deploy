@@ -9,17 +9,22 @@ use super::types::*;
 use common::{JobInstance, JobSpec, PreStageSpec, Command};
 use base64::Engine as _;
 use crate::cmd;
+use crate::cmd::util::{new_swarm, mdns_warmup, NodeBehaviourEvent};
+use futures::StreamExt;
 
 pub async fn api_jobs_list(State(_state): State<WebState>, Query(params): Query<JobQuery>) -> Json<Vec<JobInstance>> {
-    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = crate::job_manager::JobManager::new(data_dir);
-    if let Err(e) = job_manager.load_from_disk().await {
-        tracing::warn!("Failed to load job state: {}", e);
-    }
-    let status_filter = params.status.as_deref();
     let limit = params.limit.unwrap_or(50) as usize;
-    let jobs = job_manager.list_jobs(status_filter, limit).await;
-    Json(jobs)
+    match net_query_jobs(params.status.clone(), limit).await {
+        Ok(v) => Json(v),
+        Err(e) => {
+            tracing::warn!(error=%e, "net_query_jobs failed; falling back to local state");
+            let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+            let job_manager = crate::job_manager::JobManager::new(data_dir);
+            if let Err(e) = job_manager.load_from_disk().await { tracing::warn!("Failed to load job state: {}", e); }
+            let jobs = job_manager.list_jobs(params.status.as_deref(), limit).await;
+            Json(jobs)
+        }
+    }
 }
 
 pub async fn api_jobs_submit(State(state): State<WebState>, mut multipart: Multipart) -> impl IntoResponse {
@@ -75,14 +80,19 @@ pub async fn api_jobs_submit(State(state): State<WebState>, mut multipart: Multi
 }
 
 pub async fn api_jobs_get(State(_state): State<WebState>, Path(job_id): Path<String>) -> impl IntoResponse {
-    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = crate::job_manager::JobManager::new(data_dir);
-    if let Err(e) = job_manager.load_from_disk().await {
-        tracing::warn!("Failed to load job state: {}", e);
-    }
-    match job_manager.get_job(&job_id).await {
-        Some(job) => Json(job).into_response(),
-        None => (StatusCode::NOT_FOUND, format!("Job '{}' not found", job_id)).into_response()
+    match net_query_job_status(job_id.clone()).await {
+        Ok(Some(job)) => Json(job).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, format!("Job '{}' not found", job_id)).into_response(),
+        Err(e) => {
+            tracing::warn!(error=%e, "net_query_job_status failed; falling back to local state");
+            let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+            let job_manager = crate::job_manager::JobManager::new(data_dir);
+            if let Err(e) = job_manager.load_from_disk().await { tracing::warn!("Failed to load job state: {}", e); }
+            match job_manager.get_job(&job_id).await {
+                Some(job) => Json(job).into_response(),
+                None => (StatusCode::NOT_FOUND, format!("Job '{}' not found", job_id)).into_response(),
+            }
+        }
     }
 }
 
@@ -153,4 +163,56 @@ pub async fn api_jobs_artifact_download(Path((job_id, name)): Path<(String, Stri
     }
 }
 
+
+// ======= P2P helpers for network-backed job discovery =======
+
+async fn net_query_jobs(status: Option<String>, limit: usize) -> Result<Vec<JobInstance>, String> {
+    let (mut swarm, topic_cmd, topic_status) = new_swarm().await.map_err(|e| e.to_string())?;
+    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap())
+        .map_err(|e| e.to_string())?;
+    mdns_warmup(&mut swarm).await;
+    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), common::serialize_message(&Command::QueryJobs { status_filter: status.clone(), limit }));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline.into()) => { return Err("timeout".into()); }
+            event = swarm.select_next_some() => {
+                if let libp2p::swarm::SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) = event {
+                    if let libp2p::gossipsub::Event::Message { message, .. } = ev {
+                        if message.topic == topic_status.hash() {
+                            if let Ok(list) = common::deserialize_message::<Vec<JobInstance>>(&message.data) {
+                                return Ok(list);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn net_query_job_status(job_id: String) -> Result<Option<JobInstance>, String> {
+    let (mut swarm, topic_cmd, topic_status) = new_swarm().await.map_err(|e| e.to_string())?;
+    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap())
+        .map_err(|e| e.to_string())?;
+    mdns_warmup(&mut swarm).await;
+    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), common::serialize_message(&Command::QueryJobStatus { job_id: job_id.clone() }));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline.into()) => { return Ok(None); }
+            event = swarm.select_next_some() => {
+                if let libp2p::swarm::SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) = event {
+                    if let libp2p::gossipsub::Event::Message { message, .. } = ev {
+                        if message.topic == topic_status.hash() {
+                            if let Ok(item) = common::deserialize_message::<JobInstance>(&message.data) {
+                                return Ok(Some(item));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
