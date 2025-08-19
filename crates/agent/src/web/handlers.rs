@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use super::types::*;
 use super::utils::format_timestamp;
 use crate::supervisor::DesiredComponent;
-use common::{ComponentSpec, Manifest};
+use common::{ComponentSpec, Manifest, JobInstance, JobSpec};
 use crate::cmd;
 
 // API handlers with real data integration
@@ -702,4 +702,111 @@ pub async fn api_install_agent(mut multipart: Multipart) -> impl IntoResponse {
 			Err(e) => (StatusCode::BAD_REQUEST, format!("install-agent failed: {e}")).into_response(),
 		}
 	}
+}
+
+// Job management API endpoints
+
+pub async fn api_jobs_list(State(_state): State<WebState>, Query(params): Query<JobQuery>) -> Json<Vec<JobInstance>> {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    
+    // Load jobs from disk
+    if let Err(e) = job_manager.load_from_disk().await {
+        tracing::warn!("Failed to load job state: {}", e);
+    }
+
+    let status_filter = params.status.as_deref();
+    let limit = params.limit.unwrap_or(50) as usize;
+    
+    let jobs = job_manager.list_jobs(status_filter, limit).await;
+    Json(jobs)
+}
+
+pub async fn api_jobs_submit(State(state): State<WebState>, mut multipart: Multipart) -> impl IntoResponse {
+    // Expected fields: job_toml (file)
+    let mut job_toml_text: Option<String> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let fname = field.name().unwrap_or("").to_string();
+        match fname.as_str() {
+            "job_toml" | "file" => { 
+                job_toml_text = field.text().await.ok(); 
+            },
+            _ => {}
+        }
+    }
+
+    let job_toml = match job_toml_text {
+        Some(toml) if !toml.is_empty() => toml,
+        _ => return (StatusCode::BAD_REQUEST, "Missing job TOML content").into_response()
+    };
+
+    // Parse the job specification
+    let job_spec: JobSpec = match toml::from_str(&job_toml) {
+        Ok(spec) => spec,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("Invalid job TOML: {}", e)).into_response()
+    };
+
+    // Submit the job using the CLI command path to ensure consistency
+    match cmd::submit_job_from_spec(job_spec).await {
+        Ok(_) => {
+            crate::p2p::metrics::push_log(
+                &state.logs, 
+                "system", 
+                "Job submitted via web interface".to_string()
+            ).await;
+            (StatusCode::OK, "Job submitted successfully").into_response()
+        },
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to submit job: {}", e)).into_response()
+    }
+}
+
+pub async fn api_jobs_get(State(_state): State<WebState>, Path(job_id): Path<String>) -> impl IntoResponse {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    
+    if let Err(e) = job_manager.load_from_disk().await {
+        tracing::warn!("Failed to load job state: {}", e);
+    }
+
+    match job_manager.get_job(&job_id).await {
+        Some(job) => Json(job).into_response(),
+        None => (StatusCode::NOT_FOUND, format!("Job '{}' not found", job_id)).into_response()
+    }
+}
+
+pub async fn api_jobs_cancel(State(state): State<WebState>, Path(job_id): Path<String>) -> impl IntoResponse {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    
+    if let Err(e) = job_manager.load_from_disk().await {
+        tracing::warn!("Failed to load job state: {}", e);
+    }
+
+    match job_manager.cancel_job(&job_id).await {
+        Ok(true) => {
+            crate::p2p::metrics::push_log(
+                &state.logs, 
+                "system", 
+                format!("Job '{}' cancelled via web interface", job_id)
+            ).await;
+            (StatusCode::OK, format!("Job '{}' cancelled successfully", job_id)).into_response()
+        },
+        Ok(false) => (StatusCode::BAD_REQUEST, format!("Job '{}' cannot be cancelled (already completed)", job_id)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to cancel job: {}", e)).into_response()
+    }
+}
+
+pub async fn api_jobs_logs(State(_state): State<WebState>, Path(job_id): Path<String>) -> impl IntoResponse {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    
+    if let Err(e) = job_manager.load_from_disk().await {
+        tracing::warn!("Failed to load job state: {}", e);
+    }
+
+    match job_manager.get_job(&job_id).await {
+        Some(job) => Json(job.logs).into_response(),
+        None => (StatusCode::NOT_FOUND, format!("Job '{}' not found", job_id)).into_response()
+    }
 }

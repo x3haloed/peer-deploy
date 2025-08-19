@@ -3,6 +3,7 @@ mod runner;
 mod supervisor;
 mod cmd;
 mod web;
+mod job_manager;
 
 use clap::{Parser, Subcommand};
 use tracing::{info};
@@ -180,11 +181,8 @@ enum Commands {
         start: bool,
     },
     /// Job orchestration commands
-    JobSubmit {
-        /// Path to job TOML
-        #[arg(long)]
-        file: String,
-    },
+    #[command(subcommand)]
+    Job(JobCommands),
     /// Start management web interface
     Manage {
         /// Authentication method (for now, always authenticates)
@@ -193,6 +191,45 @@ enum Commands {
         /// Session timeout in minutes
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum JobCommands {
+    /// Submit a job from a TOML specification
+    Submit {
+        /// Path to job TOML file
+        file: String,
+    },
+    /// List all jobs (running, scheduled, completed)
+    List {
+        /// Show only jobs with this status (pending, running, completed, failed)
+        #[arg(long)]
+        status: Option<String>,
+        /// Maximum number of jobs to show
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Show detailed status of a specific job
+    Status {
+        /// Job ID or name to query
+        job_id: String,
+    },
+    /// Cancel a running or scheduled job
+    Cancel {
+        /// Job ID or name to cancel
+        job_id: String,
+    },
+    /// Show logs for a specific job
+    Logs {
+        /// Job ID or name to show logs for
+        job_id: String,
+        /// Number of recent log lines to show
+        #[arg(long, default_value_t = 100)]
+        tail: usize,
+        /// Follow log output in real-time
+        #[arg(long, short = 'f')]
+        follow: bool,
     },
 }
 
@@ -242,7 +279,13 @@ async fn main() -> anyhow::Result<()> {
             let timeout_duration = Duration::from_secs(timeout * 60);
             web::start_management_session(owner_key, timeout_duration).await
         },
-        Some(Commands::JobSubmit { file }) => cmd::submit_job(file).await,
+        Some(Commands::Job(job_cmd)) => match job_cmd {
+            JobCommands::Submit { file } => cmd::submit_job(file).await,
+            JobCommands::List { status, limit } => cmd::list_jobs(status, limit).await,
+            JobCommands::Status { job_id } => cmd::job_status(job_id).await,
+            JobCommands::Cancel { job_id } => cmd::cancel_job(job_id).await,
+            JobCommands::Logs { job_id, tail, follow } => cmd::job_logs(job_id, tail, follow).await,
+        },
     }
 }
 

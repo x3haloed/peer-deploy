@@ -51,6 +51,13 @@ fn create_app(state: WebState, session_id: String) -> Router {
         .route("/api/components/:name/restart", post(api_component_restart))
         .route("/api/components/:name/stop", post(api_component_stop))
         
+        // Job management endpoints
+        .route("/api/jobs", get(api_jobs_list))
+        .route("/api/jobs/submit", post(api_jobs_submit))
+        .route("/api/jobs/:job_id", get(api_jobs_get))
+        .route("/api/jobs/:job_id/cancel", post(api_jobs_cancel))
+        .route("/api/jobs/:job_id/logs", get(api_jobs_logs))
+        
         // WebSocket for real-time updates
         .route("/ws", get(websocket_handler))
         

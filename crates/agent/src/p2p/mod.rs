@@ -34,6 +34,7 @@ use handlers::{handle_apply_manifest, handle_upgrade};
 use metrics::{push_log, serve_metrics, Metrics, SharedLogs};
 use crate::supervisor::Supervisor;
 
+
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct NodeBehaviour {
     gossipsub: gossipsub::Behaviour,
@@ -81,6 +82,15 @@ pub async fn run_agent(
     }
     
     supervisor.clone().spawn_reconcile();
+
+    // Initialize job manager and restore job state
+    let job_manager = std::sync::Arc::new(crate::job_manager::JobManager::new(
+        state::agent_data_dir().join("jobs")
+    ));
+    
+    if let Err(e) = job_manager.load_from_disk().await {
+        warn!(error=%e, "Failed to restore job state from disk, starting fresh");
+    }
 
     let id_keys = load_or_create_node_key();
     let local_peer_id = PeerId::from(id_keys.public());
@@ -617,7 +627,18 @@ pub async fn run_agent(
                                         let txj = tx.clone();
                                         let logsj = logs.clone();
                                         let rolesj = roles.clone();
+                                        let job_mgr = job_manager.clone();
+                                        let node_id = local_peer_id.to_string();
                                         tokio::spawn(async move {
+                                            // Create job instance and track it
+                                            let job_id = match job_mgr.submit_job(job.clone()).await {
+                                                Ok(id) => id,
+                                                Err(e) => {
+                                                    let _ = txj.send(Err(format!("job submission failed: {}", e)));
+                                                    return;
+                                                }
+                                            };
+                                            
                                             // basic targeting: platform + tags + node_ids
                                             let mut selected = true;
                                             if let Some(t) = &job.targeting {
@@ -630,29 +651,45 @@ pub async fn run_agent(
                                                 }
                                             }
                                             if selected {
+                                                // Mark job as started
+                                                let _ = job_mgr.start_job(&job_id, node_id).await;
+                                                let _ = job_mgr.add_job_log(&job_id, "info".to_string(), "Job execution started on this node".to_string()).await;
+                                                
                                                 // Only WASM runtime for now
                                                 match job.runtime {
                                                     common::JobRuntime::Wasm { source, sha256_hex, memory_mb, fuel, epoch_ms } => {
                                                         let label = format!("job:{}", job.name);
                                                         push_log(&logsj, &label, format!("staging wasm from {source}")).await;
+                                                        let _ = job_mgr.add_job_log(&job_id, "info".to_string(), format!("Staging WASM from {}", source)).await;
+                                                        
                                                         let bytes = match handlers::fetch_bytes(&source).await {
                                                             Ok(b) => b,
                                                             Err(e) => {
-                                                                let _ = txj.send(Err(format!("job failed: fetch: {e}")));
+                                                                let error_msg = format!("job failed: fetch: {e}");
+                                                                let _ = job_mgr.fail_job(&job_id, error_msg.clone()).await;
+                                                                let _ = txj.send(Err(error_msg));
                                                                 return;
                                                             }
                                                         };
                                                         if let Some(hex) = sha256_hex {
                                                             let d = common::sha256_hex(&bytes);
-                                                            if d != hex { let _ = txj.send(Err("job failed: digest mismatch".into())); return; }
+                                                            if d != hex { 
+                                                                let error_msg = "job failed: digest mismatch".to_string();
+                                                                let _ = job_mgr.fail_job(&job_id, error_msg.clone()).await;
+                                                                let _ = txj.send(Err(error_msg)); 
+                                                                return; 
+                                                            }
                                                         }
                                                         let stage_dir = state::agent_data_dir().join("jobs");
                                                         let _ = tokio::fs::create_dir_all(&stage_dir).await;
                                                         let digest = common::sha256_hex(&bytes);
                                                         let file_path = stage_dir.join(format!("{}-{}.wasm", job.name, &digest[..16]));
                                                         if !file_path.exists() { let _ = tokio::fs::write(&file_path, &bytes).await; }
-                                                        push_log(&logsj, &label, format!("starting wasm with limits mem={}MB fuel={} epoch_ms={}", memory_mb, fuel, epoch_ms)).await;
-                                                        let res = run_wasm_module_with_limits(
+                                                        
+                                                        push_log(&logsj, &label, format!("starting wasm job (mem={}MB fuel={} epoch_ms={})", memory_mb, fuel, epoch_ms)).await;
+                                                        let _ = job_mgr.add_job_log(&job_id, "info".to_string(), format!("Executing WASM with {}MB memory, {} fuel, {}ms epoch", memory_mb, fuel, epoch_ms)).await;
+                                                        
+                                                        let res = crate::runner::run_wasm_module_with_limits(
                                                             &file_path.display().to_string(),
                                                             &label,
                                                             logsj.clone(),
@@ -661,14 +698,48 @@ pub async fn run_agent(
                                                             epoch_ms,
                                                             None,
                                                             None,
-                                                        ).await
-                                                        .map(|_| format!("job ok: {}", job.name))
-                                                        .map_err(|e| format!("job error: {}: {}", job.name, e));
-                                                        let _ = txj.send(res);
+                                                        ).await;
+                                                        
+                                                        match res {
+                                                            Ok(_) => {
+                                                                let success_msg = format!("job ok: {}", job.name);
+                                                                let _ = job_mgr.complete_job(&job_id, 0).await;
+                                                                let _ = txj.send(Ok(success_msg));
+                                                            }
+                                                            Err(e) => {
+                                                                let error_msg = format!("job error: {}: {}", job.name, e);
+                                                                let _ = job_mgr.fail_job(&job_id, error_msg.clone()).await;
+                                                                let _ = txj.send(Err(error_msg));
+                                                            }
+                                                        }
                                                     }
                                                 }
+                                            } else {
+                                                // Job not selected for this node, but still track it
+                                                let _ = job_mgr.add_job_log(&job_id, "info".to_string(), "Job not selected for execution on this node".to_string()).await;
                                             }
                                         });
+                                    }
+                                    Command::QueryJobs { status_filter, limit } => {
+                                        let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
+                                        // Publish the job list as a response
+                                        let response = serialize_message(&jobs);
+                                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), response);
+                                    }
+                                    Command::QueryJobStatus { job_id } => {
+                                        if let Some(job) = job_manager.get_job(&job_id).await {
+                                            let response = serialize_message(&job);
+                                            let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), response);
+                                        }
+                                    }
+                                    Command::CancelJob { job_id } => {
+                                        let _ = job_manager.cancel_job(&job_id).await;
+                                    }
+                                    Command::QueryJobLogs { job_id, tail: _ } => {
+                                        if let Some(job) = job_manager.get_job(&job_id).await {
+                                            let response = serialize_message(&job);
+                                            let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), response);
+                                        }
                                     }
                                 }
                             }

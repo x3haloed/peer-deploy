@@ -78,6 +78,10 @@
                             <i class="fa-solid fa-rocket"></i>
                             <span>Deploy</span>
                         </div>
+                        <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="jobs">
+                            <i class="fa-solid fa-tasks"></i>
+                            <span>Jobs</span>
+                        </div>
                         <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="ops">
                             <i class="fa-solid fa-cog"></i>
                             <span>Ops</span>
@@ -271,6 +275,99 @@
                         </div>
                     </form>
                 </section>
+
+                <!-- Jobs View -->
+                <section id="jobs-view" class="view hidden">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h2 class="text-2xl font-bold mb-2">Job Orchestration</h2>
+                            <p class="text-gray-400">Submit and monitor distributed workloads across the mesh</p>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <select id="job-status-filter" class="bg-graphite border border-graphite rounded px-3 py-2 text-sm">
+                                <option value="">All Status</option>
+                                <option value="pending">Pending</option>
+                                <option value="running">Running</option>
+                                <option value="completed">Completed</option>
+                                <option value="failed">Failed</option>
+                                <option value="cancelled">Cancelled</option>
+                            </select>
+                            <button id="new-job" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium">
+                                <i class="fa-solid fa-plus mr-2"></i>Submit Job
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Job Statistics -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-5 mb-6">
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="text-2xl font-bold" id="jobs-total">-</div>
+                                    <div class="text-sm text-gray-400">Total Jobs</div>
+                                </div>
+                                <i class="fa-solid fa-tasks text-azure text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="text-2xl font-bold text-yellow-400" id="jobs-pending">-</div>
+                                    <div class="text-sm text-gray-400">Pending</div>
+                                </div>
+                                <i class="fa-solid fa-clock text-yellow-400 text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="text-2xl font-bold text-blue-400" id="jobs-running">-</div>
+                                    <div class="text-sm text-gray-400">Running</div>
+                                </div>
+                                <i class="fa-solid fa-play-circle text-blue-400 text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="text-2xl font-bold text-green-400" id="jobs-completed">-</div>
+                                    <div class="text-sm text-gray-400">Completed</div>
+                                </div>
+                                <i class="fa-solid fa-check-circle text-green-400 text-xl"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Jobs Table -->
+                    <div class="bg-charcoal border border-graphite rounded-lg">
+                        <div class="p-5 border-b border-graphite">
+                            <h3 class="text-lg font-semibold">Jobs</h3>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full">
+                                <thead class="bg-graphite">
+                                    <tr class="text-left text-sm text-gray-400">
+                                        <th class="p-4">Job ID</th>
+                                        <th class="p-4">Name</th>
+                                        <th class="p-4">Status</th>
+                                        <th class="p-4">Type</th>
+                                        <th class="p-4">Node</th>
+                                        <th class="p-4">Submitted</th>
+                                        <th class="p-4">Duration</th>
+                                        <th class="p-4">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="jobs-tbody">
+                                    <tr>
+                                        <td colspan="8" class="p-4 text-gray-400">Loading jobs...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Job Submit Modal content will be added via JavaScript -->
 
                 <!-- Ops View -->
                 <section id="ops-view" class="view hidden">

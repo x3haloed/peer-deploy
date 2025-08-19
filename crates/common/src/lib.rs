@@ -15,6 +15,10 @@ pub enum Command {
     UpgradeAgent(AgentUpgrade),
     PushComponent(PushPackage),
     SubmitJob(JobSpec),
+    QueryJobs { status_filter: Option<String>, limit: usize },
+    QueryJobStatus { job_id: String },
+    CancelJob { job_id: String },
+    QueryJobLogs { job_id: String, tail: usize },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,4 +298,111 @@ pub struct JobTargeting {
     pub tags: Vec<String>,
     #[serde(default)]
     pub node_ids: Vec<String>,
+}
+
+// ===================== Job State & Management =====================
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum JobStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobInstance {
+    pub id: String,
+    pub spec: JobSpec,
+    pub status: JobStatus,
+    pub submitted_at: u64,  // unix timestamp
+    pub started_at: Option<u64>,
+    pub completed_at: Option<u64>,
+    pub exit_code: Option<i32>,
+    pub error_message: Option<String>,
+    pub assigned_node: Option<String>,
+    pub logs: Vec<JobLogEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobLogEntry {
+    pub timestamp: u64,
+    pub level: String,  // info, warn, error, etc.
+    pub message: String,
+}
+
+impl JobInstance {
+    pub fn new(id: String, spec: JobSpec) -> Self {
+        Self {
+            id,
+            spec,
+            status: JobStatus::Pending,
+            submitted_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            started_at: None,
+            completed_at: None,
+            exit_code: None,
+            error_message: None,
+            assigned_node: None,
+            logs: Vec::new(),
+        }
+    }
+    
+    pub fn start(&mut self, node_id: String) {
+        self.status = JobStatus::Running;
+        self.assigned_node = Some(node_id);
+        self.started_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
+    }
+    
+    pub fn complete(&mut self, exit_code: i32) {
+        self.status = if exit_code == 0 { JobStatus::Completed } else { JobStatus::Failed };
+        self.exit_code = Some(exit_code);
+        self.completed_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
+    }
+    
+    pub fn fail(&mut self, error: String) {
+        self.status = JobStatus::Failed;
+        self.error_message = Some(error);
+        self.completed_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
+    }
+    
+    pub fn cancel(&mut self) {
+        self.status = JobStatus::Cancelled;
+        self.completed_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
+    }
+    
+    pub fn add_log(&mut self, level: String, message: String) {
+        self.logs.push(JobLogEntry {
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            level,
+            message,
+        });
+    }
 }

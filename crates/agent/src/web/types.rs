@@ -159,6 +159,12 @@ pub struct DeployRequest {
     pub epoch_ms: Option<u64>,
 }
 
+#[derive(Deserialize)]
+pub struct JobQuery {
+    pub status: Option<String>,
+    pub limit: Option<u32>,
+}
+
 // WebSocket types
 #[derive(Serialize)]
 pub struct WebSocketUpdate {

@@ -21,7 +21,7 @@ pub use install::install;
 #[cfg(unix)]
 pub use install::install_cli;
 pub use upgrade::{upgrade, upgrade_multi};
-pub use job::submit_job;
+pub use job::{submit_job, submit_job_from_spec, list_jobs, job_status, cancel_job, job_logs};
 pub use invite::invite;
 pub use enroll::enroll;
 pub use deploy::deploy_component;
