@@ -6,7 +6,8 @@ use axum::{
 };
 
 use super::types::*;
-use common::{JobInstance, JobSpec};
+use common::{JobInstance, JobSpec, PreStageSpec, Command};
+use base64::Engine as _;
 use crate::cmd;
 
 pub async fn api_jobs_list(State(_state): State<WebState>, Query(params): Query<JobQuery>) -> Json<Vec<JobInstance>> {
@@ -22,12 +23,34 @@ pub async fn api_jobs_list(State(_state): State<WebState>, Query(params): Query<
 }
 
 pub async fn api_jobs_submit(State(state): State<WebState>, mut multipart: Multipart) -> impl IntoResponse {
-    // Expected fields: job_toml (file)
+    // Expected fields: job_toml (text), zero or more asset (file)
     let mut job_toml_text: Option<String> = None;
-    while let Ok(Some(field)) = multipart.next_field().await {
+    let mut prestage: Vec<PreStageSpec> = Vec::new();
+
+    while let Ok(Some(mut field)) = multipart.next_field().await {
         let fname = field.name().unwrap_or("").to_string();
         match fname.as_str() {
             "job_toml" | "file" => { job_toml_text = field.text().await.ok(); },
+            "asset" => {
+                let filename = field.file_name().map(|s| s.to_string()).unwrap_or_else(|| "asset.bin".to_string());
+                if let Ok(bytes) = field.bytes().await {
+                    // Store locally in CAS
+                    let store = crate::storage::ContentStore::open();
+                    let digest = store.put_bytes(&bytes).unwrap_or_else(|_| common::sha256_hex(&bytes));
+                    // Publish StoragePut to peers
+                    if let Ok((mut swarm, topic_cmd, _topic_status)) = crate::cmd::util::new_swarm().await {
+                        let _ = libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap());
+                        crate::cmd::util::mdns_warmup(&mut swarm).await;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                        let _ = swarm.behaviour_mut().gossipsub.publish(
+                            topic_cmd,
+                            common::serialize_message(&Command::StoragePut { digest: digest.clone(), bytes_b64: b64 })
+                        );
+                    }
+                    // Add pre-stage mapping to /tmp/assets/<filename>
+                    prestage.push(PreStageSpec { source: format!("cas:{}", digest), dest: format!("/tmp/assets/{}", filename) });
+                }
+            },
             _ => {}
         }
     }
@@ -35,10 +58,13 @@ pub async fn api_jobs_submit(State(state): State<WebState>, mut multipart: Multi
         Some(toml) if !toml.is_empty() => toml,
         _ => return (StatusCode::BAD_REQUEST, "Missing job TOML content").into_response()
     };
-    let job_spec: JobSpec = match toml::from_str(&job_toml) {
+    let mut job_spec: JobSpec = match toml::from_str(&job_toml) {
         Ok(spec) => spec,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("Invalid job TOML: {}", e)).into_response()
     };
+    // Inject pre_stage entries
+    job_spec.execution.pre_stage.extend(prestage.into_iter());
+
     match cmd::submit_job_from_spec(job_spec).await {
         Ok(_) => {
             crate::p2p::metrics::push_log(&state.logs, "system", "Job submitted via web interface".to_string()).await;

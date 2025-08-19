@@ -146,6 +146,11 @@ tags = ["builder"]
 				<label class="block text-sm text-gray-300 mb-1">Job TOML</label>
 				<textarea id="job-toml" rows="15" class="w-full bg-graphite border border-graphite rounded px-3 py-2 text-sm font-mono" placeholder="Select a template above or enter custom TOML...">${examples['one-shot']}</textarea>
 			</div>
+			<div>
+				<label class="block text-sm text-gray-300 mb-1">Attachments (optional)</label>
+				<input id="job-assets" type="file" multiple class="w-full bg-graphite border border-graphite rounded px-3 py-2 text-sm" />
+				<p class="text-xs text-gray-400 mt-1">Files will be content-addressed and available as /tmp/assets/&lt;filename&gt; during job execution.</p>
+			</div>
 			<div class="flex items-center justify-end gap-2">
 				<button type="button" class="border border-graphite px-4 py-2 rounded" id="job-cancel">Close</button>
 				<button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded">Submit</button>
@@ -163,6 +168,10 @@ tags = ["builder"]
 			e.preventDefault();
 			const toml = document.getElementById('job-toml').value;
 			const fd = new FormData(); fd.append('job_toml', toml);
+			const files = document.getElementById('job-assets').files;
+			if (files && files.length) {
+				for (let i = 0; i < files.length; i++) { fd.append('asset', files[i], files[i].name); }
+			}
 			try {
 				showLoading('Submitting job...');
 				const res = await fetch('/api/jobs/submit', { method: 'POST', headers: { 'Authorization': `Bearer ${app.sessionToken}` }, body: fd });
