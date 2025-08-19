@@ -7,6 +7,42 @@ use common::{serialize_message, Command, OwnerKeypair, AgentUpgrade, sign_bytes_
 
 use super::util::{new_swarm, mdns_warmup, owner_dir};
 
+pub async fn upgrade_multi(
+    bins: Vec<String>,
+    file: Option<String>,
+    target_platform: Option<String>,
+    all_platforms: bool,
+    version: u64,
+    target_peers: Vec<String>,
+    target_tags: Vec<String>,
+) -> anyhow::Result<()> {
+    // Interpret inputs:
+    // - If --bin provided: entries of form "<plat>=<path>" or just "<path>".
+    // - Else: fall back to single file/target_platform.
+    if bins.is_empty() {
+        let file = file.ok_or_else(|| anyhow::anyhow!("--file is required if no --bin provided"))?;
+        return upgrade(file, version, target_platform, target_peers, target_tags).await;
+    }
+
+    for entry in bins {
+        let (plat_opt, path) = if let Some((p, f)) = entry.split_once('=') {
+            (Some(p.trim().to_string()), f.trim().to_string())
+        } else {
+            (None, entry)
+        };
+        // If --all-platforms is false and a platform is specified on the flag, respect it; otherwise use split or detect
+        let plat = if all_platforms {
+            plat_opt
+        } else {
+            plat_opt.or_else(|| target_platform.clone())
+        };
+        upgrade(path, version, plat, target_peers.clone(), target_tags.clone()).await?;
+        // Small delay to avoid overwhelming the gossip topic with large messages simultaneously
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Ok(())
+}
+
 pub async fn upgrade(
     file: String,
     version: u64,

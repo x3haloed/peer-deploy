@@ -62,13 +62,21 @@ enum Commands {
     },
     /// Push an agent binary upgrade to peers
     Upgrade {
+        /// Repeatable: specify one or more platform=path pairs (e.g., --bin linux/x86_64=./agent-linux)
+        /// If platform is omitted (just a file path), it will be detected from headers.
+        #[arg(long = "bin")]
+        bins: Vec<String>,
+        /// For single-binary upgrades (legacy): path to binary
         #[arg(long)]
-        file: String,
-        #[arg(long, default_value_t = 1)]
-        version: u64,
-        /// Target platform for this binary (e.g., linux/x86_64, macos/aarch64). If omitted, agents sniff binary and self-select.
+        file: Option<String>,
+        /// For single-binary upgrades (legacy): explicit platform
         #[arg(long = "platform")]
         target_platform: Option<String>,
+        /// Publish all provided binaries (each to its matching platform)
+        #[arg(long = "all-platforms", default_value_t = false)]
+        all_platforms: bool,
+        #[arg(long, default_value_t = 1)]
+        version: u64,
         /// Target specific peers by PeerId (repeatable)
         #[arg(long = "peer")]
         target_peers: Vec<String>,
@@ -214,8 +222,8 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Install { binary, system }) => cmd::install(binary, system).await,
         #[cfg(not(unix))]
         Some(Commands::Install { .. }) => Err(anyhow::anyhow!("install is only supported on Unix-like systems with systemd")),
-        Some(Commands::Upgrade { file, version, target_platform, target_peers, target_tags }) =>
-            cmd::upgrade(file, version, target_platform, target_peers, target_tags).await,
+        Some(Commands::Upgrade { bins, file, target_platform, all_platforms, version, target_peers, target_tags }) =>
+            cmd::upgrade_multi(bins, file, target_platform, all_platforms, version, target_peers, target_tags).await,
         Some(Commands::Invite { bootstrap, realm_id, exp_mins }) => cmd::invite(bootstrap, realm_id, exp_mins).await,
         Some(Commands::Enroll { token, binary, system }) => cmd::enroll(token, binary, system).await,
         Some(Commands::Configure { owner, bootstrap }) => cmd::configure(owner, bootstrap).await,

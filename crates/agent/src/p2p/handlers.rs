@@ -266,9 +266,18 @@ pub async fn handle_upgrade(
     // Spawn new process from the freshly written binary and exit this one.
     // Prefer versioned path to avoid rename-on-Windows issues.
     push_log(&logs, "upgrade", format!("spawning new process: {}", versioned_path.display())).await;
-    let _ = std::process::Command::new(&versioned_path)
+    let spawn_res = std::process::Command::new(&versioned_path)
         .args(std::env::args().skip(1))
         .spawn();
+    if spawn_res.is_err() {
+        push_log(&logs, "upgrade", "spawn failed; retaining old process and previous version").await;
+        // Roll back visible version to previous
+        let mut s = load_state();
+        s.agent_version = previous;
+        save_state(&s);
+        let _ = tx.send(Err("upgrade rejected (spawn failed)".into()));
+        return;
+    }
     push_log(&logs, "upgrade", "exiting old process").await;
     // Give the status publisher a moment to flush before exit
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;

@@ -6,6 +6,7 @@ use futures::{sink::SinkExt, stream::StreamExt};
 use tracing::info;
 
 use super::types::{WebState, WebSocketUpdate};
+use super::utils::format_timestamp;
 
 // WebSocket handler for real-time updates
 pub async fn websocket_handler(
@@ -31,6 +32,8 @@ pub async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: WebSt
     
     // Set up periodic updates
     let mut update_interval = interval(Duration::from_secs(2));
+    // Track last sent log line count per component for this connection
+    let mut last_sent: std::collections::BTreeMap<String, usize> = Default::default();
     
     // Handle incoming messages and send periodic updates
     loop {
@@ -58,6 +61,34 @@ pub async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: WebSt
                     if sender.send(Message::Text(msg)).await.is_err() {
                         break;
                     }
+                }
+
+                // Stream new logs since last tick
+                let mut to_send: Vec<String> = Vec::new();
+                {
+                    let logs_map = state.logs.lock().await;
+                    for (comp, buf) in logs_map.iter() {
+                        let start = *last_sent.get(comp).unwrap_or(&0usize);
+                        let end = buf.len();
+                        if start >= end { continue; }
+                        for line in buf.iter().skip(start).take(end - start) {
+                            if let Some((ts_str, msg)) = line.split_once(" | ") {
+                                if let Ok(ts) = ts_str.trim().parse::<u64>() {
+                                    let json = serde_json::json!({
+                                        "type": "log",
+                                        "timestamp": format_timestamp(ts),
+                                        "component": comp,
+                                        "message": msg.trim(),
+                                    });
+                                    if let Ok(s) = serde_json::to_string(&json) { to_send.push(s); }
+                                }
+                            }
+                        }
+                        last_sent.insert(comp.clone(), end);
+                    }
+                }
+                for s in to_send {
+                    if sender.send(Message::Text(s)).await.is_err() { break; }
                 }
             }
         }
