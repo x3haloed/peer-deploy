@@ -51,9 +51,10 @@ pub async fn connect_to_agent() -> Result<WebState> {
 async fn load_running_agent_metrics(state: &WebState) -> Result<()> {
     // Try to connect to the agent's metrics endpoint
     let metrics_urls = [
-        "http://127.0.0.1:9090/metrics", // Default metrics port
-        "http://127.0.0.1:3030/metrics", // Alternative port
-        "http://127.0.0.1:8080/metrics", // Another common port
+        "http://127.0.0.1:9920/metrics", // Default metrics port in agent
+        "http://127.0.0.1:9090/metrics",
+        "http://127.0.0.1:3030/metrics",
+        "http://127.0.0.1:8080/metrics",
     ];
     
     for url in &metrics_urls {

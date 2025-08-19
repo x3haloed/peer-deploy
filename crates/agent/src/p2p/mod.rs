@@ -1,6 +1,7 @@
 #![allow(clippy::collapsible_match, clippy::double_ended_iterator_last)]
 
 use std::sync::{atomic::Ordering, Arc};
+use tokio::sync::Mutex as AsyncMutex;
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -76,6 +77,8 @@ pub async fn run_agent(
     epoch_ms: u64,
     roles: Vec<String>,
     ephemeral: bool,
+    // Optional sink to mirror mesh status updates into a shared map (for web UI)
+    status_sink: Option<Arc<AsyncMutex<std::collections::BTreeMap<String, common::Status>>>>,
 ) -> anyhow::Result<()> {
     let metrics = Arc::new(Metrics::new());
     let logs: SharedLogs =
@@ -353,6 +356,8 @@ pub async fn run_agent(
                     trusted_owner_pub_bs58: load_trusted_owner(),
                     links: link_count as u64,
                 };
+                // Mirror into shared status sink for UI
+                if let Some(sink) = &status_sink { let mut m = sink.lock().await; m.insert(status.node_id.clone(), status.clone()); }
                 if let Err(_e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
                 } else {
@@ -394,6 +399,8 @@ pub async fn run_agent(
                     trusted_owner_pub_bs58: load_trusted_owner(),
                     links: link_count as u64,
                 };
+                // Mirror into shared status sink for UI
+                if let Some(sink) = &status_sink { let mut m = sink.lock().await; m.insert(status.node_id.clone(), status.clone()); }
                 if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&status)) {
                     warn!(error=%e, "failed to publish heartbeat status");
                     metrics.status_publish_errors_total.fetch_add(1, Ordering::Relaxed);
@@ -459,6 +466,11 @@ pub async fn run_agent(
                     }
                     SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) => {
                         if let gossipsub::Event::Message { propagation_source, message_id, message } = ev {
+                            // First, try to parse peer Status updates and mirror them into the sink for UI
+                            if let Ok(st) = common::deserialize_message::<common::Status>(&message.data) {
+                                if let Some(sink) = &status_sink { let mut m = sink.lock().await; m.insert(st.node_id.clone(), st); }
+                                continue;
+                            }
                             if let Ok(cmd) = deserialize_message::<Command>(&message.data) {
                                 info!(from=%propagation_source, ?message_id, "received command");
                                 metrics.commands_received_total.fetch_add(1, Ordering::Relaxed);

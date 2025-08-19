@@ -50,7 +50,7 @@ pub struct WebState {
     pub logs: SharedLogs,
     pub supervisor: Arc<Supervisor>,
     // Store peer status updates from the network
-    pub peer_status: Arc<Mutex<BTreeMap<String, Status>>>,
+    pub peer_status: Arc<tokio::sync::Mutex<BTreeMap<String, Status>>>,
 }
 
 impl WebState {
@@ -60,12 +60,12 @@ impl WebState {
             metrics,
             logs,
             supervisor,
-            peer_status: Arc::new(Mutex::new(BTreeMap::new())),
+            peer_status: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
         }
     }
 
     pub fn update_peer_status(&self, status: Status) {
-        let mut peers = self.peer_status.lock().unwrap();
+        let mut peers = self.peer_status.blocking_lock();
         peers.insert(status.node_id.clone(), status);
     }
 

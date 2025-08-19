@@ -139,7 +139,7 @@ pub async fn api_fleet_health(State(state): State<WebState>) -> Json<FleetHealth
     checks.push(storage_check);
     
     // Peer connectivity health
-    let peers = state.peer_status.lock().unwrap();
+    let peers = state.peer_status.lock().await;
     let total_nodes = peers.len().max(1) as u32; // At least 1 (local)
     let healthy_nodes = peers.values().filter(|p| p.components_running > 0 || p.components_desired > 0).count() as u32;
     let warning_nodes = 0u32; // TODO: Implement node health criteria
@@ -177,7 +177,7 @@ pub async fn api_fleet_health(State(state): State<WebState>) -> Json<FleetHealth
 
 /// Get health status for all nodes in the fleet
 pub async fn api_node_health(State(state): State<WebState>) -> Json<Vec<NodeHealth>> {
-    let peers = state.peer_status.lock().unwrap();
+    let peers = state.peer_status.lock().await;
     let mut nodes = Vec::new();
     
     // Add peer nodes

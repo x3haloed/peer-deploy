@@ -8,7 +8,7 @@ use super::utils::format_timestamp;
 
 pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
     use std::sync::atomic::Ordering;
-    let peers = state.peer_status.lock().unwrap();
+    let peers = state.peer_status.lock().await;
     let node_count = peers.len() as u32;
     let component_count = state.metrics.components_running.load(Ordering::Relaxed) as u32;
     let cpu_avg = if peers.is_empty() { 0 } else { peers.values().map(|p| p.cpu_percent as u32).sum::<u32>() / node_count };
@@ -16,7 +16,7 @@ pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
 }
 
 pub async fn api_nodes(State(state): State<WebState>) -> Json<Vec<ApiNode>> {
-    let peers = state.peer_status.lock().unwrap();
+    let peers = state.peer_status.lock().await;
     let mut nodes = Vec::new();
     for (node_id, status) in peers.iter() {
         nodes.push(ApiNode {
@@ -56,7 +56,7 @@ pub async fn api_components(State(state): State<WebState>) -> Json<Vec<ApiCompon
             if has_recent_logs { replicas_desired } else { if replicas_desired > 0 { 1 } else { 0 } }
         };
         let running = replicas_running > 0;
-        let peers = state.peer_status.lock().unwrap();
+        let peers = state.peer_status.lock().await;
         let nodes: Vec<String> = if peers.is_empty() { vec!["local-node".to_string()] } else { peers.keys().cloned().collect() };
         components.push(ApiComponent { name: name.clone(), running, replicas_running, replicas_desired, memory_mb: memory_mb as u32, nodes });
     }

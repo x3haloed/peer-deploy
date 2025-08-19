@@ -100,7 +100,7 @@ pub async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: WebSt
 pub async fn get_status_update(state: &WebState) -> WebSocketUpdate {
     use std::sync::atomic::Ordering;
     
-    let peers = state.peer_status.lock().unwrap();
+    let peers = state.peer_status.lock().await;
     let metrics_data = serde_json::json!({
         "nodes": peers.len().max(1),
         "components_running": state.metrics.components_running.load(Ordering::Relaxed),

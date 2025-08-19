@@ -139,13 +139,18 @@ async fn serve_static_file(path: &str) -> impl IntoResponse {
 pub async fn start_management_session(
     owner_key_verification: bool,
     timeout_duration: Duration,
+    // Optional shared peer status map provided by the running agent
+    shared_status: Option<std::sync::Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, common::Status>>>>,
 ) -> Result<()> {
     if !owner_key_verification {
         return Err(anyhow::anyhow!("Authentication required"));
     }
 
     // Connect to running agent by loading its state and creating shared components
-    let state = connect_to_agent().await?;
+    let mut state = connect_to_agent().await?;
+    if let Some(map) = shared_status {
+        state.peer_status = map;
+    }
     let session_id = state.create_session();
     
     // Find an available port

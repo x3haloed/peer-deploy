@@ -13,7 +13,7 @@ pub async fn api_discover(State(state): State<WebState>) -> Json<serde_json::Val
         }
     }
     let discovered_nodes: Vec<serde_json::Value> = {
-        let peers = state.peer_status.lock().unwrap();
+        let peers = state.peer_status.lock().await;
         peers.iter().map(|(node_id, status)| {
             serde_json::json!({
                 "node_id": node_id,

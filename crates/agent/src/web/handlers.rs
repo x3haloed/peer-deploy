@@ -18,7 +18,7 @@ use crate::cmd;
 pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
     use std::sync::atomic::Ordering;
     
-    let peers = state.peer_status.lock().unwrap();
+    let peers = state.peer_status.lock().await;
     let node_count = peers.len() as u32;
     let component_count = state.metrics.components_running.load(Ordering::Relaxed) as u32;
     
@@ -37,7 +37,7 @@ pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
 }
 
 pub async fn api_nodes(State(state): State<WebState>) -> Json<Vec<ApiNode>> {
-    let peers = state.peer_status.lock().unwrap();
+    let peers = state.peer_status.lock().await;
     let mut nodes = Vec::new();
     
     for (node_id, status) in peers.iter() {
@@ -97,7 +97,7 @@ pub async fn api_components(State(state): State<WebState>) -> Json<Vec<ApiCompon
         let running = replicas_running > 0;
         
         // Get nodes where this component might be running (simplified)
-        let peers = state.peer_status.lock().unwrap();
+        let peers = state.peer_status.lock().await;
         let nodes: Vec<String> = if peers.is_empty() {
             vec!["local-node".to_string()]
         } else {
@@ -471,7 +471,7 @@ pub async fn api_discover(State(state): State<WebState>) -> Json<serde_json::Val
     // Return current peer status (including newly discovered nodes).
     // Scope the lock to ensure the guard is dropped before awaiting below.
     let discovered_nodes: Vec<serde_json::Value> = {
-        let peers = state.peer_status.lock().unwrap();
+        let peers = state.peer_status.lock().await;
         peers
             .iter()
             .map(|(node_id, status)| {
