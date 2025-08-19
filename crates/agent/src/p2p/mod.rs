@@ -6,7 +6,7 @@ use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 use rand::{thread_rng, Rng};
-use lru::LruCache;
+
 use uuid::Uuid;
 // Maximum number of pending broadcasts to track (evict oldest beyond this)
 const MAX_PENDING_BROADCASTS: usize = 50000;
@@ -357,7 +357,9 @@ pub async fn run_agent(
     }
 
     let mut pending_job_broadcasts: HashMap<(String, String, String), PendingJob> = HashMap::new();
-    let seen_cache = Arc::new(AsyncMutex::new(LruCache::new(30000)));
+    // TTL-based deduplication cache: message_id -> (timestamp, job_content_for_debugging)
+    let seen_cache = Arc::new(AsyncMutex::new(HashMap::<String, (Instant, (String, String, String))>::new()));
+    const DEDUP_CACHE_TTL: Duration = Duration::from_secs(10 * 60); // 10 minutes
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     let mut storage_announce_tick = tokio::time::interval(Duration::from_secs(60));
@@ -500,6 +502,17 @@ pub async fn run_agent(
                     for key in stale {
                         pending_job_broadcasts.remove(&key);
                         warn!("Pruned stale pending broadcast: {:?}", key);
+                    }
+                }
+                // Prune expired deduplication cache entries
+                {
+                    let mut cache = seen_cache.lock().await;
+                    let now = Instant::now();
+                    let initial_size = cache.len();
+                    cache.retain(|_, (timestamp, _)| now.duration_since(*timestamp) < DEDUP_CACHE_TTL);
+                    let final_size = cache.len();
+                    if initial_size != final_size {
+                        info!("Cleaned deduplication cache: {} -> {} entries", initial_size, final_size);
                     }
                 }
                 // Evict oldest pending broadcasts if over capacity
@@ -682,16 +695,23 @@ pub async fn run_agent(
                                 continue;
                             }
                             if let Ok(cmd) = deserialize_message::<Command>(&message.data) {
-                                // Deduplicate job status messages
+                                // Deduplicate job status messages based on message_id with TTL
                                 if let Some((job_id, status, assigned_node, message_id)) = job_status_tuple(&cmd) {
                                     let mut cache = seen_cache.lock().await;
-                                    let key = (job_id.clone(), status.clone(), assigned_node.clone());
-                                    if cache.contains(&key) {
+                                    let now = Instant::now();
+                                    
+                                    // Clean expired entries
+                                    cache.retain(|_, (timestamp, _)| now.duration_since(*timestamp) < DEDUP_CACHE_TTL);
+                                    
+                                    // Check if this exact message was already processed
+                                    if cache.contains_key(&message_id) {
                                         let ack = Command::JobStatusAck { job_id, status, from: local_peer_id.to_string(), message_id: message_id.clone() };
                                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                         continue;
                                     }
-                                    cache.put(key, Instant::now());
+                                    
+                                    // Store this message_id to prevent duplicate processing
+                                    cache.insert(message_id.clone(), (now, (job_id.clone(), status.clone(), assigned_node.clone())));
                                 }
                                 info!(from=%propagation_source, ?message_id, "received command");
                                 metrics.commands_received_total.fetch_add(1, Ordering::Relaxed);
