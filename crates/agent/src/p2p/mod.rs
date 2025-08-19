@@ -307,12 +307,15 @@ pub async fn run_agent(
     let pending_storage: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<tokio::sync::oneshot::Sender<Option<Vec<u8>>>>>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let mut schedule_tick = tokio::time::interval(Duration::from_secs(60));
+    // Periodic peer announcement for peer exchange
+    let mut peer_announce_tick = tokio::time::interval(Duration::from_secs(60));
     // track msgs per second by counting status publishes
     let mut last_publish_count: u64 = 0;
     let mut last_sample_time = std::time::Instant::now();
 
     loop {
         tokio::select! {
+            // Handle incoming run/job/storage events
             Some(run_res) = rx.recv() => {
                 match &run_res {
                     Ok(m) => {
@@ -453,6 +456,15 @@ pub async fn run_agent(
                         // Re-publish the SubmitJob command so eligible nodes can take it
                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&common::Command::SubmitJob(spec)));
                     }
+                }
+            }
+            // Periodic peer announcement for gossip-based peer exchange
+            _ = peer_announce_tick.tick() => {
+                let peers = load_bootstrap_addrs();
+                if !peers.is_empty() {
+                    warn!("Announcing {} bootstrap peers", peers.len());
+                    let msg = Command::AnnouncePeers { peers: peers.clone() };
+                    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg));
                 }
             }
             event = swarm.select_next_some() => {
