@@ -185,6 +185,24 @@ class RealmApp {
             });
         }
 
+        // Storage: GC and refresh
+        const gcBtn = document.getElementById('storage-gc');
+        const refreshStorageBtn = document.getElementById('storage-refresh');
+        if (gcBtn && refreshStorageBtn) {
+            gcBtn.addEventListener('click', async () => {
+                const tgt = parseInt(document.getElementById('storage-gc-target').value || '0', 10);
+                if (!Number.isFinite(tgt) || tgt <= 0) { this.showError('Enter target bytes'); return; }
+                try {
+                    await this.apiCall('/api/storage/gc', { method: 'POST', body: JSON.stringify({ target_total_bytes: tgt }) });
+                    this.showSuccess('GC complete');
+                    await this.refreshStorageList();
+                } catch (_) { this.showError('GC failed'); }
+            });
+            refreshStorageBtn.addEventListener('click', async () => {
+                await this.refreshStorageList();
+            });
+        }
+
         // Navigate to Deploy from Components header action
         const newComponentBtn = document.getElementById('new-component');
         if (newComponentBtn) {
@@ -276,6 +294,7 @@ class RealmApp {
                 await this.loadVolumes();
                 await this.loadDeployHistory();
                 await this.refreshPolicyCard();
+                await this.refreshStorageList();
                 break;
             case 'logs':
                 await populateLogComponentsModule(this);
@@ -614,6 +633,41 @@ class RealmApp {
             if (qemuStatus) qemuStatus.textContent = `QEMU: ${qemu.qemu_installed ? 'installed' : 'not detected'}`;
         } catch (e) {
             // Non-fatal
+        }
+    }
+
+    async refreshStorageList() {
+        try {
+            const res = await this.apiCall('/api/storage');
+            const items = await res.json();
+            const root = document.getElementById('storage-list');
+            if (!root) return;
+            if (!items.length) { root.textContent = 'No blobs'; return; }
+            root.innerHTML = '';
+            items.forEach(it => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between border-b border-graphite py-1';
+                const short = it.digest.slice(0, 12);
+                row.innerHTML = `
+                    <div>
+                        <div class="font-mono text-xs">${short}…</div>
+                        <div class="text-[10px] text-gray-400">${it.size_bytes} bytes • last ${it.last_accessed_unix} • ${it.pinned ? 'pinned' : ''}</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="border border-graphite px-2 py-1 rounded text-[10px]" data-act="pin">${it.pinned ? 'Unpin' : 'Pin'}</button>
+                    </div>
+                `;
+                row.querySelector('[data-act="pin"]').addEventListener('click', async () => {
+                    try {
+                        await this.apiCall('/api/storage/pin', { method: 'POST', body: JSON.stringify({ digest: it.digest, pinned: !it.pinned }) });
+                        await this.refreshStorageList();
+                    } catch (_) { this.showError('Pin operation failed'); }
+                });
+                root.appendChild(row);
+            });
+        } catch (_) {
+            const root = document.getElementById('storage-list');
+            if (root) root.textContent = 'Failed to load storage';
         }
     }
 

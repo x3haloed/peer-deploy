@@ -15,7 +15,7 @@ mod volumes;
 mod history;
 
 pub use types::*;
-pub use handlers::{api_status, api_nodes, api_components, api_logs, api_push_multipart, api_upgrade_multipart, api_apply_multipart, api_install_cli, api_install_agent, api_connect_peer, api_discover, api_component_restart, api_component_stop, api_get_policy, api_set_policy, api_qemu_status};
+pub use handlers::{api_status, api_nodes, api_components, api_logs, api_push_multipart, api_upgrade_multipart, api_apply_multipart, api_install_cli, api_install_agent, api_connect_peer, api_discover, api_component_restart, api_component_stop, api_get_policy, api_set_policy, api_qemu_status, api_storage_list, api_storage_pin, api_storage_gc};
 pub use jobs::{api_jobs_list, api_jobs_submit, api_jobs_get, api_jobs_cancel, api_jobs_logs, api_jobs_artifacts, api_jobs_artifact_download};
 pub use websocket::*;
 pub use utils::*;
@@ -82,6 +82,10 @@ fn create_app(state: WebState, session_id: String) -> Router {
         // Policy and runtime controls
         .route("/api/policy", get(api_get_policy).post(api_set_policy))
         .route("/api/qemu/status", get(api_qemu_status))
+        // Storage endpoints
+        .route("/api/storage", get(api_storage_list))
+        .route("/api/storage/pin", post(api_storage_pin))
+        .route("/api/storage/gc", post(api_storage_gc))
         
         // WebSocket for real-time updates
         .route("/ws", get(websocket_handler))

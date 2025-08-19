@@ -5,6 +5,7 @@ mod cmd;
 mod web;
 mod job_manager;
 mod policy;
+mod storage;
 
 use clap::{Parser, Subcommand};
 use tracing::{info};
@@ -216,6 +217,12 @@ enum Commands {
         #[arg(long)]
         qemu: Option<bool>,
     },
+    /// List stored blobs (CAS)
+    StorageLs,
+    /// Pin or unpin a blob
+    StoragePin { digest: String, #[arg(long)] pinned: bool },
+    /// Garbage collect storage to target total size (bytes)
+    StorageGc { target_total_bytes: u64 },
 }
 
 #[derive(Debug, Subcommand)]
@@ -349,6 +356,9 @@ async fn main() -> anyhow::Result<()> {
         },
         Some(Commands::PolicyShow) => cmd::policy_show().await,
         Some(Commands::PolicySet { native, qemu }) => cmd::policy_set(native, qemu).await,
+        Some(Commands::StorageLs) => cmd::storage_ls().await,
+        Some(Commands::StoragePin { digest, pinned }) => cmd::storage_pin(digest, pinned).await,
+        Some(Commands::StorageGc { target_total_bytes }) => cmd::storage_gc(target_total_bytes).await,
     }
 }
 

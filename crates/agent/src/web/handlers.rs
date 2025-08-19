@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use super::types::*;
 use crate::policy::{load_policy, save_policy, ExecutionPolicy, find_any_qemu_user};
+use crate::storage::ContentStore;
 use super::utils::format_timestamp;
 use crate::supervisor::DesiredComponent;
 use common::{ComponentSpec, Manifest, JobInstance, JobSpec};
@@ -258,6 +259,44 @@ pub async fn api_qemu_status() -> impl IntoResponse {
     let have_qemu = find_any_qemu_user().is_some();
     let payload = serde_json::json!({ "qemu_installed": have_qemu });
     (StatusCode::OK, Json(payload))
+}
+
+// ============== Storage (Phase 5A minimal) =================
+pub async fn api_storage_list() -> impl IntoResponse {
+    let store = ContentStore::open();
+    let items = store
+        .list()
+        .into_iter()
+        .map(|(d, e)| serde_json::json!({
+            "digest": d,
+            "size_bytes": e.size_bytes,
+            "last_accessed_unix": e.last_accessed_unix,
+            "pinned": e.pinned,
+        }))
+        .collect::<Vec<_>>();
+    (StatusCode::OK, Json(items))
+}
+
+#[derive(serde::Deserialize)]
+pub struct PinRequest { pub digest: String, pub pinned: bool }
+
+pub async fn api_storage_pin(Json(req): Json<PinRequest>) -> impl IntoResponse {
+    let store = ContentStore::open();
+    match store.pin(&req.digest, req.pinned) {
+        Ok(_) => (StatusCode::OK, "ok").into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct GcRequest { pub target_total_bytes: u64 }
+
+pub async fn api_storage_gc(Json(req): Json<GcRequest>) -> impl IntoResponse {
+    let store = ContentStore::open();
+    match store.gc_to_target(req.target_total_bytes) {
+        Ok(_) => (StatusCode::OK, "ok").into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
 }
 
 /// Multipart deploy endpoint used by the web UI to upload a .wasm file and metadata.
