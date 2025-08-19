@@ -2,6 +2,7 @@ use anyhow::Context;
 use base64::Engine as _;
 use common::{serialize_message, Command, JobSpec, OwnerKeypair, JobInstance, PreStageSpec};
 use std::time::Duration;
+use futures::StreamExt;
 
 use super::util::{new_swarm, mdns_warmup, owner_dir, dial_bootstrap};
 use crate::job_manager::JobManager;
@@ -83,10 +84,12 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
     }
 
     let msg = Command::SubmitJob(spec.clone());
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .publish(topic_cmd.clone(), serialize_message(&msg))?;
+    
+    // publish job command
+    swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg))?;
+    
+    // drive the swarm to flush the message (wait up to 2s for gossip propagation)
+    let _ = tokio::time::timeout(Duration::from_secs(2), swarm.select_next_some()).await;
     
     println!("Job '{}' submitted successfully", spec.name);
     Ok(())
@@ -135,13 +138,19 @@ pub async fn net_list_jobs_json(status_filter: Option<String>, limit: usize) -> 
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
         .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
     mdns_warmup(&mut swarm).await;
+    dial_bootstrap(&mut swarm).await;
     let status_filter_owned = status_filter.clone();
     let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobs { status_filter: status_filter_owned, limit }));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         tokio::select! {
             _ = tokio::time::sleep_until(deadline.into()) => {
-                println!("[]");
+                // No network response; fallback to local job list
+                let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+                let job_manager = JobManager::new(data_dir);
+                let _ = job_manager.load_from_disk().await;
+                let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
+                println!("{}", serde_json::to_string_pretty(&jobs)?);
                 return Ok(());
             }
             event = swarm.select_next_some() => {
@@ -167,12 +176,21 @@ pub async fn net_status_job_json(job_id: String) -> anyhow::Result<()> {
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
         .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
     mdns_warmup(&mut swarm).await;
+    dial_bootstrap(&mut swarm).await;
     let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobStatus { job_id: job_id.clone() }));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         tokio::select! {
             _ = tokio::time::sleep_until(deadline.into()) => {
-                println!("null");
+                // No network response; fallback to local job status
+                let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+                let job_manager = JobManager::new(data_dir);
+                let _ = job_manager.load_from_disk().await;
+                if let Some(job) = job_manager.get_job(&job_id).await {
+                    println!("{}", serde_json::to_string_pretty(&job)?);
+                } else {
+                    println!("null");
+                }
                 return Ok(());
             }
             event = swarm.select_next_some() => {
@@ -301,11 +319,10 @@ pub async fn submit_job_from_spec(spec: JobSpec) -> anyhow::Result<()> {
     let _kp: OwnerKeypair = serde_json::from_slice(&_kp_bytes)?;
 
     let msg = Command::SubmitJob(spec.clone());
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .publish(topic_cmd.clone(), serialize_message(&msg))?;
-    
+    // publish job command
+    swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg))?;
+    // drive the swarm to flush the message (wait up to 2s for gossip propagation)
+    let _ = tokio::time::timeout(Duration::from_secs(2), swarm.select_next_some()).await;
     println!("Job '{}' submitted successfully", spec.name);
     Ok(())
 }
