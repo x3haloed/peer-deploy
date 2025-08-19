@@ -233,3 +233,33 @@ Or set environment variables before starting the agent:
 ```
 REALM_ALLOW_NATIVE_EXECUTION=1 REALM_ALLOW_EMULATION=1 realm
 ```
+
+## Dynamic Peer Discovery (Phase 6+)
+Realm features robust peer discovery that automatically forms and maintains mesh networks:
+
+### Multi-layered Discovery
+- **mDNS**: Local network discovery for zero-config local mesh formation
+- **Bootstrap Peers**: Static multiaddrs in `~/.local/share/realm-agent/bootstrap.json` for initial connections
+- **Gossip-based Peer Exchange (PEX)**: Peers periodically share their known addresses via gossipsub 
+- **Kademlia DHT**: Distributed hash table for wide-area peer discovery and routing
+
+### Automatic Mesh Formation
+- Agents automatically discover and connect to all available peers 
+- Bootstrap addresses are propagated throughout the mesh every 30 seconds
+- DHT bootstrap runs every 2 minutes to refresh routing tables
+- Newly discovered peers (via mDNS or identify) are added to both gossipsub and Kademlia
+
+### Configuration
+No manual configuration required! The system automatically:
+- Finds local peers via mDNS
+- Connects to configured bootstrap peers
+- Shares and learns new peer addresses
+- Maintains a full mesh topology
+
+**Bootstrap configuration** (optional):
+```bash
+# Add a known peer to your bootstrap list
+realm configure --bootstrap /ip4/192.168.1.100/tcp/39143/p2p/12D3KooW...
+```
+
+The bootstrap address will be shared with all connected peers, creating a self-healing mesh network.

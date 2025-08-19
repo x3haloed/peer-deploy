@@ -188,9 +188,17 @@ pub async fn run_agent(
             .map_err(|e| anyhow!("Failed to parse TCP multiaddr: {}", e))?
     };
     Swarm::listen_on(&mut swarm, listen_tcp)?;
-    // Dial configured bootstrap peers
+    // Dial configured bootstrap peers and add to Kademlia
     for addr in load_bootstrap_addrs().into_iter() {
         if let Ok(ma) = addr.parse::<Multiaddr>() {
+            // Extract PeerId from multiaddr if present for Kademlia
+            if let Some(peer_id) = ma.iter().find_map(|p| {
+                if let libp2p::multiaddr::Protocol::P2p(hash) = p {
+                    PeerId::from_multihash(hash.into()).ok()
+                } else { None }
+            }) {
+                swarm.behaviour_mut().kademlia.add_address(&peer_id, ma.clone());
+            }
             let _ = libp2p::Swarm::dial(&mut swarm, ma);
         }
     }
@@ -296,6 +304,8 @@ pub async fn run_agent(
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     let mut storage_announce_tick = tokio::time::interval(Duration::from_secs(60));
+    let mut peer_announce_tick = tokio::time::interval(Duration::from_secs(30));
+    let mut dht_bootstrap_tick = tokio::time::interval(Duration::from_secs(120));
     // Content index: digest -> set of peers that have announced it
     let content_index: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
@@ -467,16 +477,83 @@ pub async fn run_agent(
                     let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg));
                 }
             }
+            // Bootstrap Kademlia DHT periodically to maintain routing table
+            _ = dht_bootstrap_tick.tick() => {
+                if !ephemeral {
+                    info!("Bootstrapping Kademlia DHT");
+                    let _ = swarm.behaviour_mut().kademlia.bootstrap();
+                }
+            }
             event = swarm.select_next_some() => {
                 match event {
                     SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(ev)) => {
                         match ev {
                             mdns::Event::Discovered(list) => {
-                                for (peer, _addr) in list { swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer); }
+                                for (peer, addr) in list { 
+                                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
+                                    // Also add to Kademlia DHT routing table
+                                    swarm.behaviour_mut().kademlia.add_address(&peer, addr);
+                                }
                             }
                             mdns::Event::Expired(list) => {
-                                for (peer, _addr) in list { swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer); }
+                                for (peer, _addr) in list { 
+                                    swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer); 
+                                    // Note: Kademlia will naturally expire stale entries
+                                }
                             }
+                        }
+                    }
+                    SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(ev)) => {
+                        match ev {
+                            kad::Event::RoutingUpdated { peer, .. } => {
+                                info!("Kademlia routing updated: {}", peer);
+                                // Add to gossipsub for command distribution
+                                swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
+                            }
+                            kad::Event::OutboundQueryProgressed { result, .. } => {
+                                match result {
+                                    kad::QueryResult::Bootstrap(bootstrap_result) => {
+                                        match bootstrap_result {
+                                            Ok(kad::BootstrapOk { peer, .. }) => {
+                                                info!("DHT bootstrap successful via {}", peer);
+                                            }
+                                            Err(e) => {
+                                                warn!("DHT bootstrap error: {:?}", e);
+                                            }
+                                        }
+                                    }
+                                    kad::QueryResult::GetClosestPeers(peers_result) => {
+                                        match peers_result {
+                                            Ok(kad::GetClosestPeersOk { peers, .. }) => {
+                                                info!("Found {} closest peers via DHT", peers.len());
+                                                for peer_info in peers {
+                                                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_info.peer_id);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("DHT closest peers query error: {:?}", e);
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(ev)) => {
+                        match ev {
+                            identify::Event::Received { peer_id, info, .. } => {
+                                info!("Identify received from {}: agent={}", peer_id, info.agent_version);
+                                // Add peer addresses to Kademlia
+                                for addr in info.listen_addrs {
+                                    swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                                }
+                            }
+                            identify::Event::Sent { peer_id, .. } => {
+                                info!("Identify sent to {}", peer_id);
+                            }
+                            _ => {}
                         }
                     }
                     SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) => {
@@ -935,6 +1012,8 @@ pub async fn run_agent(
                                                     } else { None }
                                                 }) {
                                                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                                                    // Also add to Kademlia DHT routing table
+                                                    swarm.behaviour_mut().kademlia.add_address(&peer_id, ma.clone());
                                                 }
                                                 // Dial the address to establish connection
                                                 let _ = swarm.dial(ma);
