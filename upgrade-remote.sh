@@ -31,11 +31,16 @@ fi
 # Wait a moment for connection to establish
 sleep 2
 
-# Step 3: Submit the build job
+# Step 3: Submit the build job (attach source tarball)
 echo ""
 echo "🏗️  Submitting build job..."
-BUILD_JOB_OUTPUT=$(realm job submit --file build-job.toml --asset workspace.tar.gz)
-BUILD_JOB_ID=$(echo "$BUILD_JOB_OUTPUT" | grep -o 'Job [a-f0-9-]*' | cut -d' ' -f2)
+BUILD_JOB_OUTPUT=$(realm job submit build-job.toml --asset workspace.tar.gz)
+echo "$BUILD_JOB_OUTPUT"
+# Fallback: read last submitted job from JSON listing with filter
+BUILD_JOB_ID=$(realm job list-json --status pending --limit 5 2>/dev/null | jq -r '.[0].id // empty')
+if [ -z "$BUILD_JOB_ID" ]; then
+  BUILD_JOB_ID=$(realm job list-json --status running --limit 5 2>/dev/null | jq -r '.[0].id // empty')
+fi
 
 if [ -z "$BUILD_JOB_ID" ]; then
     echo "❌ Failed to extract build job ID from: $BUILD_JOB_OUTPUT"
@@ -50,7 +55,7 @@ echo "⏳ Waiting for build to complete..."
 echo "   (You can also run: realm job logs $BUILD_JOB_ID)"
 
 while true; do
-    STATUS=$(realm job status "$BUILD_JOB_ID" --json 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+    STATUS=$(realm job status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
     
     case "$STATUS" in
         "completed")
@@ -72,11 +77,19 @@ while true; do
     esac
 done
 
-# Step 5: Submit the self-upgrade job with dependency
+# Step 5: Submit the self-upgrade job reusing the built artifact
 echo ""
 echo "🔄 Submitting self-upgrade job..."
-UPGRADE_JOB_OUTPUT=$(realm job submit --file upgrade-job.toml --dependency "$BUILD_JOB_ID")
-UPGRADE_JOB_ID=$(echo "$UPGRADE_JOB_OUTPUT" | grep -o 'Job [a-f0-9-]*' | cut -d' ' -f2)
+# Discover the built artifact name with digest and reuse it
+ART_NAME=$(realm job artifacts "$BUILD_JOB_ID" | awk 'NR>3{print $1; exit}')
+if [ -z "$ART_NAME" ]; then ART_NAME="realm-linux-x86_64"; fi
+UPGRADE_JOB_OUTPUT=$(realm job submit upgrade-job.toml --use-artifact "$BUILD_JOB_ID:$ART_NAME")
+echo "$UPGRADE_JOB_OUTPUT"
+# Fallback to latest pending/running job as ID
+UPGRADE_JOB_ID=$(realm job list-json --status pending --limit 5 2>/dev/null | jq -r '.[0].id // empty')
+if [ -z "$UPGRADE_JOB_ID" ]; then
+  UPGRADE_JOB_ID=$(realm job list-json --status running --limit 5 2>/dev/null | jq -r '.[0].id // empty')
+fi
 
 if [ -z "$UPGRADE_JOB_ID" ]; then
     echo "❌ Failed to extract upgrade job ID from: $UPGRADE_JOB_OUTPUT"
@@ -90,7 +103,7 @@ echo ""
 echo "⏳ Waiting for self-upgrade to complete..."
 
 while true; do
-    STATUS=$(realm job status "$UPGRADE_JOB_ID" --json 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+    STATUS=$(realm job status-json "$UPGRADE_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
     
     case "$STATUS" in
         "completed")
@@ -128,7 +141,7 @@ if realm status >/dev/null 2>&1; then
     echo ""
     echo "💡 Pro Tips:"
     echo "   • View logs: realm job logs <job-id>"
-    echo "   • Download artifacts: realm job download $BUILD_JOB_ID --artifact realm-linux-x86_64"
+    echo "   • Download artifacts: realm job download --job $BUILD_JOB_ID --artifact realm-linux-x86_64"
     echo "   • Check status: realm status"
 else
     echo "⚠️  Remote agent may still be restarting..."

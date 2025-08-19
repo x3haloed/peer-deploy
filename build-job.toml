@@ -8,11 +8,11 @@ binary = "/usr/bin/bash"
 args = ["-c", """
 set -e
 echo "=== Setting up build environment ==="
-cd /tmp
-rm -rf peer-deploy
-# We'll include the source as part of the job submission
-tar -xzf workspace.tar.gz
-cd peer-deploy
+mkdir -p /tmp/workspace
+rm -rf /tmp/workspace/*
+# Pre-staged attachment is available under /tmp/assets/workspace.tar.gz
+tar -xzf /tmp/assets/workspace.tar.gz -C /tmp/workspace
+cd /tmp/workspace
 
 echo "=== Installing Rust if needed ==="
 if ! command -v cargo &> /dev/null; then
@@ -33,7 +33,7 @@ working_dir = "/tmp"
 timeout_minutes = 45
 # Capture the built binary as an artifact
 artifacts = [
-    { path = "/tmp/peer-deploy/target/release/realm", name = "realm-linux-x86_64" }
+    { path = "/tmp/workspace/target/release/realm", name = "realm-linux-x86_64" }
 ]
 
 [targeting]

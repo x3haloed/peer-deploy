@@ -8,12 +8,21 @@ binary = "/usr/bin/bash"
 args = ["-c", """
 set -e
 echo "=== Preparing self-upgrade ==="
-chmod +x /tmp/artifacts/realm-linux-x86_64
-ls -la /tmp/artifacts/realm-linux-x86_64
+chmod +x /tmp/assets/realm-linux-x86_64 || true
+chmod +x /tmp/artifacts/realm-linux-x86_64 || true
+ls -la /tmp/assets/realm-linux-x86_64 || true
+ls -la /tmp/artifacts/realm-linux_x86_64 || true
 
 echo "=== Performing self-upgrade via init ==="
-# Use init to gracefully replace the running agent
-/tmp/artifacts/realm-linux-x86_64 init
+# Prefer artifact path if present, else fall back to pre-staged attachment path
+if [ -f /tmp/artifacts/realm-linux-x86_64 ]; then
+  /tmp/artifacts/realm-linux-x86_64 init
+elif [ -f /tmp/assets/realm-linux-x86_64 ]; then
+  /tmp/assets/realm-linux-x86_64 init
+else
+  echo "No upgrade binary found in /tmp/artifacts or /tmp/assets" >&2
+  exit 1
+fi
 
 echo "=== Verifying upgrade ==="
 sleep 2
