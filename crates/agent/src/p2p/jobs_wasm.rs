@@ -67,6 +67,20 @@ pub async fn execute_wasm_job(
         if d != hex { return Err("job failed: digest mismatch".to_string()); }
     }
 
+    // Pre-stage attachments if requested (write blobs to host before execution)
+    for item in job.execution.pre_stage.iter() {
+        if let Some(hex) = item.source.strip_prefix("cas:") {
+            let store = ContentStore::open();
+            let bytes = if let Some(path) = store.get_path(hex) {
+                tokio::fs::read(path).await.map_err(|e| format!("prestage cas read failed: {e}"))?
+            } else if let Some(sto) = &storage {
+                if let Some(bytes) = sto.get(hex.to_string(), std::time::Duration::from_secs(5)).await { bytes } else { return Err(format!("prestage: digest not available via P2P: {hex}")); }
+            } else { return Err("prestage: digest not local and no P2P storage available".to_string()); };
+            if let Some(parent) = std::path::Path::new(&item.dest).parent() { let _ = tokio::fs::create_dir_all(parent).await; }
+            tokio::fs::write(&item.dest, &bytes).await.map_err(|e| format!("prestage write failed: {e}"))?;
+        }
+    }
+
     // Store in CAS and execute from there
     let store = ContentStore::open();
     let digest = store.put_bytes(&bytes).map_err(|e| format!("cas put failed: {e}"))?;

@@ -247,6 +247,9 @@ enum JobCommands {
     Submit {
         /// Path to job TOML file
         file: String,
+        /// Attach a local file as an asset (repeatable). Format: name=path or path
+        #[arg(long = "asset")]
+        assets: Vec<String>,
     },
     /// List all jobs (running, scheduled, completed)
     List {
@@ -369,7 +372,7 @@ async fn main() -> anyhow::Result<()> {
             res
         },
         Some(Commands::Job(job_cmd)) => match job_cmd {
-            JobCommands::Submit { file } => cmd::submit_job(file).await,
+            JobCommands::Submit { file, assets } => cmd::submit_job(file, assets).await,
             JobCommands::List { status, limit } => cmd::list_jobs(status, limit).await,
             JobCommands::Status { job_id } => cmd::job_status(job_id).await,
             JobCommands::Cancel { job_id } => cmd::cancel_job(job_id).await,

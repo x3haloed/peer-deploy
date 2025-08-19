@@ -1,11 +1,12 @@
 use anyhow::Context;
-use common::{serialize_message, Command, JobSpec, OwnerKeypair, JobInstance};
+use base64::Engine as _;
+use common::{serialize_message, Command, JobSpec, OwnerKeypair, JobInstance, PreStageSpec};
 use std::time::Duration;
 
 use super::util::{new_swarm, mdns_warmup, owner_dir};
 use crate::job_manager::JobManager;
 
-pub async fn submit_job(job_toml_path: String) -> anyhow::Result<()> {
+pub async fn submit_job(job_toml_path: String, assets: Vec<String>) -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
         .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
@@ -21,7 +22,28 @@ pub async fn submit_job(job_toml_path: String) -> anyhow::Result<()> {
     let _kp: OwnerKeypair = serde_json::from_slice(&_kp_bytes)?;
 
     let text = tokio::fs::read_to_string(&job_toml_path).await?;
-    let spec: JobSpec = toml::from_str(&text)?;
+    let mut spec: JobSpec = toml::from_str(&text)?;
+
+    // Inline-upload small assets via P2P and inject pre_stage entries
+    // Each asset flag format: name=local_path or just local_path
+    for asset in assets.into_iter() {
+        let (name, path) = if let Some((k, v)) = asset.split_once('=') { (k.to_string(), v.to_string()) } else { let p = std::path::Path::new(&asset); (p.file_name().and_then(|s| s.to_str()).unwrap_or("asset").to_string(), asset) };
+        let bytes = tokio::fs::read(&path).await.context("read asset file")?;
+        let digest = common::sha256_hex(&bytes);
+        // Publish StoragePut with base64 bytes
+        let (mut swarm, topic_cmd, _topic_status) = super::util::new_swarm().await?;
+        libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+        super::util::mdns_warmup(&mut swarm).await;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::StoragePut { digest: digest.clone(), bytes_b64: b64 }));
+        // Also store locally
+        let store = crate::storage::ContentStore::open();
+        let _ = store.put_bytes(&bytes);
+        // Inject pre_stage to write to /tmp/assets/<name>
+        let dest = format!("/tmp/assets/{}", name);
+        spec.execution.pre_stage.push(PreStageSpec { source: format!("cas:{}", digest), dest });
+    }
 
     let msg = Command::SubmitJob(spec.clone());
     swarm

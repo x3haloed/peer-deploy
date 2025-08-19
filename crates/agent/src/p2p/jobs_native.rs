@@ -84,6 +84,21 @@ pub async fn execute_native_job(
     for (k, v) in env.into_iter() { cmd.env(k, v); }
     // working dir if provided
     if let Some(dir) = &job.execution.working_dir { cmd.current_dir(dir); }
+
+    // Pre-stage attachments if requested
+    for item in job.execution.pre_stage.iter() {
+        // Expect source in form cas:<sha256>
+        if let Some(hex) = item.source.strip_prefix("cas:") {
+            let store = ContentStore::open();
+            let bytes = if let Some(path) = store.get_path(hex) {
+                tokio::fs::read(path).await.map_err(|e| format!("prestage cas read failed: {e}"))?
+            } else if let Some(sto) = &storage {
+                if let Some(bytes) = sto.get(hex.to_string(), std::time::Duration::from_secs(5)).await { bytes } else { return Err(format!("prestage: digest not available via P2P: {hex}")); }
+            } else { return Err("prestage: digest not local and no P2P storage available".to_string()); };
+            if let Some(parent) = std::path::Path::new(&item.dest).parent() { let _ = tokio::fs::create_dir_all(parent).await; }
+            tokio::fs::write(&item.dest, &bytes).await.map_err(|e| format!("prestage write failed: {e}"))?;
+        }
+    }
     // spawn child and handle cancellation
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let wait_fut = child.wait();

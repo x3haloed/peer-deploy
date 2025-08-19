@@ -20,6 +20,9 @@ pub enum Command {
     QueryJobStatus { job_id: String },
     CancelJob { job_id: String },
     QueryJobLogs { job_id: String, tail: usize },
+    /// Inline push of a small blob into the CAS (intended for small attachments)
+    /// Bytes must be base64-encoded; receivers verify digest before storing.
+    StoragePut { digest: String, bytes_b64: String },
     // Phase 5A: Storage discovery announcements
     StorageHave { digest: String, size: u64 },
     // Phase 5B: Minimal P2P artifact transfer
@@ -388,6 +391,11 @@ pub struct JobExecution {
     /// Optional list of artifacts to capture after job completion
     #[serde(default)]
     pub artifacts: Option<Vec<ArtifactSpec>>,
+    /// Optional list of blobs to fetch to the host filesystem before execution
+    /// Each entry specifies a content-addressed source and a destination path
+    /// on the host where the blob should be written.
+    #[serde(default)]
+    pub pre_stage: Vec<PreStageSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,6 +415,14 @@ pub struct ArtifactSpec {
     /// Optional friendly name to use when storing/serving
     #[serde(default)]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreStageSpec {
+    /// Content-addressed source, e.g. "cas:<sha256>"
+    pub source: String,
+    /// Absolute or working-dir-relative destination path on host
+    pub dest: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

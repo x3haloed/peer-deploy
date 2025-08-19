@@ -510,6 +510,21 @@ pub async fn run_agent(
                                             }
                                         }
                                     }
+                                    common::Command::StoragePut { digest, bytes_b64 } => {
+                                        // Accept small blobs inline and store into CAS if digest matches
+                                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(bytes_b64.as_bytes()) {
+                                            let calc = common::sha256_hex(&bytes);
+                                            if calc == digest {
+                                                let store = crate::storage::ContentStore::open();
+                                                let _ = store.put_bytes(&bytes);
+                                                // Announce availability
+                                                let _ = swarm.behaviour_mut().gossipsub.publish(
+                                                    topic_status.clone(),
+                                                    serialize_message(&common::Command::StorageHave { digest, size: bytes.len() as u64 }),
+                                                );
+                                            }
+                                        }
+                                    }
                                     Command::Hello { from } => {
                                         let (cpu_percent, mem_percent) = {
                                             let mut s = sys.lock().await;
