@@ -1,5 +1,6 @@
 use crate::job_manager::JobManager;
 use crate::p2p::{metrics, handlers};
+use crate::storage::ContentStore;
 
 pub async fn execute_wasm_job(
     job_mgr: &JobManager,
@@ -33,11 +34,10 @@ pub async fn execute_wasm_job(
         if d != hex { return Err("job failed: digest mismatch".to_string()); }
     }
 
-    let stage_dir = state::agent_data_dir().join("jobs");
-    let _ = tokio::fs::create_dir_all(&stage_dir).await;
-    let digest = common::sha256_hex(&bytes);
-    let file_path = stage_dir.join(format!("{}-{}.wasm", job.name, &digest[..16]));
-    if !file_path.exists() { let _ = tokio::fs::write(&file_path, &bytes).await; }
+    // Store in CAS and execute from there
+    let store = ContentStore::open();
+    let digest = store.put_bytes(&bytes).map_err(|e| format!("cas put failed: {e}"))?;
+    let file_path = store.get_path(&digest).ok_or_else(|| "cas path missing".to_string())?;
 
     push_log(logs, &label, format!("starting wasm job (mem={}MB fuel={} epoch_ms={})", memory_mb, fuel, epoch_ms)).await;
     let _ = job_mgr.add_job_log(job_id, "info".to_string(), format!("Executing WASM with {}MB memory, {} fuel, {}ms epoch", memory_mb, fuel, epoch_ms)).await;

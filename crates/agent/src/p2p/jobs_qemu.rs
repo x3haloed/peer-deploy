@@ -1,6 +1,7 @@
 use crate::job_manager::JobManager;
 use crate::p2p::metrics;
 use crate::policy::{ExecutionPolicy, load_policy, qemu_install_help, policy_enable_help};
+use crate::storage::ContentStore;
 
 pub async fn execute_qemu_job(
     job_mgr: &JobManager,
@@ -41,11 +42,10 @@ pub async fn execute_qemu_job(
         if d != hex { return Err("job failed: digest mismatch".to_string()); }
     }
 
-    let stage_dir = state::agent_data_dir().join("jobs");
-    let _ = tokio::fs::create_dir_all(&stage_dir).await;
-    let digest = common::sha256_hex(&bytes);
-    let file_path = stage_dir.join(format!("{}-{}", job.name, &digest[..16]));
-    if !file_path.exists() { let _ = tokio::fs::write(&file_path, &bytes).await; }
+    // Store in CAS
+    let store = ContentStore::open();
+    let digest = store.put_bytes(&bytes).map_err(|e| format!("cas put failed: {e}"))?;
+    let file_path = store.get_path(&digest).ok_or_else(|| "cas path missing".to_string())?;
     // Ensure executable bit on Unix
     #[cfg(unix)]
     {
