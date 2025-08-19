@@ -56,16 +56,15 @@ echo ""
 echo "🏗️  Submitting build job..."
 BUILD_JOB_OUTPUT=$($REALM_BIN job submit build-job.toml --asset workspace.tar.gz)
 echo "$BUILD_JOB_OUTPUT"
-# Resolve job ID by querying the network (retry a few seconds)
+# Resolve job ID by querying the network (retry with longer timeout for network sync)
 echo "🔎 Resolving build job ID from network..."
 BUILD_JOB_ID=""
-for i in $(seq 1 20); do
-  BUILD_JOB_ID=$($REALM_BIN job net-list-json --status pending --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy")) | (.[0].id // empty)')
-  if [ -z "$BUILD_JOB_ID" ]; then
-    BUILD_JOB_ID=$($REALM_BIN job net-list-json --status running --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy")) | (.[0].id // empty)')
-  fi
+for i in $(seq 1 30); do
+  # Look for the most recently submitted build job that's still active (exclude completed/failed/cancelled)
+  BUILD_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy" and (.status == "pending" or .status == "running"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
   [ -n "$BUILD_JOB_ID" ] && break
-  sleep 1
+  echo "   Waiting for active job to appear in network... (attempt $i/30)"
+  sleep 2
 done
 
 if [ -z "$BUILD_JOB_ID" ]; then
@@ -111,15 +110,14 @@ ART_NAME=$($REALM_BIN job net-status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.
 if [ -z "$ART_NAME" ]; then ART_NAME="realm-linux-x86_64"; fi
 UPGRADE_JOB_OUTPUT=$($REALM_BIN job submit upgrade-job.toml --use-artifact "$BUILD_JOB_ID:$ART_NAME")
 echo "$UPGRADE_JOB_OUTPUT"
-# Resolve upgrade job ID by querying the network (retry)
+# Resolve upgrade job ID by querying the network (retry with longer timeout)
 UPGRADE_JOB_ID=""
-for i in $(seq 1 20); do
-  UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --status pending --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent")) | (.[0].id // empty)')
-  if [ -z "$UPGRADE_JOB_ID" ]; then
-    UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --status running --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent")) | (.[0].id // empty)')
-  fi
+for i in $(seq 1 30); do
+  # Look for the most recently submitted upgrade job that's still active (exclude completed/failed/cancelled)
+  UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent" and (.status == "pending" or .status == "running"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
   [ -n "$UPGRADE_JOB_ID" ] && break
-  sleep 1
+  echo "   Waiting for active upgrade job to appear in network... (attempt $i/30)"
+  sleep 2
 done
 
 if [ -z "$UPGRADE_JOB_ID" ]; then
