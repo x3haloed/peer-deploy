@@ -37,5 +37,4 @@ timeout_minutes = 10
 
 [targeting]
 platform = "linux/x86_64"
-# Target your specific server
-peer_ids = ["12D3KooWNXg8GbGBoS3c2XpdbCJAEXM6TbDUphn6RPxCYZeGyrgw"]
+tags = ["dev"]
