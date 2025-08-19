@@ -9,7 +9,7 @@ use super::types::*;
 use common::{JobInstance, JobSpec, PreStageSpec, Command};
 use base64::Engine as _;
 use crate::cmd;
-use crate::cmd::util::{new_swarm, mdns_warmup, NodeBehaviourEvent};
+use crate::cmd::util::{new_swarm, mdns_warmup, dial_bootstrap, NodeBehaviourEvent};
 use futures::StreamExt;
 
 pub async fn api_jobs_list(State(_state): State<WebState>, Query(params): Query<JobQuery>) -> Json<Vec<JobInstance>> {
@@ -171,6 +171,7 @@ async fn net_query_jobs(status: Option<String>, limit: usize) -> Result<Vec<JobI
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap())
         .map_err(|e| e.to_string())?;
     mdns_warmup(&mut swarm).await;
+    dial_bootstrap(&mut swarm).await;
     let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), common::serialize_message(&Command::QueryJobs { status_filter: status.clone(), limit }));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
@@ -196,6 +197,7 @@ async fn net_query_job_status(job_id: String) -> Result<Option<JobInstance>, Str
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap())
         .map_err(|e| e.to_string())?;
     mdns_warmup(&mut swarm).await;
+    dial_bootstrap(&mut swarm).await;
     let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), common::serialize_message(&Command::QueryJobStatus { job_id: job_id.clone() }));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {

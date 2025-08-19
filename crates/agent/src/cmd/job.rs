@@ -3,7 +3,7 @@ use base64::Engine as _;
 use common::{serialize_message, Command, JobSpec, OwnerKeypair, JobInstance, PreStageSpec};
 use std::time::Duration;
 
-use super::util::{new_swarm, mdns_warmup, owner_dir};
+use super::util::{new_swarm, mdns_warmup, owner_dir, dial_bootstrap};
 use crate::job_manager::JobManager;
 
 pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifacts: Vec<String>) -> anyhow::Result<()> {
@@ -14,6 +14,7 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
         .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
 
     mdns_warmup(&mut swarm).await;
+    dial_bootstrap(&mut swarm).await;
 
     // load owner key to ensure presence (no signing yet for job spec; TODO: signed jobs)
     let dir = owner_dir()?;
@@ -35,6 +36,7 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
         libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
             .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
         super::util::mdns_warmup(&mut swarm).await;
+        super::util::dial_bootstrap(&mut swarm).await;
         let max = 8 * 1024 * 1024; // 8 MiB inline
         if bytes.len() <= max {
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);

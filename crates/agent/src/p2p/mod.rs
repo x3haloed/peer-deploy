@@ -812,6 +812,8 @@ pub async fn run_agent(
                                                     return;
                                                 }
                                             };
+                                            // Observability: log an acknowledgment into the shared log sink
+                                            let _ = push_log(&logsj, "system", format!("job received: {} ({})", job.name, job_id)).await;
                                             
                                             // basic targeting: platform + tags + node_ids
                                             let mut selected = true;
@@ -850,6 +852,8 @@ pub async fn run_agent(
                                                 // Mark job as started
                                                 let _ = job_mgr.start_job(&job_id, node_id).await;
                                                 let _ = job_mgr.add_job_log(&job_id, "info".to_string(), "Job execution started on this node".to_string()).await;
+                                                // Observability: log start
+                                                let _ = push_log(&logsj, "system", format!("job started: {}", job_id)).await;
                                                 
                                                 // Handle different job types
                                                 match &job.job_type {
