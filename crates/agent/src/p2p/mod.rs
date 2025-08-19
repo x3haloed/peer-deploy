@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
+use lru::LruCache;
 
 use anyhow::anyhow;
 use futures::StreamExt;
@@ -39,7 +40,7 @@ pub mod state;  // Make state module public
 mod gateway;
 
 use handlers::{handle_apply_manifest, handle_upgrade};
-use jobs::{execute_oneshot_job, execute_oneshot_job_with_broadcast, execute_service_job};
+use jobs::{execute_oneshot_job_with_broadcast, execute_service_job};
 
 struct PendingJob {
     cmd: Command,
@@ -53,6 +54,16 @@ fn job_status_key(cmd: &Command) -> Option<(String, String)> {
         Command::JobStarted { job_id, .. } => Some((job_id.clone(), "started".to_string())),
         Command::JobCompleted { job_id, .. } => Some((job_id.clone(), "completed".to_string())),
         Command::JobFailed { job_id, .. } => Some((job_id.clone(), "failed".to_string())),
+        _ => None,
+    }
+}
+
+fn job_status_tuple(cmd: &Command) -> Option<(String, String, String)> {
+    match cmd {
+        Command::JobAccepted { job_id, assigned_node } => Some((job_id.clone(), "accepted".to_string(), assigned_node.clone())),
+        Command::JobStarted { job_id, assigned_node } => Some((job_id.clone(), "started".to_string(), assigned_node.clone())),
+        Command::JobCompleted { job_id, assigned_node, .. } => Some((job_id.clone(), "completed".to_string(), assigned_node.clone())),
+        Command::JobFailed { job_id, assigned_node, .. } => Some((job_id.clone(), "failed".to_string(), assigned_node.clone())),
         _ => None,
     }
 }
@@ -338,6 +349,7 @@ pub async fn run_agent(
     }
 
     let mut pending_job_broadcasts: HashMap<(String, String), PendingJob> = HashMap::new();
+    let seen_cache = Arc::new(AsyncMutex::new(LruCache::new(30000)));
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     let mut storage_announce_tick = tokio::time::interval(Duration::from_secs(60));
@@ -627,6 +639,17 @@ pub async fn run_agent(
                                 continue;
                             }
                             if let Ok(cmd) = deserialize_message::<Command>(&message.data) {
+                                // Deduplicate job status messages
+                                if let Some((job_id, status, assigned_node)) = job_status_tuple(&cmd) {
+                                    let mut cache = seen_cache.lock().await;
+                                    let key = (job_id.clone(), status.clone(), assigned_node.clone());
+                                    if cache.contains(&key) {
+                                        let ack = Command::JobStatusAck { job_id, status, from: local_peer_id.to_string() };
+                                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
+                                        continue;
+                                    }
+                                    cache.put(key, Instant::now());
+                                }
                                 info!(from=%propagation_source, ?message_id, "received command");
                                 metrics.commands_received_total.fetch_add(1, Ordering::Relaxed);
                                 match cmd {

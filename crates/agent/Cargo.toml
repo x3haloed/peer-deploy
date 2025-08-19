@@ -48,6 +48,7 @@ tower-http = { version = "0.5", features = ["fs", "cors"] }
 mime_guess = "2.0"
 include_dir = "0.7"
 uuid = { version = "1.0", features = ["v4"] }
+lru = "0.7"
 
 # Zip processing for .realm packages
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
