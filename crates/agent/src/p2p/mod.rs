@@ -667,7 +667,7 @@ pub async fn run_agent(
                                                 
                                                 // Only WASM runtime for now
                                                 match job.runtime {
-                                                    common::JobRuntime::Wasm { source, sha256_hex, memory_mb, fuel, epoch_ms } => {
+                                                    common::JobRuntime::Wasm { source, sha256_hex, memory_mb, fuel, epoch_ms, mounts } => {
                                                         let label = format!("job:{}", job.name);
                                                         push_log(&logsj, &label, format!("staging wasm from {source}")).await;
                                                         let _ = job_mgr.add_job_log(&job_id, "info".to_string(), format!("Staging WASM from {}", source)).await;
@@ -707,7 +707,7 @@ pub async fn run_agent(
                                                             fuel,
                                                             epoch_ms,
                                                             None,
-                                                            None,
+                                                            mounts,
                                                         ).await;
                                                         
                                                         match res {

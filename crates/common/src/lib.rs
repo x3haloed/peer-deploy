@@ -272,6 +272,8 @@ pub enum JobRuntime {
         fuel: u64,
         #[serde(default = "default_epoch_ms")] 
         epoch_ms: u64,
+        #[serde(default)]
+        mounts: Option<Vec<MountSpec>>, // preopened directories for job runtime
     },
     // Future: native, container, qemu
 }
@@ -288,6 +290,9 @@ pub struct JobExecution {
     /// Optional timeout in minutes
     #[serde(default)]
     pub timeout_minutes: Option<u64>,
+    /// Optional list of artifacts to capture after job completion
+    #[serde(default)]
+    pub artifacts: Option<Vec<ArtifactSpec>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +303,24 @@ pub struct JobTargeting {
     pub tags: Vec<String>,
     #[serde(default)]
     pub node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactSpec {
+    /// Guest path of the artifact (e.g., "/out/app.wasm")
+    pub path: String,
+    /// Optional friendly name to use when storing/serving
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobArtifact {
+    pub name: String,
+    /// Absolute host path where the artifact is stored on the agent
+    pub stored_path: String,
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
 }
 
 // ===================== Job State & Management =====================
@@ -328,6 +351,8 @@ pub struct JobInstance {
     pub last_scheduled_at: Option<u64>,
     #[serde(default)]
     pub schedule_next_at: Option<u64>,
+    #[serde(default)]
+    pub artifacts: Vec<JobArtifact>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -355,6 +380,7 @@ impl JobInstance {
             logs: Vec::new(),
             last_scheduled_at: None,
             schedule_next_at: None,
+            artifacts: Vec::new(),
         }
     }
     
