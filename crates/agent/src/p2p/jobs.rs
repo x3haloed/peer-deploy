@@ -13,6 +13,7 @@ pub async fn execute_oneshot_job(
     let label = format!("job:{}", job.name);
     match job_runtime {
         common::JobRuntime::Wasm { source, sha256_hex, memory_mb, fuel, epoch_ms, mounts } => {
+            // minimal locality preference: no-op for now (CAS will dedupe regardless)
             let result = super::jobs_wasm::execute_wasm_job(&job_mgr, &job_id, &job, &source, sha256_hex, memory_mb, fuel, epoch_ms, mounts, &logs, None).await;
             match result {
                 Ok(success_msg) => {

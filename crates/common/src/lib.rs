@@ -20,6 +20,8 @@ pub enum Command {
     QueryJobStatus { job_id: String },
     CancelJob { job_id: String },
     QueryJobLogs { job_id: String, tail: usize },
+    // Phase 5A: Storage discovery announcements
+    StorageHave { digest: String, size: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
