@@ -381,6 +381,8 @@ fn get_memory_usage_percent() -> f64 {
             
             if total > 0 {
                 return ((total - available) as f64 / total as f64) * 100.0;
+            } else {
+                return 0.0;
             }
         }
     }
