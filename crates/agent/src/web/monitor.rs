@@ -384,6 +384,8 @@ fn get_memory_usage_percent() -> f64 {
             } else {
                 return 0.0;
             }
+        } else {
+            return 0.0;
         }
     }
     
