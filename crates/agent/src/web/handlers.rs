@@ -1,12 +1,13 @@
 use axum::{
     extract::{Path, Query, State, Multipart},
-    http::{StatusCode, header},
+    http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
 use std::path::PathBuf;
 
 use super::types::*;
+use crate::policy::{load_policy, save_policy, ExecutionPolicy, find_any_qemu_user};
 use super::utils::format_timestamp;
 use crate::supervisor::DesiredComponent;
 use common::{ComponentSpec, Manifest, JobInstance, JobSpec};
@@ -238,6 +239,25 @@ pub async fn api_deploy(State(state): State<WebState>, Json(request): Json<Deplo
     ).await;
     
     (StatusCode::OK, "Component deployed successfully").into_response()
+}
+
+pub async fn api_get_policy() -> impl IntoResponse {
+    let pol = load_policy();
+    let body = serde_json::to_string(&pol).unwrap_or("{}".to_string());
+    (StatusCode::OK, body)
+}
+
+pub async fn api_set_policy(Json(body): Json<ExecutionPolicy>) -> impl IntoResponse {
+    match save_policy(&body) {
+        Ok(_) => (StatusCode::OK, "ok").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+pub async fn api_qemu_status() -> impl IntoResponse {
+    let have_qemu = find_any_qemu_user().is_some();
+    let payload = serde_json::json!({ "qemu_installed": have_qemu });
+    (StatusCode::OK, Json(payload))
 }
 
 /// Multipart deploy endpoint used by the web UI to upload a .wasm file and metadata.

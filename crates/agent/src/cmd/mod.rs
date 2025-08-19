@@ -12,6 +12,7 @@ pub mod configure;
 pub mod push;
 pub mod diag;
 pub mod whoami;
+pub mod policy;
 pub mod package;
 
 pub use init::init;
@@ -31,5 +32,6 @@ pub use push::push;
 pub use push::push_package;
 pub use diag::diag_quic;
 pub use whoami::whoami;
+pub use policy::{policy_show, policy_set};
 pub use package::package_create;
 

@@ -57,4 +57,30 @@ pub fn policy_enable_help() -> String {
     )
 }
 
+pub fn save_policy(policy: &ExecutionPolicy) -> Result<(), String> {
+    let dir = crate::p2p::state::agent_data_dir();
+    let path = dir.join("policy.json");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return Err("failed to create agent data dir".to_string());
+    }
+    serde_json::to_vec_pretty(policy)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()))
+}
+
+pub fn find_any_qemu_user() -> Option<String> {
+    let candidates = [
+        "qemu-x86_64",
+        "qemu-aarch64",
+        "qemu-arm",
+        "qemu-riscv64",
+    ];
+    for name in candidates.iter() {
+        if let Ok(path) = which::which(name) {
+            return Some(path.display().to_string());
+        }
+    }
+    None
+}
+
 

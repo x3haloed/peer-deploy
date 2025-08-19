@@ -472,6 +472,29 @@
                             <div id="deploy-history" class="text-sm">No deployments yet.</div>
                         </div>
                     </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                        <div class="bg-charcoal border border-graphite rounded-lg p-6">
+                            <h3 class="font-semibold mb-4">Runtime Policy</h3>
+                            <div class="space-y-3">
+                                <label class="flex items-center gap-3">
+                                    <input type="checkbox" id="policy-native" class="form-checkbox">
+                                    <span>Allow Native Execution</span>
+                                </label>
+                                <label class="flex items-center gap-3">
+                                    <input type="checkbox" id="policy-qemu" class="form-checkbox">
+                                    <span>Allow QEMU Emulation</span>
+                                </label>
+                                <div id="qemu-status" class="text-xs text-gray-400">QEMU: unknown</div>
+                                <div class="flex gap-2 mt-2">
+                                    <button id="policy-save" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded text-sm">Save Policy</button>
+                                    <button id="policy-refresh" class="border border-graphite px-4 py-2 rounded text-sm">Refresh</button>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-2">Changes persist to <code>policy.json</code> in the agent data directory.</div>
+                            </div>
+                        </div>
+                        <div></div>
+                    </div>
                 </section>
 
                 <!-- Logs View -->

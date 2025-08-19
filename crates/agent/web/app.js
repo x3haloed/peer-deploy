@@ -167,6 +167,24 @@ class RealmApp {
             });
         }
 
+        // Policy: buttons
+        const savePol = document.getElementById('policy-save');
+        const refreshPol = document.getElementById('policy-refresh');
+        if (savePol && refreshPol) {
+            savePol.addEventListener('click', async () => {
+                try {
+                    const allow_native_execution = !!document.getElementById('policy-native').checked;
+                    const allow_emulation = !!document.getElementById('policy-qemu').checked;
+                    const body = { allow_native_execution, allow_emulation };
+                    await this.apiCall('/api/policy', { method: 'POST', body: JSON.stringify(body) });
+                    this.showSuccess('Policy saved');
+                } catch (e) { this.showError('Failed to save policy'); }
+            });
+            refreshPol.addEventListener('click', async () => {
+                await this.refreshPolicyCard();
+            });
+        }
+
         // Navigate to Deploy from Components header action
         const newComponentBtn = document.getElementById('new-component');
         if (newComponentBtn) {
@@ -257,6 +275,7 @@ class RealmApp {
             case 'ops':
                 await this.loadVolumes();
                 await this.loadDeployHistory();
+                await this.refreshPolicyCard();
                 break;
             case 'logs':
                 await populateLogComponentsModule(this);
@@ -578,6 +597,23 @@ class RealmApp {
             this.loadComponentsData();
         } catch (error) {
             showError(`Failed to stop component: ${error.message}`);
+        }
+    }
+
+    async refreshPolicyCard() {
+        try {
+            const polRes = await this.apiCall('/api/policy');
+            const pol = await polRes.json();
+            const qemuRes = await this.apiCall('/api/qemu/status');
+            const qemu = await qemuRes.json();
+            const nativeEl = document.getElementById('policy-native');
+            const qemuEl = document.getElementById('policy-qemu');
+            const qemuStatus = document.getElementById('qemu-status');
+            if (nativeEl) nativeEl.checked = !!pol.allow_native_execution;
+            if (qemuEl) qemuEl.checked = !!pol.allow_emulation;
+            if (qemuStatus) qemuStatus.textContent = `QEMU: ${qemu.qemu_installed ? 'installed' : 'not detected'}`;
+        } catch (e) {
+            // Non-fatal
         }
     }
 

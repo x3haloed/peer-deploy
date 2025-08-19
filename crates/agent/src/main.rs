@@ -205,6 +205,17 @@ enum Commands {
         #[arg(long, default_value_t = 30)]
         timeout: u64,
     },
+    /// Show current runtime policy (native/QEMU)
+    PolicyShow,
+    /// Set runtime policy flags
+    PolicySet {
+        /// Allow native execution (true/false)
+        #[arg(long)]
+        native: Option<bool>,
+        /// Allow QEMU emulation (true/false)
+        #[arg(long)]
+        qemu: Option<bool>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -336,6 +347,8 @@ async fn main() -> anyhow::Result<()> {
             JobCommands::Artifacts { job_id } => cmd::job_artifacts(job_id).await,
             JobCommands::Download { job_id, artifact_name, output } => cmd::job_download(job_id, artifact_name, output).await,
         },
+        Some(Commands::PolicyShow) => cmd::policy_show().await,
+        Some(Commands::PolicySet { native, qemu }) => cmd::policy_set(native, qemu).await,
     }
 }
 
