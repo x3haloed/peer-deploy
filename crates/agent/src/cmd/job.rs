@@ -6,7 +6,7 @@ use std::time::Duration;
 use super::util::{new_swarm, mdns_warmup, owner_dir};
 use crate::job_manager::JobManager;
 
-pub async fn submit_job(job_toml_path: String, assets: Vec<String>) -> anyhow::Result<()> {
+pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifacts: Vec<String>) -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
         .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
@@ -55,6 +55,29 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>) -> anyhow::R
         // Inject pre_stage to write to /tmp/assets/<name>
         let dest = format!("/tmp/assets/{}", name);
         spec.execution.pre_stage.push(PreStageSpec { source: format!("cas:{}", digest), dest });
+    }
+
+    // Reuse artifacts from previous jobs: format jobId:name
+    for specifier in use_artifacts.into_iter() {
+        if let Some((jid, name)) = specifier.split_once(':') {
+            let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+            let job_manager = JobManager::new(data_dir);
+            let _ = job_manager.load_from_disk().await;
+            if let Some(prev) = job_manager.get_job(jid).await {
+                if let Some(art) = prev.artifacts.iter().find(|a| a.name == name) {
+                    if let Some(d) = &art.sha256_hex {
+                        spec.execution.pre_stage.push(PreStageSpec { source: format!("cas:{}", d), dest: format!("/tmp/assets/{}", name) });
+                    } else {
+                        // If digest missing, compute and add
+                        if let Ok(bytes) = tokio::fs::read(&art.stored_path).await {
+                            let digest = common::sha256_hex(&bytes);
+                            let store = crate::storage::ContentStore::open(); let _ = store.put_bytes(&bytes);
+                            spec.execution.pre_stage.push(PreStageSpec { source: format!("cas:{}", digest), dest: format!("/tmp/assets/{}", name) });
+                        }
+                    }
+                }
+            }
+        }
     }
 
     let msg = Command::SubmitJob(spec.clone());
@@ -370,5 +393,17 @@ pub async fn job_download(job_id: String, artifact_name: String, output: Option<
         println!("Job '{}' not found", job_id);
     }
     
+    Ok(())
+}
+
+pub async fn job_artifacts_json(job_id: String) -> anyhow::Result<()> {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = JobManager::new(data_dir);
+    if let Err(e) = job_manager.load_from_disk().await { eprintln!("Warning: Failed to load job state: {}", e); }
+    if let Some(job) = job_manager.get_job(&job_id).await {
+        println!("{}", serde_json::to_string_pretty(&job.artifacts)?);
+    } else {
+        eprintln!("Job '{}' not found", job_id);
+    }
     Ok(())
 }

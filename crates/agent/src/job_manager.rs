@@ -274,6 +274,16 @@ impl JobManager {
                 warn!("Failed to copy artifact '{}' to {}: {}", artifact.name, dest_path.display(), e);
             } else {
                 info!("Staged artifact '{}' to {}", artifact.name, dest_path.display());
+                // Compute digest for downstream reuse (best-effort)
+                if let Ok(bytes) = tokio::fs::read(&artifact.stored_path).await {
+                    let digest = common::sha256_hex(&bytes);
+                    let mut state = self.state.lock().await;
+                    if let Some(job) = state.jobs.get_mut(job_id) {
+                        if let Some(a) = job.artifacts.iter_mut().find(|a| a.name == artifact.name) {
+                            a.sha256_hex = Some(digest);
+                        }
+                    }
+                }
             }
         }
         Ok(())

@@ -115,7 +115,7 @@ pub async fn execute_wasm_job(
                     let stored = art.path.clone();
                     let meta = tokio::fs::metadata(&stored).await.ok();
                     let size = meta.as_ref().and_then(|m| if m.is_file() { Some(m.len()) } else { None });
-                    let artifact = common::JobArtifact { name: art.name.clone().unwrap_or_else(|| stored.clone()), stored_path: stored, size_bytes: size };
+                    let artifact = common::JobArtifact { name: art.name.clone().unwrap_or_else(|| stored.clone()), stored_path: stored, size_bytes: size, sha256_hex: None };
                     let _ = job_mgr.add_job_artifact(job_id, artifact).await;
                 }
                 if let Some(job_instance) = job_mgr.get_job(job_id).await {

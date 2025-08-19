@@ -151,6 +151,30 @@ Upgrade behavior on agents:
 - Writes versioned binary, updates `current` symlink, spawns new process, exits old
 - Emits progress to the agent logs so you can observe each phase in the web UI
 
+### Submit jobs with attachments (Phase 6)
+- Attach local files/bundles to a job; they are content-addressed and pre-staged before execution.
+- CLI examples:
+```bash
+# Attach a local tarball (auto-named)
+realm job submit build-job.toml --asset workspace.tar.gz
+
+# Explicit name → available as /tmp/assets/src
+realm job submit build-job.toml --asset src=workspace.tar.gz
+
+# Reuse artifacts from a previous job without re-uploading
+realm job artifacts-json build-peer-deploy-1 | jq
+realm job submit build-job.toml --use-artifact build-peer-deploy-1:realm-linux-x86_64
+```
+- Web UI workflow:
+  - Jobs → New → paste/edit Job TOML
+  - Add files under “Attachments (optional)”; preview shows `/tmp/assets/<filename>` and sha256
+  - Submit; assets are pushed to CAS (inline ≤8 MiB, chunked otherwise), announced via P2P, and pre-staged on target before execution
+- Size limits & transport:
+  - Inline uploads up to ~8 MiB per message
+  - Larger files are sent chunked with reassembly and digest verification on the agent
+- Execution behavior:
+  - Executors (WASM/Native/QEMU) resolve `execution.pre_stage` as `cas:<sha256> → dest` and write files before starting the process
+
 ## Key commands
 - **Init owner key**: `realm init`
 - **Show owner public key**: `realm key show`
@@ -209,47 +233,3 @@ Or set environment variables before starting the agent:
 ```
 REALM_ALLOW_NATIVE_EXECUTION=1 REALM_ALLOW_EMULATION=1 realm
 ```
-
-If QEMU is not installed, QEMU jobs will fail with a helpful message including installation tips. On macOS, install via Homebrew: `brew install qemu`. On Debian/Ubuntu: `sudo apt install qemu-user`. On Fedora: `sudo dnf install qemu-user-binfmt`.
-
-Job TOML examples:
-```
-name = "native-example"
-job_type = "one-shot"
-
-[runtime]
-type = "native"
-binary = "file:///usr/bin/echo"
-args = ["hello", "realm"]
-```
-
-```
-name = "qemu-example"
-job_type = "one-shot"
-
-[runtime]
-type = "qemu"
-binary = "file:///path/to/foreign-binary"
-target_platform = "linux/amd64"
-```
-
-## Development
-- Build debug:
-```bash
-cargo build
-```
-- Build specific crates:
-```bash
-cargo build -p realm
-cargo build -p agent
-```
-
-## Security model (short)
-- **Trust root**: your owner public key; agents enforce signed messages and TOFU for first owner.
-- Status includes `trusted_owner_pub_bs58` so UIs can display who the agent trusts.
-- On startup the agent logs its PeerId and writes it to `~/.local/share/realm-agent/node.peer`.
-- **Payload trust**: digest‑pinned artifacts (sha256) verified before execution.
-- **Transport**: libp2p with Noise; discovery via mDNS and optional bootstrap multiaddrs.
-
-## License
-Apache-2.0

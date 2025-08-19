@@ -435,6 +435,9 @@ pub struct JobArtifact {
     pub stored_path: String,
     #[serde(default)]
     pub size_bytes: Option<u64>,
+    /// Optional content digest (sha256 hex). Present when staged into CAS.
+    #[serde(default)]
+    pub sha256_hex: Option<String>,
 }
 
 // ===================== Job State & Management =====================

@@ -250,6 +250,9 @@ enum JobCommands {
         /// Attach a local file as an asset (repeatable). Format: name=path or path
         #[arg(long = "asset")]
         assets: Vec<String>,
+        /// Reuse an artifact from a completed job as input. Format: jobId:name (repeatable)
+        #[arg(long = "use-artifact")]
+        use_artifacts: Vec<String>,
     },
     /// List all jobs (running, scheduled, completed)
     List {
@@ -296,6 +299,8 @@ enum JobCommands {
         #[arg(long, short = 'o')]
         output: Option<String>,
     },
+    /// Print artifacts for a job in JSON for programmatic use
+    ArtifactsJson { job_id: String },
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -372,13 +377,14 @@ async fn main() -> anyhow::Result<()> {
             res
         },
         Some(Commands::Job(job_cmd)) => match job_cmd {
-            JobCommands::Submit { file, assets } => cmd::submit_job(file, assets).await,
+            JobCommands::Submit { file, assets, use_artifacts } => cmd::submit_job(file, assets, use_artifacts).await,
             JobCommands::List { status, limit } => cmd::list_jobs(status, limit).await,
             JobCommands::Status { job_id } => cmd::job_status(job_id).await,
             JobCommands::Cancel { job_id } => cmd::cancel_job(job_id).await,
             JobCommands::Logs { job_id, tail, follow } => cmd::job_logs(job_id, tail, follow).await,
             JobCommands::Artifacts { job_id } => cmd::job_artifacts(job_id).await,
             JobCommands::Download { job_id, artifact_name, output } => cmd::job_download(job_id, artifact_name, output).await,
+            JobCommands::ArtifactsJson { job_id } => cmd::job_artifacts_json(job_id).await,
         },
         Some(Commands::PolicyShow) => cmd::policy_show().await,
         Some(Commands::PolicySet { native, qemu }) => cmd::policy_set(native, qemu).await,
