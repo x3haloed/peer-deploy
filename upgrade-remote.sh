@@ -114,7 +114,7 @@ echo "$UPGRADE_JOB_OUTPUT"
 UPGRADE_JOB_ID=""
 for i in $(seq 1 30); do
   # Look for the most recently submitted upgrade job that's still active (exclude completed/failed/cancelled)
-  UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent" and (.status == "pending" or .status == "running"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
+  UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent" and (.status == "pending" or .status == "running" or .status == "started"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
   [ -n "$UPGRADE_JOB_ID" ] && break
   echo "   Waiting for active upgrade job to appear in network... (attempt $i/30)"
   sleep 2
