@@ -290,6 +290,9 @@ class RealmApp {
                 await loadJobsDataModule(this);
                 setupJobsHandlersModule(this);
                 break;
+            case 'fleet':
+                await this.loadFleetHealthData();
+                break;
             case 'ops':
                 await this.loadVolumes();
                 await this.loadDeployHistory();
@@ -821,6 +824,183 @@ class RealmApp {
             const box = document.getElementById('deploy-history');
             if (box) box.textContent = 'Failed to load deployment history';
         }
+    }
+
+    async loadFleetHealthData() {
+        try {
+            // Load fleet health overview
+            const fleetRes = await this.apiCall('/api/health/fleet');
+            const fleetHealth = await fleetRes.json();
+            
+            // Update fleet overview cards
+            this.updateFleetOverview(fleetHealth);
+            
+            // Load node health
+            const nodesRes = await this.apiCall('/api/health/nodes');
+            const nodeHealth = await nodesRes.json();
+            this.updateNodeHealthTable(nodeHealth);
+            
+            // Load component health
+            const componentsRes = await this.apiCall('/api/health/components');
+            const componentHealth = await componentsRes.json();
+            this.updateComponentHealthTable(componentHealth);
+            
+        } catch (e) {
+            console.error('Failed to load fleet health data:', e);
+            this.showError('Failed to load fleet health data');
+        }
+    }
+
+    updateFleetOverview(fleetHealth) {
+        // Update status
+        const statusEl = document.getElementById('fleet-status');
+        const statusIconEl = document.getElementById('fleet-status-icon');
+        if (statusEl && statusIconEl) {
+            let statusText, statusClass, iconClass;
+            switch (fleetHealth.overall_status) {
+                case 'healthy':
+                    statusText = 'Healthy';
+                    statusClass = 'text-green-400';
+                    iconClass = 'text-green-400';
+                    break;
+                case 'warning':
+                    statusText = 'Warning';
+                    statusClass = 'text-yellow-400';
+                    iconClass = 'text-yellow-400';
+                    break;
+                case 'critical':
+                    statusText = 'Critical';
+                    statusClass = 'text-red-400';
+                    iconClass = 'text-red-400';
+                    break;
+                default:
+                    statusText = 'Unknown';
+                    statusClass = 'text-gray-400';
+                    iconClass = 'text-gray-400';
+            }
+            statusEl.textContent = statusText;
+            statusEl.className = `text-lg font-semibold ${statusClass}`;
+            statusIconEl.className = `text-2xl ${iconClass}`;
+        }
+
+        // Update metrics
+        document.getElementById('fleet-nodes').textContent = fleetHealth.total_nodes;
+        document.getElementById('fleet-components').textContent = `${fleetHealth.healthy_components}/${fleetHealth.total_components}`;
+        document.getElementById('fleet-response').textContent = `${Math.round(fleetHealth.average_response_time)}ms`;
+
+        // Update system metrics
+        document.getElementById('system-memory').textContent = `${Math.round(fleetHealth.memory_usage_percent)}%`;
+        document.getElementById('system-memory-bar').style.width = `${fleetHealth.memory_usage_percent}%`;
+        document.getElementById('system-disk').textContent = `${Math.round(fleetHealth.disk_usage_percent)}%`;
+        document.getElementById('system-disk-bar').style.width = `${fleetHealth.disk_usage_percent}%`;
+        
+        // Format uptime
+        const uptimeHours = Math.floor(fleetHealth.uptime_seconds / 3600);
+        const uptimeText = uptimeHours > 0 ? `${uptimeHours}h` : `${Math.floor(fleetHealth.uptime_seconds / 60)}m`;
+        document.getElementById('system-uptime').textContent = uptimeText;
+
+        // Update alerts
+        this.updateAlertsList(fleetHealth.checks);
+    }
+
+    updateAlertsList(checks) {
+        const alertsList = document.getElementById('alerts-list');
+        const alertCount = document.getElementById('alert-count');
+        if (!alertsList || !alertCount) return;
+
+        // Find issues from health checks
+        const alerts = checks.filter(check => check.status !== 'healthy');
+        
+        alertCount.textContent = alerts.length;
+        alertCount.className = alerts.length > 0 ? 'bg-red-600 text-white px-2 py-1 rounded-full text-xs' : 'bg-gray-600 text-white px-2 py-1 rounded-full text-xs';
+        
+        if (alerts.length === 0) {
+            alertsList.innerHTML = '<p class="text-gray-400 text-sm">No active alerts</p>';
+            return;
+        }
+
+        alertsList.innerHTML = '';
+        alerts.forEach(alert => {
+            const div = document.createElement('div');
+            div.className = `border border-graphite rounded p-3 ${alert.status === 'critical' ? 'border-red-500 bg-red-900/20' : 'border-yellow-500 bg-yellow-900/20'}`;
+            div.innerHTML = `
+                <div class="flex items-start justify-between">
+                    <div>
+                        <div class="font-medium ${alert.status === 'critical' ? 'text-red-400' : 'text-yellow-400'}">${alert.component}</div>
+                        <div class="text-sm text-gray-300 mt-1">${alert.message}</div>
+                        <div class="text-xs text-gray-400 mt-2">${new Date(alert.last_check * 1000).toLocaleString()}</div>
+                    </div>
+                    <span class="text-xs px-2 py-1 rounded ${alert.status === 'critical' ? 'bg-red-600 text-white' : 'bg-yellow-600 text-white'}">${alert.status}</span>
+                </div>
+            `;
+            alertsList.appendChild(div);
+        });
+    }
+
+    updateNodeHealthTable(nodeHealth) {
+        const tbody = document.getElementById('node-health-table');
+        if (!tbody) return;
+
+        if (nodeHealth.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="p-4 text-gray-400">No nodes found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = '';
+        nodeHealth.forEach(node => {
+            const row = document.createElement('tr');
+            row.className = 'border-b border-graphite/50 hover:bg-graphite/30';
+            
+            const statusClass = node.status === 'healthy' ? 'text-green-400' : 
+                               node.status === 'warning' ? 'text-yellow-400' : 'text-red-400';
+            
+            const alertsText = node.alerts.length > 0 ? `${node.alerts.length} alert${node.alerts.length > 1 ? 's' : ''}` : 'None';
+            
+            row.innerHTML = `
+                <td class="p-3 font-mono text-sm">${node.node_id.length > 16 ? node.node_id.substring(0, 16) + '...' : node.node_id}</td>
+                <td class="p-3"><span class="${statusClass} capitalize">${node.status}</span></td>
+                <td class="p-3">${node.components_running}/${node.components_desired}</td>
+                <td class="p-3">${node.cpu_percent}%</td>
+                <td class="p-3">${node.memory_percent}%</td>
+                <td class="p-3 text-sm">${node.platform}</td>
+                <td class="p-3">v${node.agent_version}</td>
+                <td class="p-3 text-sm ${node.alerts.length > 0 ? 'text-yellow-400' : 'text-gray-400'}">${alertsText}</td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+
+    updateComponentHealthTable(componentHealth) {
+        const tbody = document.getElementById('component-health-table');
+        if (!tbody) return;
+
+        if (componentHealth.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="p-4 text-gray-400">No components found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = '';
+        componentHealth.forEach(component => {
+            const row = document.createElement('tr');
+            row.className = 'border-b border-graphite/50 hover:bg-graphite/30';
+            
+            const statusClass = component.status === 'healthy' ? 'text-green-400' : 
+                               component.status === 'warning' ? 'text-yellow-400' : 'text-red-400';
+            
+            const lastRestart = component.last_restart ? 
+                new Date(component.last_restart * 1000).toLocaleString() : 'Never';
+            
+            row.innerHTML = `
+                <td class="p-3 font-medium">${component.name}</td>
+                <td class="p-3"><span class="${statusClass} capitalize">${component.status}</span></td>
+                <td class="p-3">${component.replicas_running}/${component.replicas_desired}</td>
+                <td class="p-3">${component.restart_count}</td>
+                <td class="p-3">${component.error_rate.toFixed(1)}%</td>
+                <td class="p-3">${component.memory_usage_mb}MB</td>
+                <td class="p-3 text-sm text-gray-400">${lastRestart}</td>
+            `;
+            tbody.appendChild(row);
+        });
     }
 
     addLogLine(timestamp, component, message) {

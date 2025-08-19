@@ -13,6 +13,7 @@ mod discover;
 mod components_ops;
 mod volumes;
 mod history;
+mod monitor;
 
 pub use types::*;
 pub use handlers::{api_status, api_nodes, api_components, api_logs, api_push_multipart, api_upgrade_multipart, api_apply_multipart, api_install_cli, api_install_agent, api_connect_peer, api_discover, api_component_restart, api_component_stop, api_get_policy, api_set_policy, api_qemu_status, api_storage_list, api_storage_pin, api_storage_gc};
@@ -22,6 +23,7 @@ pub use utils::*;
 pub use deploy::{api_deploy, api_deploy_multipart, api_deploy_package_multipart, api_deploy_package_inspect, api_log_components, install_package_from_bytes};
 pub use volumes::{api_volumes_list, api_volumes_clear};
 pub use history::{api_deploy_history};
+pub use monitor::{api_fleet_health, api_node_health, api_component_health, api_acknowledge_alert};
 
 use anyhow::Result;
 use axum::{
@@ -86,6 +88,12 @@ fn create_app(state: WebState, session_id: String) -> Router {
         .route("/api/storage", get(api_storage_list))
         .route("/api/storage/pin", post(api_storage_pin))
         .route("/api/storage/gc", post(api_storage_gc))
+        
+        // Monitoring and health endpoints
+        .route("/api/health/fleet", get(api_fleet_health))
+        .route("/api/health/nodes", get(api_node_health))
+        .route("/api/health/components", get(api_component_health))
+        .route("/api/alerts/acknowledge", post(api_acknowledge_alert))
         
         // WebSocket for real-time updates
         .route("/ws", get(websocket_handler))

@@ -82,6 +82,10 @@
                             <i class="fa-solid fa-tasks"></i>
                             <span>Jobs</span>
                         </div>
+                        <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="fleet">
+                            <i class="fa-solid fa-tachometer-alt"></i>
+                            <span>Fleet Health</span>
+                        </div>
                         <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="ops">
                             <i class="fa-solid fa-cog"></i>
                             <span>Ops</span>
@@ -402,6 +406,150 @@
                 </section>
 
                 <!-- Job Submit Modal content will be added via JavaScript -->
+
+                <!-- Fleet Health View -->
+                <section id="fleet-view" class="view hidden">
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold">Fleet Health & Monitoring</h2>
+                    </div>
+                    
+                    <!-- Fleet Overview Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-gray-400">Fleet Status</p>
+                                    <p id="fleet-status" class="text-lg font-semibold text-green-400">Healthy</p>
+                                </div>
+                                <div id="fleet-status-icon" class="text-2xl text-green-400">●</div>
+                            </div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-gray-400">Active Nodes</p>
+                                    <p id="fleet-nodes" class="text-lg font-semibold">0</p>
+                                </div>
+                                <i class="fa-solid fa-server text-2xl text-blue-400"></i>
+                            </div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-gray-400">Components</p>
+                                    <p id="fleet-components" class="text-lg font-semibold">0</p>
+                                </div>
+                                <i class="fa-solid fa-cube text-2xl text-purple-400"></i>
+                            </div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-gray-400">Avg Response</p>
+                                    <p id="fleet-response" class="text-lg font-semibold">0ms</p>
+                                </div>
+                                <i class="fa-solid fa-tachometer-alt text-2xl text-yellow-400"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Alerts Section -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                        <div class="lg:col-span-2">
+                            <div class="bg-charcoal border border-graphite rounded-lg p-6">
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 class="text-lg font-semibold">Active Alerts</h3>
+                                    <span id="alert-count" class="bg-red-600 text-white px-2 py-1 rounded-full text-xs">0</span>
+                                </div>
+                                <div id="alerts-list" class="space-y-3">
+                                    <p class="text-gray-400 text-sm">No active alerts</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="bg-charcoal border border-graphite rounded-lg p-6">
+                                <h3 class="text-lg font-semibold mb-4">System Health</h3>
+                                <div class="space-y-4">
+                                    <div>
+                                        <div class="flex justify-between text-sm">
+                                            <span>Memory Usage</span>
+                                            <span id="system-memory">0%</span>
+                                        </div>
+                                        <div class="w-full bg-graphite rounded-full h-2 mt-1">
+                                            <div id="system-memory-bar" class="bg-blue-400 h-2 rounded-full" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="flex justify-between text-sm">
+                                            <span>Disk Usage</span>
+                                            <span id="system-disk">0%</span>
+                                        </div>
+                                        <div class="w-full bg-graphite rounded-full h-2 mt-1">
+                                            <div id="system-disk-bar" class="bg-yellow-400 h-2 rounded-full" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="flex justify-between text-sm">
+                                            <span>Uptime</span>
+                                            <span id="system-uptime">0s</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Node Health Table -->
+                    <div class="bg-charcoal border border-graphite rounded-lg p-6 mb-6">
+                        <h3 class="text-lg font-semibold mb-4">Node Health</h3>
+                        <div class="overflow-x-auto">
+                            <table class="w-full table-auto">
+                                <thead>
+                                    <tr class="border-b border-graphite text-left">
+                                        <th class="p-3 text-sm font-medium text-gray-400">Node ID</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Status</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Components</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">CPU</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Memory</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Platform</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Version</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Alerts</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="node-health-table">
+                                    <tr>
+                                        <td colspan="8" class="p-4 text-gray-400">Loading node health...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Component Health Table -->
+                    <div class="bg-charcoal border border-graphite rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">Component Health</h3>
+                        <div class="overflow-x-auto">
+                            <table class="w-full table-auto">
+                                <thead>
+                                    <tr class="border-b border-graphite text-left">
+                                        <th class="p-3 text-sm font-medium text-gray-400">Component</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Status</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Replicas</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Restarts</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Error Rate</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Memory</th>
+                                        <th class="p-3 text-sm font-medium text-gray-400">Last Restart</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="component-health-table">
+                                    <tr>
+                                        <td colspan="7" class="p-4 text-gray-400">Loading component health...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
 
                 <!-- Ops View -->
                 <section id="ops-view" class="view hidden">
