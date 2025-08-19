@@ -15,6 +15,7 @@ pub mod whoami;
 pub mod policy;
 pub mod storage;
 pub mod package;
+pub mod p2p;
 
 pub use init::init;
 pub use init::key_show;
@@ -36,4 +37,5 @@ pub use whoami::whoami;
 pub use policy::{policy_show, policy_set};
 pub use storage::{storage_ls, storage_pin, storage_gc};
 pub use package::package_create;
+pub use p2p::watch;
 

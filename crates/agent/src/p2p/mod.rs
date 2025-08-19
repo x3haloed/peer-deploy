@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::{atomic::Ordering, Arc};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as AsyncMutex;
 use rand::{thread_rng, Rng};
 
@@ -34,8 +34,10 @@ use state::{
     load_listen_port_tcp, save_listen_port_tcp,
     update_persistent_manifest_with_component
 };
+use crate::p2p::events::P2PEvent;
 
 mod handlers;
+pub mod events;
 pub mod storage;
 mod jobs;
 mod jobs_wasm;
@@ -116,6 +118,8 @@ pub async fn run_agent(
     ephemeral: bool,
     // Optional sink to mirror mesh status updates into a shared map (for web UI)
     status_sink: Option<Arc<AsyncMutex<std::collections::BTreeMap<String, common::Status>>>>,
+    // Optional sink to mirror P2P events into a shared list (for Web UI)
+    p2p_sink: Option<Arc<AsyncMutex<Vec<P2PEvent>>>>,
 ) -> anyhow::Result<()> {
     let metrics = Arc::new(Metrics::new());
     let logs: SharedLogs =
@@ -722,6 +726,17 @@ pub async fn run_agent(
                     }
                     SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) => {
                         if let gossipsub::Event::Message { propagation_source, message_id, message } = ev {
+                            // Mirror raw P2P event to UI if enabled
+                            if let Some(sink) = &p2p_sink {
+                                let ts = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs();
+                                let topic_str = message.topic.clone().to_string();
+                                let msg_str = String::from_utf8_lossy(&message.data).to_string();
+                                let mut events = sink.lock().await;
+                                events.push(P2PEvent { timestamp: ts, direction: "incoming".to_string(), source: propagation_source.to_string(), topic: topic_str, message: msg_str });
+                            }
                             // First, try to parse peer Status updates and mirror them into the sink for UI
                             if let Ok(st) = common::deserialize_message::<common::Status>(&message.data) {
                                 if let Some(sink) = &status_sink { let mut m = sink.lock().await; m.insert(st.node_id.clone(), st); }

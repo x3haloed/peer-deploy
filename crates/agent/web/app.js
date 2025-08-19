@@ -224,6 +224,20 @@ class RealmApp {
             this.clearLogs();
         });
 
+        // P2P auto-scroll toggle
+        const p2pAuto = document.getElementById('p2p-auto-scroll');
+        if (p2pAuto) {
+            p2pAuto.addEventListener('click', (e) => {
+                this.autoScroll = !this.autoScroll;
+                e.currentTarget.dataset.active = this.autoScroll;
+                e.currentTarget.textContent = this.autoScroll ? 'Auto-scroll' : 'Manual';
+                e.currentTarget.classList.toggle('bg-green-600', this.autoScroll);
+                e.currentTarget.classList.toggle('text-white', this.autoScroll);
+                e.currentTarget.classList.toggle('border', !this.autoScroll);
+                e.currentTarget.classList.toggle('border-graphite', !this.autoScroll);
+            });
+        }
+
         // Log component selector change
         const logSelect = document.getElementById('log-component');
         if (logSelect) {
@@ -302,6 +316,11 @@ class RealmApp {
             case 'logs':
                 await populateLogComponentsModule(this);
                 await loadLogsDataModule(this);
+                break;
+            case 'p2p':
+                // Clear P2P container when entering view
+                const p2pContainer = document.getElementById('p2p-container');
+                if (p2pContainer) p2pContainer.innerHTML = '';
                 break;
         }
     }
@@ -722,6 +741,9 @@ class RealmApp {
             case 'activity':
                 addActivity(data.message);
                 break;
+            case 'p2p_event':
+                this.addP2PLine(data.timestamp, data.direction, data.source, data.topic, data.message);
+                break;
         }
     }
 
@@ -1023,6 +1045,29 @@ class RealmApp {
             container.removeChild(container.firstChild);
         }
 
+        if (this.autoScroll) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+   
+    // Render a P2P message in the P2P view
+    addP2PLine(timestamp, direction, source, topic, message) {
+        const container = document.getElementById('p2p-container');
+        if (!container) return;
+        const line = document.createElement('div');
+        line.className = 'flex gap-2 mb-1 whitespace-pre-wrap';
+        line.innerHTML = `
+            <span class="text-gray-400 min-w-[80px]">${timestamp}</span>
+            <span class="text-blue-400 min-w-[60px]">${direction}</span>
+            <span class="text-yellow-400 min-w-[100px]">${source}</span>
+            <span class="text-green-400 min-w-[100px]">${topic}</span>
+            <span>${message}</span>
+        `;
+        container.appendChild(line);
+        // Keep only last 1000 events
+        while (container.children.length > 1000) {
+            container.removeChild(container.firstChild);
+        }
         if (this.autoScroll) {
             container.scrollTop = container.scrollHeight;
         }

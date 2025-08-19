@@ -141,6 +141,8 @@ pub async fn start_management_session(
     timeout_duration: Duration,
     // Optional shared peer status map provided by the running agent
     shared_status: Option<std::sync::Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, common::Status>>>>,
+    // Optional shared P2P events list provided by the running agent
+    shared_p2p: Option<std::sync::Arc<tokio::sync::Mutex<Vec<crate::p2p::events::P2PEvent>>>>,
 ) -> Result<()> {
     if !owner_key_verification {
         return Err(anyhow::anyhow!("Authentication required"));
@@ -150,6 +152,9 @@ pub async fn start_management_session(
     let mut state = connect_to_agent().await?;
     if let Some(map) = shared_status {
         state.peer_status = map;
+    }
+    if let Some(p2p) = shared_p2p {
+        state.p2p_events = p2p;
     }
     let session_id = state.create_session();
     

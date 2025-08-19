@@ -8,6 +8,7 @@ use std::{
 use crate::p2p::metrics::{Metrics, SharedLogs};
 use crate::supervisor::Supervisor;
 use common::Status;
+use crate::p2p::events::P2PEvent;  // Import P2PEvent for capturing P2P messages
 
 // Session management types
 #[derive(Clone)]
@@ -49,6 +50,8 @@ pub struct WebState {
     pub supervisor: Arc<Supervisor>,
     // Store peer status updates from the network
     pub peer_status: Arc<tokio::sync::Mutex<BTreeMap<String, Status>>>,
+    // Store P2P events from the mesh for real-time display
+    pub p2p_events: Arc<tokio::sync::Mutex<Vec<P2PEvent>>>,
 }
 
 impl WebState {
@@ -59,6 +62,7 @@ impl WebState {
             logs,
             supervisor,
             peer_status: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
+            p2p_events: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
 

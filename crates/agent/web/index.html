@@ -90,6 +90,10 @@
                             <i class="fa-solid fa-cog"></i>
                             <span>Ops</span>
                         </div>
+                        <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="p2p">
+                            <i class="fa-solid fa-network-wired"></i>
+                            <span>P2P</span>
+                        </div>
                         <div class="nav-item flex items-center space-x-3 p-3 text-gray-400 hover:text-white cursor-pointer" data-view="logs">
                             <i class="fa-solid fa-scroll"></i>
                             <span>Logs</span>
@@ -654,6 +658,14 @@
                     </div>
                 </section>
 
+                <!-- P2P Messages View -->
+                <section id="p2p-view" class="view hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-2xl font-bold">P2P Messages</h2>
+                        <button id="p2p-auto-scroll" class="px-3 py-2 rounded text-sm bg-green-600 text-white" data-active="true">Auto-scroll</button>
+                    </div>
+                    <div id="p2p-container" class="bg-gray-900 text-gray-100 p-4 rounded font-mono text-sm h-[400px] overflow-y-auto"></div>
+                </section>
                 <!-- Logs View -->
                 <section id="logs-view" class="view hidden">
                     <div class="flex items-center justify-between mb-4">

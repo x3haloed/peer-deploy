@@ -197,6 +197,8 @@ enum Commands {
     /// Job orchestration commands
     #[command(subcommand)]
     Job(JobCommands),
+    #[command(subcommand)]
+    P2p(P2pCommands),
     /// Start management web interface
     Manage {
         /// Authentication method (for now, always authenticates)
@@ -334,6 +336,12 @@ enum JobCommands {
     ArtifactsJson { job_id: String },
 }
 
+#[derive(Debug, Subcommand)]
+enum P2pCommands {
+    /// Watch all P2P messages in real time
+    Watch,
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -351,7 +359,7 @@ async fn main() -> anyhow::Result<()> {
         None => {
             let shutdown = setup_shutdown_handler();
             tokio::select! {
-                result = p2p::run_agent(cli.wasm, cli.memory_max_mb, cli.fuel, cli.epoch_ms, cli.roles, false, None) => result,
+                result = p2p::run_agent(cli.wasm, cli.memory_max_mb, cli.fuel, cli.epoch_ms, cli.roles, false, None, None) => result,
                 _ = shutdown => {
                     info!("Shutdown signal received, stopping agent gracefully");
                     Ok(())
@@ -396,12 +404,15 @@ async fn main() -> anyhow::Result<()> {
             let shared_status: std::sync::Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, common::Status>>> =
                 std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
             let status_for_agent = shared_status.clone();
+            let shared_p2p: std::sync::Arc<tokio::sync::Mutex<Vec<crate::p2p::events::P2PEvent>>> =
+                std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+            let p2p_for_agent = shared_p2p.clone();
             let agent_handle = tokio::spawn(async move {
-                if let Err(e) = p2p::run_agent(wasm, memory_max_mb, fuel, epoch_ms, roles, true, Some(status_for_agent)).await {
+                if let Err(e) = p2p::run_agent(wasm, memory_max_mb, fuel, epoch_ms, roles, true, Some(status_for_agent), Some(p2p_for_agent)).await {
                     warn!(error=%e, "temporary agent exited");
                 }
             });
-            let res = web::start_management_session(owner_key, timeout_duration, Some(shared_status)).await;
+            let res = web::start_management_session(owner_key, timeout_duration, Some(shared_status), Some(shared_p2p)).await;
             // On manage exit (timeout/CTRL-C), cancel the ephemeral agent task
             agent_handle.abort();
             let _ = agent_handle.await;
@@ -420,6 +431,9 @@ async fn main() -> anyhow::Result<()> {
             JobCommands::Artifacts { job_id } => cmd::job_artifacts(job_id).await,
             JobCommands::Download { job_id, artifact_name, output } => cmd::job_download(job_id, artifact_name, output).await,
             JobCommands::ArtifactsJson { job_id } => cmd::job_artifacts_json(job_id).await,
+        },
+        Some(Commands::P2p(p2p_cmd)) => match p2p_cmd {
+            P2pCommands::Watch => cmd::watch().await,
         },
         Some(Commands::PolicyShow) => cmd::policy_show().await,
         Some(Commands::PolicySet { native, qemu }) => cmd::policy_set(native, qemu).await,

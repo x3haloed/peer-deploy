@@ -34,6 +34,8 @@ pub async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: WebSt
     let mut update_interval = interval(Duration::from_secs(2));
     // Track last sent log line count per component for this connection
     let mut last_sent: std::collections::BTreeMap<String, usize> = Default::default();
+    // Track last sent P2P event index for this connection
+    let mut last_sent_p2p: usize = 0;
     
     // Handle incoming messages and send periodic updates
     loop {
@@ -89,6 +91,29 @@ pub async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: WebSt
                 }
                 for s in to_send {
                     if sender.send(Message::Text(s)).await.is_err() { break; }
+                }
+                // Stream new P2P events
+                let mut p2p_to_send = Vec::new();
+                {
+                    let evs = state.p2p_events.lock().await;
+                    let total = evs.len();
+                    if last_sent_p2p < total {
+                        p2p_to_send = evs[last_sent_p2p..].to_vec();
+                        last_sent_p2p = total;
+                    }
+                }
+                for ev in p2p_to_send {
+                    let json = serde_json::json!({
+                        "type": "p2p_event",
+                        "timestamp": format_timestamp(ev.timestamp),
+                        "direction": ev.direction,
+                        "source": ev.source,
+                        "topic": ev.topic,
+                        "message": ev.message,
+                    });
+                    if let Ok(s) = serde_json::to_string(&json) {
+                        if sender.send(Message::Text(s)).await.is_err() { break; }
+                    }
                 }
             }
         }
