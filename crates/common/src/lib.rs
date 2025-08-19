@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::collections::BTreeMap;
 
 pub const REALM_CMD_TOPIC: &str = "realm/cmd/v1";
 pub const REALM_STATUS_TOPIC: &str = "realm/status/v1";
@@ -328,7 +329,41 @@ pub enum JobRuntime {
         #[serde(default)]
         mounts: Option<Vec<MountSpec>>, // preopened directories for job runtime
     },
-    // Future: native, container, qemu
+    #[serde(rename = "native")]
+    Native {
+        /// File or URL to a native host binary to execute.
+        /// Examples: file:/abs/path/my-bin, https://host/my-bin
+        binary: String,
+        /// Optional pinned digest for integrity
+        #[serde(default)]
+        sha256_hex: Option<String>,
+        /// Command-line arguments
+        #[serde(default)]
+        args: Vec<String>,
+        /// Environment variables to set
+        #[serde(default)]
+        env: BTreeMap<String, String>,
+    },
+    #[serde(rename = "qemu")]
+    Qemu {
+        /// File or URL to a foreign-arch binary executed via QEMU user-mode
+        binary: String,
+        /// Optional pinned digest for integrity
+        #[serde(default)]
+        sha256_hex: Option<String>,
+        /// Command-line arguments
+        #[serde(default)]
+        args: Vec<String>,
+        /// Environment variables to set
+        #[serde(default)]
+        env: BTreeMap<String, String>,
+        /// Target platform for emulation, e.g., "linux/amd64", "linux/arm64"
+        #[serde(default)]
+        target_platform: Option<String>,
+        /// Optional explicit qemu user-mode binary path (e.g., "/usr/bin/qemu-x86_64")
+        #[serde(default)]
+        qemu_binary: Option<String>,
+    },
 }
 
 fn default_mem_mb() -> u64 { 64 }

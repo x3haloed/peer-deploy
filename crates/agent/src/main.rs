@@ -4,6 +4,7 @@ mod supervisor;
 mod cmd;
 mod web;
 mod job_manager;
+mod policy;
 
 use clap::{Parser, Subcommand};
 use tracing::{info};

@@ -28,6 +28,8 @@ use state::{
 mod handlers;
 mod jobs;
 mod jobs_wasm;
+mod jobs_native;
+mod jobs_qemu;
 pub mod metrics;
 pub mod state;  // Make state module public
 mod gateway;

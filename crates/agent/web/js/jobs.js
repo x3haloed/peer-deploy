@@ -98,7 +98,36 @@ fuel = 50000000
 epoch_ms = 1000
 
 [targeting]
-tags = ["server"]`
+tags = ["server"]`,
+		'native': `name = "native-job"
+job_type = "one-shot"
+
+[runtime]
+type = "native"
+binary = "file:///usr/bin/echo"
+args = ["hello", "world"]
+
+[execution]
+timeout_minutes = 5
+
+[targeting]
+tags = ["builder"]
+`,
+		'qemu': `name = "qemu-job"
+job_type = "one-shot"
+
+[runtime]
+type = "qemu"
+binary = "file:///path/to/foreign-arch-binary"
+args = ["--help"]
+target_platform = "linux/amd64"  # or linux/arm64, etc
+
+[execution]
+timeout_minutes = 10
+
+[targeting]
+tags = ["builder"]
+`
 	};
 
 	const body = `
@@ -109,6 +138,8 @@ tags = ["server"]`
 					<button type="button" class="text-xs bg-azure hover:bg-neon-blue px-3 py-1 rounded" onclick="setJobTemplate('one-shot')">One-Shot</button>
 					<button type="button" class="text-xs bg-azure hover:bg-neon-blue px-3 py-1 rounded" onclick="setJobTemplate('recurring')">Recurring</button>
 					<button type="button" class="text-xs bg-azure hover:bg-neon-blue px-3 py-1 rounded" onclick="setJobTemplate('service')">Service</button>
+					<button type="button" class="text-xs border border-graphite px-3 py-1 rounded" onclick="setJobTemplate('native')">Native</button>
+					<button type="button" class="text-xs border border-graphite px-3 py-1 rounded" onclick="setJobTemplate('qemu')">QEMU</button>
 				</div>
 			</div>
 			<div>

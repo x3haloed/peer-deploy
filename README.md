@@ -182,6 +182,45 @@ Upgrade behavior on agents:
 - The agent’s memory metrics currently report process RSS as a proxy. When Wasmtime exposes per-component stats we’ll switch to those.
 - Gateway invokes components via WASI HTTP. TLS termination and reverse-proxy features are planned next.
 
+## Runtime Extensions (Phase 4)
+Realm adds optional native and QEMU-emulated job runtimes. These are disabled by default for security. Enable via policy:
+
+Create `policy.json` in the agent data dir (see logs for path, usually `~/.local/share/realm-agent/` on Linux, `~/Library/Application Support/realm-agent/` on macOS):
+```
+{
+  "allow_native_execution": true,
+  "allow_emulation": true
+}
+```
+
+Or set environment variables before starting the agent:
+```
+REALM_ALLOW_NATIVE_EXECUTION=1 REALM_ALLOW_EMULATION=1 realm
+```
+
+If QEMU is not installed, QEMU jobs will fail with a helpful message including installation tips. On macOS, install via Homebrew: `brew install qemu`. On Debian/Ubuntu: `sudo apt install qemu-user`. On Fedora: `sudo dnf install qemu-user-binfmt`.
+
+Job TOML examples:
+```
+name = "native-example"
+job_type = "one-shot"
+
+[runtime]
+type = "native"
+binary = "file:///usr/bin/echo"
+args = ["hello", "realm"]
+```
+
+```
+name = "qemu-example"
+job_type = "one-shot"
+
+[runtime]
+type = "qemu"
+binary = "file:///path/to/foreign-binary"
+target_platform = "linux/amd64"
+```
+
 ## Development
 - Build debug:
 ```bash
