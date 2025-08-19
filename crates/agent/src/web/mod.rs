@@ -3,6 +3,14 @@ mod handlers;
 mod jobs;
 mod websocket;
 mod utils;
+mod overview;
+mod deploy;
+mod apply;
+mod upgrade;
+mod connect;
+mod install;
+mod discover;
+mod components_ops;
 
 pub use types::*;
 pub use handlers::*;
