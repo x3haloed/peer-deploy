@@ -588,18 +588,21 @@ pub async fn run_agent(
                 let mut jobs = job_manager.list_jobs(None, usize::MAX).await;
                 jobs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
                 let mut trimmed = Vec::new();
-                for mut j in jobs.into_iter().take(32) {
+                for mut j in jobs.into_iter().take(10) {
                     j.logs.clear();
+                    j.artifacts.clear();
                     trimmed.push(j);
                 }
-                let msg = Command::SyncJobs { node_id: local_peer_id.to_string(), jobs: trimmed };
-                let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+                if !trimmed.is_empty() {
+                    let msg = Command::SyncJobs { node_id: local_peer_id.to_string(), jobs: trimmed };
+                    let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+                }
 
                 let current = job_manager.last_update();
                 if current <= last_job_sync {
-                    job_sync_interval = (job_sync_interval * 2).min(60);
+                    job_sync_interval = (job_sync_interval * 2).min(300);
                 } else {
-                    job_sync_interval = 5;
+                    job_sync_interval = 15;
                     last_job_sync = current;
                 }
                 job_sync_tick = tokio::time::interval(Duration::from_secs(job_sync_interval));
