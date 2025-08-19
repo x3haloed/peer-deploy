@@ -149,6 +149,7 @@ tags = ["builder"]
 			<div>
 				<label class="block text-sm text-gray-300 mb-1">Attachments (optional)</label>
 				<input id="job-assets" type="file" multiple class="w-full bg-graphite border border-graphite rounded px-3 py-2 text-sm" />
+				<div id="job-assets-preview" class="mt-2 text-xs text-gray-300 space-y-1"></div>
 				<p class="text-xs text-gray-400 mt-1">Files will be content-addressed and available as /tmp/assets/&lt;filename&gt; during job execution.</p>
 			</div>
 			<div class="flex items-center justify-end gap-2">
@@ -168,10 +169,27 @@ tags = ["builder"]
 			e.preventDefault();
 			const toml = document.getElementById('job-toml').value;
 			const fd = new FormData(); fd.append('job_toml', toml);
-			const files = document.getElementById('job-assets').files;
+			const filesInput = document.getElementById('job-assets');
+			const files = filesInput.files;
 			if (files && files.length) {
 				for (let i = 0; i < files.length; i++) { fd.append('asset', files[i], files[i].name); }
 			}
+			// Client-side preview of pre-stage plan with sha256 digests
+			try {
+				const preview = document.getElementById('job-assets-preview');
+				if (preview && files && files.length) {
+					preview.innerHTML = '';
+					for (let i = 0; i < files.length; i++) {
+						const f = files[i];
+						const ab = await f.arrayBuffer();
+						const digest = await sha256Hex(new Uint8Array(ab));
+						const div = document.createElement('div');
+						div.className = 'font-mono';
+						div.textContent = `${f.name} → /tmp/assets/${f.name}  sha256:${digest.slice(0, 16)}…`;
+						preview.appendChild(div);
+					}
+				}
+			} catch {}
 			try {
 				showLoading('Submitting job...');
 				const res = await fetch('/api/jobs/submit', { method: 'POST', headers: { 'Authorization': `Bearer ${app.sessionToken}` }, body: fd });

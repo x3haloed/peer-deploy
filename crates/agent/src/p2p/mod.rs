@@ -301,6 +301,9 @@ pub async fn run_agent(
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     // Minimal P2P storage request/response plumbing
     let (storage_req_tx, mut storage_req_rx) = tokio::sync::mpsc::unbounded_channel::<storage::StorageRequest>();
+    // For reassembling incoming chunked blobs
+    let chunk_bufs: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, (u32, Vec<Vec<u8>>)>>>
+        = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let pending_storage: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<tokio::sync::oneshot::Sender<Option<Vec<u8>>>>>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let mut schedule_tick = tokio::time::interval(Duration::from_secs(60));
@@ -522,6 +525,32 @@ pub async fn run_agent(
                                                     topic_status.clone(),
                                                     serialize_message(&common::Command::StorageHave { digest, size: bytes.len() as u64 }),
                                                 );
+                                            }
+                                        }
+                                    }
+                                    common::Command::StoragePutChunk { digest, chunk_index, total_chunks, bytes_b64 } => {
+                                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(bytes_b64.as_bytes()) {
+                                            let mut map = chunk_bufs.lock().await;
+                                            let entry = map.entry(digest.clone()).or_insert_with(|| (total_chunks, vec![Vec::new(); total_chunks as usize]));
+                                            entry.0 = total_chunks; // update in case first chunk wasn't
+                                            if (chunk_index as usize) < entry.1.len() {
+                                                entry.1[chunk_index as usize] = bytes;
+                                            }
+                                            // Check if complete
+                                            let complete = entry.1.iter().all(|c| !c.is_empty());
+                                            if complete {
+                                                let mut full: Vec<u8> = Vec::new();
+                                                for c in entry.1.iter() { full.extend_from_slice(c); }
+                                                map.remove(&digest);
+                                                let calc = common::sha256_hex(&full);
+                                                if calc == digest {
+                                                    let store = crate::storage::ContentStore::open();
+                                                    let _ = store.put_bytes(&full);
+                                                    let _ = swarm.behaviour_mut().gossipsub.publish(
+                                                        topic_status.clone(),
+                                                        serialize_message(&common::Command::StorageHave { digest, size: full.len() as u64 }),
+                                                    );
+                                                }
                                             }
                                         }
                                     }

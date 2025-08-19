@@ -73,3 +73,13 @@ export function addActivity(message) {
 	while (container.children.length > 10) { container.removeChild(container.lastChild); }
 }
 
+// Compute sha256 hex in browser for preview
+export async function sha256Hex(bytes) {
+    if (window.crypto && window.crypto.subtle) {
+        const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+        const arr = Array.from(new Uint8Array(digest));
+        return arr.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    return '';
+}
+

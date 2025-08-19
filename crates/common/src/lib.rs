@@ -23,6 +23,9 @@ pub enum Command {
     /// Inline push of a small blob into the CAS (intended for small attachments)
     /// Bytes must be base64-encoded; receivers verify digest before storing.
     StoragePut { digest: String, bytes_b64: String },
+    /// Chunked push for large blobs. Chunks are base64-encoded; receivers
+    /// reassemble by digest and verify before storing.
+    StoragePutChunk { digest: String, chunk_index: u32, total_chunks: u32, bytes_b64: String },
     // Phase 5A: Storage discovery announcements
     StorageHave { digest: String, size: u64 },
     // Phase 5B: Minimal P2P artifact transfer

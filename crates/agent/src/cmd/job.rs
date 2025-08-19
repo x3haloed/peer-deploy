@@ -30,13 +30,25 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>) -> anyhow::R
         let (name, path) = if let Some((k, v)) = asset.split_once('=') { (k.to_string(), v.to_string()) } else { let p = std::path::Path::new(&asset); (p.file_name().and_then(|s| s.to_str()).unwrap_or("asset").to_string(), asset) };
         let bytes = tokio::fs::read(&path).await.context("read asset file")?;
         let digest = common::sha256_hex(&bytes);
-        // Publish StoragePut with base64 bytes
+        // Publish StoragePut or chunked depending on size
         let (mut swarm, topic_cmd, _topic_status) = super::util::new_swarm().await?;
         libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
             .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
         super::util::mdns_warmup(&mut swarm).await;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::StoragePut { digest: digest.clone(), bytes_b64: b64 }));
+        let max = 8 * 1024 * 1024; // 8 MiB inline
+        if bytes.len() <= max {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::StoragePut { digest: digest.clone(), bytes_b64: b64 }));
+        } else {
+            let chunk_size = 6 * 1024 * 1024;
+            let mut idx: u32 = 0;
+            let total = ((bytes.len() + chunk_size - 1) / chunk_size) as u32;
+            for chunk in bytes.chunks(chunk_size) {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(chunk);
+                let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::StoragePutChunk { digest: digest.clone(), chunk_index: idx, total_chunks: total, bytes_b64: b64 }));
+                idx += 1;
+            }
+        }
         // Also store locally
         let store = crate::storage::ContentStore::open();
         let _ = store.put_bytes(&bytes);
