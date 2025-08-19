@@ -200,19 +200,75 @@ outputs = [
 - Retrieve job artifacts and logs
 
 ### **Phase 3: Component Packaging & Asset Distribution**
-**Goal:** Deploy complete applications (WASM + static assets) with verifiable integrity.
+**Goal:** Deploy complete applications (WASM + static assets) with verifiable integrity and clear data lifecycle semantics.
 
 #### Package Format (`.realm`):
 ```
 my-app.realm/
-├── manifest.toml     # Package metadata and file hashes
+├── manifest.toml     # Package metadata, file hashes, and mount specifications
 ├── component.wasm    # Main WASM component
-├── static/
+├── static/           # Static assets (RO, content-addressed, swappable)
 │   ├── index.html
 │   ├── app.js
 │   └── styles.css
-└── data/
-    └── config.json
+├── config/           # Initial configuration (RO, from package)
+│   └── app.conf
+└── seed-data/        # Optional seed data for persistent volumes
+    └── initial.db
+```
+
+#### Data Lifecycle Categories:
+1. **Static Assets** (read-only, content-addressed, swappable on upgrades)
+2. **Working State** (ephemeral, read-write, cleared between restarts)  
+3. **Long-term State** (persistent, read-write, never touched automatically)
+
+#### Package Manifest Example:
+```toml
+[component]
+name = "my-web-app"
+wasm = "component.wasm"
+sha256 = "abc123..."
+
+[[mounts]]
+kind = "static"           # RO, from package, content-addressed
+guest = "/www"
+source = "static/"        # Path within package
+
+[[mounts]]  
+kind = "config"           # RO, from package, for initial configuration
+guest = "/etc/app"
+source = "config/"
+
+[[mounts]]
+kind = "work"             # RW, ephemeral, per-replica
+guest = "/tmp"
+size_mb = 100            # Optional limit
+
+[[mounts]]
+kind = "state"            # RW, persistent, across restarts/upgrades  
+guest = "/data"
+volume = "app-data"       # Named volume or "default"
+seed = "seed-data/"       # Optional: copy from package on first install only
+```
+
+#### Agent Directory Structure:
+```
+agent_data_dir()/
+├── artifacts/
+│   └── packages/               # Content-addressed package storage
+│       └── {digest}/           # Extracted package contents
+│           ├── component.wasm
+│           ├── static/
+│           ├── config/
+│           └── seed-data/
+├── work/
+│   └── components/             # Ephemeral working directories
+│       └── {name}/
+│           └── {replica-id}/   # Per-replica isolation
+├── state/
+│   └── components/             # Persistent state volumes
+│       └── {name}/             # Component persistent data
+└── jobs/                       # Job-specific storage
 ```
 
 #### Tasks:
@@ -223,29 +279,36 @@ my-app.realm/
    ```
 
 2. **Bundle Schema** (`crates/common/src/lib.rs`)
-   - `PackageManifest` with file inventory and SHA256 hashes
-   - `AssetSpec` for mount specifications
+   - `PackageManifest` with file inventory, SHA256 hashes, and mount specifications
+   - `MountSpec` extensions for mount kinds: `static`, `work`, `state`
+   - Volume lifecycle management and seeding semantics
 
 3. **Deploy Enhancement** (`crates/agent/src/cmd/push.rs`)
    ```bash
    realm deploy my-app.realm --tag production
    ```
 
-4. **Agent Package Handling** (`crates/agent/src/supervisor.rs`)
-   - Extract and verify package integrity
-   - Content-addressed storage for assets
-   - Automatic asset mounting using existing `MountSpec`
+4. **Agent Package Handling** (`crates/agent/src/supervisor.rs`, `crates/agent/src/runner.rs`)
+   - Extract and verify package integrity with SHA256 validation
+   - Content-addressed storage for packages: `artifacts/packages/{digest}/`
+   - Mount provisioning with lifecycle guarantees:
+     - Static: Package assets mounted RO, swapped atomically on upgrades
+     - Work: Ephemeral per-replica directories, cleaned up on restart/scale-down  
+     - State: Persistent volumes with optional one-time seeding from package
+   - Volume management and cleanup automation
 
 5. **Web UI Package Support**
-   - Package upload and deployment form
-   - Asset browser showing package contents
-   - Deployment history with package versions
+   - Package upload and deployment form with mount configuration
+   - Asset browser showing package contents and mount specifications
+   - Volume management interface for persistent state
+   - Deployment history with package versions and data lifecycle tracking
 
 **Success Criteria:**
-- Package a web application with static assets
-- Deploy package across mesh with automatic asset mounting
-- Verify integrity through SHA256 validation
-- Access deployed web app through gateway
+- Package a web application with static assets and clear mount specifications
+- Deploy package across mesh with automatic asset mounting and volume provisioning
+- Verify integrity through SHA256 validation of all package contents
+- Demonstrate data lifecycle guarantees: static assets are RO and swappable, working state is ephemeral, persistent state survives upgrades
+- Access deployed web app through gateway with proper asset serving
 
 ### **Phase 4: Multi-Runtime Execution Engine**
 **Goal:** Execute diverse workloads beyond WASM while maintaining security and determinism.
