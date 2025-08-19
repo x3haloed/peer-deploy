@@ -1,4 +1,4 @@
-use crate::policy::{load_policy, save_policy, ExecutionPolicy};
+use crate::policy::{load_policy, save_policy};
 
 pub async fn policy_show() -> anyhow::Result<()> {
     let pol = load_policy();

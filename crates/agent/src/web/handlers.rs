@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State, Multipart},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     Json,
 };
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use crate::policy::{load_policy, save_policy, ExecutionPolicy, find_any_qemu_use
 use crate::storage::ContentStore;
 use super::utils::format_timestamp;
 use crate::supervisor::DesiredComponent;
-use common::{ComponentSpec, Manifest, JobInstance, JobSpec};
+use common::{ComponentSpec, Manifest};
 use crate::cmd;
 
 // API handlers with real data integration

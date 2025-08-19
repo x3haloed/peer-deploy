@@ -32,7 +32,7 @@ pub async fn api_jobs_submit(State(state): State<WebState>, mut multipart: Multi
     let mut job_toml_text: Option<String> = None;
     let mut prestage: Vec<PreStageSpec> = Vec::new();
 
-    while let Ok(Some(mut field)) = multipart.next_field().await {
+    while let Ok(Some(field)) = multipart.next_field().await {
         let fname = field.name().unwrap_or("").to_string();
         match fname.as_str() {
             "job_toml" | "file" => { job_toml_text = field.text().await.ok(); },

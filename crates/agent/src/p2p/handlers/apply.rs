@@ -6,7 +6,7 @@ use common::{verify_bytes_ed25519, Manifest, SignedManifest};
 
 use super::super::metrics::{push_log, Metrics};
 use super::super::state::{load_state, load_trusted_owner, save_desired_manifest, save_state, save_trusted_owner};
-use super::util::{fetch_bytes, verify_and_stage_artifacts};
+use super::util::verify_and_stage_artifacts;
 
 /// Handle an ApplyManifest command from the network.
 pub async fn handle_apply_manifest(

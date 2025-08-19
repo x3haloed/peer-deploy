@@ -1071,6 +1071,7 @@ pub async fn run_agent(
                                         let content_index2 = content_index.clone();
                                         let storage_tx = storage_req_tx.clone();
                                         let job_broadcast_tx_clone = job_broadcast_tx.clone();
+                                        let tx_clone = tx.clone();
                                         tokio::spawn(async move {
                                             // Insert job locally with provided id
                                             let _ = job_mgr.submit_job(job.clone(), Some(origin_node_id.clone()), Some(job_id.clone())).await;
@@ -1165,7 +1166,7 @@ pub async fn run_agent(
                                                         let oneshot_job_id = job_id.clone();
                                                         let oneshot_job = job.clone();
                                                         let oneshot_logs = logsj.clone();
-                                                        let oneshot_tx = tx.clone();
+                                                        let oneshot_tx = tx_clone.clone();
                                                         let oneshot_storage_tx = storage_tx.clone();
                                                         let oneshot_broadcast_tx = job_broadcast_tx_clone.clone();
                                                         let oneshot_node_id = node_id.clone();
@@ -1181,7 +1182,7 @@ pub async fn run_agent(
                                                         let recurring_job_id = job_id.clone();
                                                         let recurring_job = job.clone();
                                                         let recurring_logs = logsj.clone();
-                                                        let recurring_tx = tx.clone();
+                                                        let recurring_tx = tx_clone.clone();
                                                         let recurring_storage_tx = storage_tx.clone();
                                                         let recurring_broadcast_tx = job_broadcast_tx_clone.clone();
                                                         let recurring_node_id = node_id.clone();
@@ -1199,7 +1200,7 @@ pub async fn run_agent(
                                                         let service_job_id = job_id.clone();
                                                         let service_job = job.clone();
                                                         let service_logs = logsj.clone();
-                                                        let service_tx = tx.clone();
+                                                        let service_tx = tx_clone.clone();
                                                         
                                                         let handle = tokio::spawn(async move {
                                                             if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
