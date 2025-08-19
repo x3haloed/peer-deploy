@@ -37,7 +37,7 @@ pub mod state;  // Make state module public
 mod gateway;
 
 use handlers::{handle_apply_manifest, handle_upgrade};
-use jobs::{execute_oneshot_job, execute_service_job};
+use jobs::{execute_oneshot_job, execute_oneshot_job_with_broadcast, execute_service_job};
 use metrics::{push_log, serve_metrics, Metrics, SharedLogs};
 use crate::supervisor::Supervisor;
 
@@ -222,6 +222,9 @@ pub async fn run_agent(
 
     // channel for run results to publish status from the main loop
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<String, String>>();
+    
+    // channel for job status broadcasts
+    let (job_broadcast_tx, mut job_broadcast_rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
 
     if let Some(path) = wasm_path.clone() {
         let tx0 = tx.clone();
@@ -338,6 +341,10 @@ pub async fn run_agent(
 
     loop {
         tokio::select! {
+            // Handle job status broadcasts
+            Some(job_broadcast) = job_broadcast_rx.recv() => {
+                let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&job_broadcast));
+            }
             // Handle incoming run/job/storage events
             Some(run_res) = rx.recv() => {
                 match &run_res {
@@ -915,8 +922,37 @@ pub async fn run_agent(
                                         let node_id = local_peer_id.to_string();
                                         let content_index2 = content_index.clone();
                                         let storage_tx = storage_req_tx.clone();
+                                        let job_broadcast_tx_clone = job_broadcast_tx.clone();
                                         tokio::spawn(async move {
-                                            // Create job instance and track it
+                                            // Check if this node is eligible to execute the job
+                                            let mut eligible = true;
+                                            if let Some(t) = &job.targeting {
+                                                if let Some(p) = &t.platform {
+                                                    let host = format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH);
+                                                    if &host != p { eligible = false; }
+                                                }
+                                                if eligible && !t.tags.is_empty() {
+                                                    eligible = t.tags.iter().any(|tag| rolesj.contains(tag));
+                                                }
+                                                if eligible && !t.node_ids.is_empty() {
+                                                    eligible = t.node_ids.iter().any(|id| id == &node_id);
+                                                }
+                                            }
+                                            
+                                            if !eligible {
+                                                let _ = push_log(&logsj, "system", format!("Job {} not eligible for this node, ignoring", job.name)).await;
+                                                return;
+                                            }
+                                            
+                                            // This node is eligible - check if job is already accepted by another node
+                                            if let Some(existing) = job_mgr.get_job(&format!("{}-{}", job.name, "pending")).await {
+                                                if existing.assigned_node.is_some() {
+                                                    let _ = push_log(&logsj, "system", format!("Job {} already accepted by another node", job.name)).await;
+                                                    return;
+                                                }
+                                            }
+                                            
+                                            // Accept the job and broadcast acceptance
                                             let job_id = match job_mgr.submit_job(job.clone()).await {
                                                 Ok(id) => id,
                                                 Err(e) => {
@@ -924,20 +960,22 @@ pub async fn run_agent(
                                                     return;
                                                 }
                                             };
-                                            // Observability: log an acknowledgment into the shared log sink
-                                            let _ = push_log(&logsj, "system", format!("job received: {} ({})", job.name, job_id)).await;
                                             
-                                            // basic targeting: platform + tags + node_ids
-                                            let mut selected = true;
-                                            if let Some(t) = &job.targeting {
-                                                if let Some(p) = &t.platform {
-                                                    let host = format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH);
-                                                    if &host != p { selected = false; }
-                                                }
-                                                if selected && !t.tags.is_empty() {
-                                                    selected = t.tags.iter().any(|tag| rolesj.contains(tag));
-                                                }
-                                            }
+                                            // Mark this node as the assigned executor
+                                            let _ = job_mgr.assign_job(&job_id, &node_id).await;
+                                            
+                                            // Broadcast job acceptance to prevent other nodes from taking it
+                                            let acceptance_msg = Command::JobAccepted { 
+                                                job_id: job_id.clone(), 
+                                                assigned_node: node_id.clone() 
+                                            };
+                                            let _ = job_broadcast_tx_clone.send(acceptance_msg);
+                                            
+                                            let _ = push_log(&logsj, "system", format!("Job accepted: {} ({})", job.name, job_id)).await;
+                                            
+                                            // This node is executing the job
+                                            let selected = true;
+                                            
                                             // Locality preference: if job has digest and others have it, delay start here
                                             let mut locality_delay_ms: u64 = 0;
                                             let job_digest: Option<String> = match &job.runtime {
@@ -962,8 +1000,16 @@ pub async fn run_agent(
                                             }
                                             if selected {
                                                 // Mark job as started
-                                                let _ = job_mgr.start_job(&job_id, node_id).await;
+                                                let _ = job_mgr.start_job(&job_id).await;
                                                 let _ = job_mgr.add_job_log(&job_id, "info".to_string(), "Job execution started on this node".to_string()).await;
+                                                
+                                                // Broadcast job started status
+                                                let start_msg = Command::JobStarted { 
+                                                    job_id: job_id.clone(), 
+                                                    assigned_node: node_id.clone() 
+                                                };
+                                                let _ = job_broadcast_tx_clone.send(start_msg);
+                                                
                                                 // Observability: log start
                                                 let _ = push_log(&logsj, "system", format!("job started: {}", job_id)).await;
                                                 
@@ -971,12 +1017,12 @@ pub async fn run_agent(
                                                 match &job.job_type {
                                                     common::JobType::OneShot => {
                                                         if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
-                                                        execute_oneshot_job(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone(), Some(storage::P2PStorage::new(storage_tx.clone()))).await;
+                                                        execute_oneshot_job_with_broadcast(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone(), Some(storage::P2PStorage::new(storage_tx.clone())), job_broadcast_tx_clone.clone(), node_id.clone()).await;
                                                     },
                                                     common::JobType::Recurring => {
                                                         // Recurring jobs are handled by the scheduler, treat execution as one-shot
                                                         if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
-                                                        execute_oneshot_job(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone(), Some(storage::P2PStorage::new(storage_tx.clone()))).await;
+                                                        execute_oneshot_job_with_broadcast(job_mgr.clone(), job_id.clone(), job.clone(), logsj.clone(), txj.clone(), Some(storage::P2PStorage::new(storage_tx.clone())), job_broadcast_tx_clone.clone(), node_id.clone()).await;
                                                     },
                                                     common::JobType::Service => {
                                                         // Create cancellation channel for service jobs
@@ -1023,6 +1069,26 @@ pub async fn run_agent(
                                             let response = serialize_message(&job);
                                             let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), response);
                                         }
+                                    }
+                                    Command::JobAccepted { job_id, assigned_node } => {
+                                        // Another node accepted this job - mark it in our local job store
+                                        if let Some(mut job) = job_manager.get_job(&job_id).await {
+                                            job.assigned_node = Some(assigned_node.clone());
+                                            let _ = job_manager.update_job_assignment(&job_id, &assigned_node).await;
+                                            let _ = push_log(&logs, "system", format!("Job {} accepted by node {}", job_id, assigned_node)).await;
+                                        }
+                                    }
+                                    Command::JobStarted { job_id, assigned_node } => {
+                                        let _ = job_manager.start_job(&job_id).await;
+                                        let _ = push_log(&logs, "system", format!("Job {} started on node {}", job_id, assigned_node)).await;
+                                    }
+                                    Command::JobCompleted { job_id, assigned_node, exit_code } => {
+                                        let _ = job_manager.complete_job(&job_id, exit_code).await;
+                                        let _ = push_log(&logs, "system", format!("Job {} completed on node {} with exit code {}", job_id, assigned_node, exit_code)).await;
+                                    }
+                                    Command::JobFailed { job_id, assigned_node, error } => {
+                                        let _ = job_manager.fail_job(&job_id, error.clone()).await;
+                                        let _ = push_log(&logs, "system", format!("Job {} failed on node {}: {}", job_id, assigned_node, error)).await;
                                     }
                                     Command::AnnouncePeers { peers } => {
                                         // Gossip-based peer exchange: dial and add explicit peers

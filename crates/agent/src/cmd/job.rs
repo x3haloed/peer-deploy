@@ -209,6 +209,128 @@ pub async fn net_status_job_json(job_id: String) -> anyhow::Result<()> {
     }
 }
 
+/// Query a specific job over the network and collect responses from all nodes
+pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
+    use futures::StreamExt;
+    let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
+    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    mdns_warmup(&mut swarm).await;
+    dial_bootstrap(&mut swarm).await;
+    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobStatus { job_id: job_id.clone() }));
+    
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let mut responses: std::collections::HashMap<String, JobInstance> = std::collections::HashMap::new();
+    let mut nodes_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline.into()) => {
+                // Include local job status if not already seen
+                let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+                let job_manager = JobManager::new(data_dir);
+                let _ = job_manager.load_from_disk().await;
+                if let Some(local_job) = job_manager.get_job(&job_id).await {
+                    responses.insert("local".to_string(), local_job);
+                }
+                
+                // Print aggregated response
+                let aggregated = AggregatedJobStatus {
+                    job_id: job_id.clone(),
+                    responses,
+                    total_nodes: nodes_seen.len(),
+                };
+                println!("{}", serde_json::to_string_pretty(&aggregated)?);
+                return Ok(());
+            }
+            event = swarm.select_next_some() => {
+                if let libp2p::swarm::SwarmEvent::Behaviour(super::util::NodeBehaviourEvent::Gossipsub(ev)) = event {
+                    if let libp2p::gossipsub::Event::Message { propagation_source, message, .. } = ev {
+                        if message.topic == topic_status.hash() {
+                            if let Ok(item) = common::deserialize_message::<JobInstance>(&message.data) {
+                                let node_id = propagation_source.to_string();
+                                nodes_seen.insert(node_id.clone());
+                                responses.insert(node_id, item);
+                                
+                                // Continue collecting for a bit longer to get more responses
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Query jobs over the network and collect responses from all nodes
+pub async fn net_list_jobs_json_all(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
+    use futures::StreamExt;
+    let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
+    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    mdns_warmup(&mut swarm).await;
+    dial_bootstrap(&mut swarm).await;
+    let status_filter_owned = status_filter.clone();
+    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobs { status_filter: status_filter_owned, limit }));
+    
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let mut responses: std::collections::HashMap<String, Vec<JobInstance>> = std::collections::HashMap::new();
+    let mut nodes_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline.into()) => {
+                // Include local job list if not already seen
+                let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+                let job_manager = JobManager::new(data_dir);
+                let _ = job_manager.load_from_disk().await;
+                let local_jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
+                responses.insert("local".to_string(), local_jobs);
+                
+                // Print aggregated response
+                let aggregated = AggregatedJobList {
+                    status_filter,
+                    limit,
+                    responses,
+                    total_nodes: nodes_seen.len(),
+                };
+                println!("{}", serde_json::to_string_pretty(&aggregated)?);
+                return Ok(());
+            }
+            event = swarm.select_next_some() => {
+                if let libp2p::swarm::SwarmEvent::Behaviour(super::util::NodeBehaviourEvent::Gossipsub(ev)) = event {
+                    if let libp2p::gossipsub::Event::Message { propagation_source, message, .. } = ev {
+                        if message.topic == topic_status.hash() {
+                            if let Ok(list) = common::deserialize_message::<Vec<JobInstance>>(&message.data) {
+                                let node_id = propagation_source.to_string();
+                                nodes_seen.insert(node_id.clone());
+                                responses.insert(node_id, list);
+                                
+                                // Continue collecting for a bit longer to get more responses
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct AggregatedJobStatus {
+    job_id: String,
+    responses: std::collections::HashMap<String, JobInstance>,
+    total_nodes: usize,
+}
+
+#[derive(serde::Serialize)]
+struct AggregatedJobList {
+    status_filter: Option<String>,
+    limit: usize,
+    responses: std::collections::HashMap<String, Vec<JobInstance>>,
+    total_nodes: usize,
+}
+
 pub async fn job_status(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir);

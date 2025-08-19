@@ -87,10 +87,28 @@ impl JobManager {
         Ok(job_id)
     }
 
-    pub async fn start_job(&self, job_id: &str, node_id: String) -> Result<()> {
+    pub async fn assign_job(&self, job_id: &str, node_id: &str) -> Result<()> {
         let mut state = self.state.lock().await;
         if let Some(job) = state.jobs.get_mut(job_id) {
-            job.start(node_id);
+            job.assigned_node = Some(node_id.to_string());
+            job.add_log("info".to_string(), format!("Job assigned to node {}", node_id));
+        }
+        drop(state);
+        
+        if let Err(e) = self.save_to_disk().await {
+            warn!("Failed to save job state: {}", e);
+        }
+        Ok(())
+    }
+
+    pub async fn update_job_assignment(&self, job_id: &str, node_id: &str) -> Result<()> {
+        self.assign_job(job_id, node_id).await
+    }
+
+    pub async fn start_job(&self, job_id: &str) -> Result<()> {
+        let mut state = self.state.lock().await;
+        if let Some(job) = state.jobs.get_mut(job_id) {
+            job.start(job.assigned_node.clone().unwrap_or_else(|| "unknown".to_string()));
             job.add_log("info".to_string(), "Job started".to_string());
         }
         drop(state);

@@ -35,6 +35,12 @@ pub enum Command {
     StorageGet { digest: String },
     /// Response with blob bytes base64-encoded. Intended for small artifacts only.
     StorageData { digest: String, bytes_b64: String },
+    /// Job acceptance broadcast - node claims job execution
+    JobAccepted { job_id: String, assigned_node: String },
+    /// Job status update broadcasts  
+    JobStarted { job_id: String, assigned_node: String },
+    JobCompleted { job_id: String, assigned_node: String, exit_code: i32 },
+    JobFailed { job_id: String, assigned_node: String, error: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
