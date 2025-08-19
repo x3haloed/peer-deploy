@@ -625,6 +625,11 @@ pub async fn run_agent(
                                             selected = sel_tags.iter().any(|t| roles.contains(t));
                                             info!("Target tags: {:?}, agent tags: {:?}, selected by tag: {}", sel_tags, roles, selected);
                                         }
+                                        // Never accept pushes on nodes tagged as UI
+                                        if selected && roles.iter().any(|r| r == "ui") {
+                                            info!("UI-tagged node: rejecting PushComponent for {}", pkg.unsigned.component_name);
+                                            selected = false;
+                                        }
                                         info!("Component {} selection result: {}", pkg.unsigned.component_name, selected);
                                         if selected {
                                             // Verify signature and digest
