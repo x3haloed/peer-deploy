@@ -708,6 +708,10 @@ class RealmApp {
                 break;
             case 'log':
                 addLogLine(data.timestamp, data.component, data.message, this.autoScroll);
+                // Auto-refresh job list on job events
+                if (this.currentView === 'jobs' && data.component === 'system' && (data.message.startsWith('job received') || data.message.startsWith('job started'))) {
+                    loadJobsDataModule(this);
+                }
                 break;
             case 'node_status':
                 this.updateNodeStatus(data.node_id, data.status);
