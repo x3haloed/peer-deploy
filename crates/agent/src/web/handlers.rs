@@ -810,3 +810,35 @@ pub async fn api_jobs_logs(State(_state): State<WebState>, Path(job_id): Path<St
         None => (StatusCode::NOT_FOUND, format!("Job '{}' not found", job_id)).into_response()
     }
 }
+
+pub async fn api_jobs_artifacts(State(_state): State<WebState>, Path(job_id): Path<String>) -> impl IntoResponse {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    if let Err(e) = job_manager.load_from_disk().await {
+        tracing::warn!("Failed to load job state: {}", e);
+    }
+    match job_manager.get_job(&job_id).await {
+        Some(job) => Json(job.artifacts).into_response(),
+        None => (StatusCode::NOT_FOUND, format!("Job '{}' not found", job_id)).into_response(),
+    }
+}
+
+pub async fn api_jobs_artifact_download(Path((job_id, name)): Path<(String, String)>) -> impl IntoResponse {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    if let Err(e) = job_manager.load_from_disk().await {
+        tracing::warn!("Failed to load job state: {}", e);
+    }
+    match job_manager.get_job(&job_id).await {
+        Some(job) => {
+            if let Some(art) = job.artifacts.iter().find(|a| a.name == name) {
+                if let Ok(bytes) = tokio::fs::read(&art.stored_path).await {
+                    return (StatusCode::OK, bytes).into_response();
+                }
+                return (StatusCode::NOT_FOUND, "artifact not found").into_response();
+            }
+            (StatusCode::NOT_FOUND, "artifact not found").into_response()
+        }
+        None => (StatusCode::NOT_FOUND, format!("Job '{}' not found", job_id)).into_response(),
+    }
+}

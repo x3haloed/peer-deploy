@@ -57,6 +57,8 @@ fn create_app(state: WebState, session_id: String) -> Router {
         .route("/api/jobs/:job_id", get(api_jobs_get))
         .route("/api/jobs/:job_id/cancel", post(api_jobs_cancel))
         .route("/api/jobs/:job_id/logs", get(api_jobs_logs))
+        .route("/api/jobs/:job_id/artifacts", get(api_jobs_artifacts))
+        .route("/api/jobs/:job_id/artifacts/:name", get(api_jobs_artifact_download))
         
         // WebSocket for real-time updates
         .route("/ws", get(websocket_handler))

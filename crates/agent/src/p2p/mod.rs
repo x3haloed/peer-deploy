@@ -713,6 +713,19 @@ pub async fn run_agent(
                                                         match res {
                                                             Ok(_) => {
                                                                 let success_msg = format!("job ok: {}", job.name);
+                                                                // Capture artifacts if requested
+                                                                if let Some(exec) = &job.execution.artifacts {
+                                                                    for art in exec.iter() {
+                                                                        // We assume guest path was mounted; copy from host preopened location if under a mount
+                                                                        // For now, only support absolute host path via mounts.host + relative guest path
+                                                                        // Simplified: if path starts with '/', just record the path as stored (no copy)
+                                                                        let stored = art.path.clone();
+                                                                        let meta = tokio::fs::metadata(&stored).await.ok();
+                                                                        let size = meta.as_ref().and_then(|m| if m.is_file() { Some(m.len()) } else { None });
+                                                                        let artifact = common::JobArtifact { name: art.name.clone().unwrap_or_else(|| stored.clone()), stored_path: stored, size_bytes: size };
+                                                                        let _ = job_mgr.add_job_artifact(&job_id, artifact).await;
+                                                                    }
+                                                                }
                                                                 let _ = job_mgr.complete_job(&job_id, 0).await;
                                                                 let _ = txj.send(Ok(success_msg));
                                                             }

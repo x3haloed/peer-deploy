@@ -1,5 +1,5 @@
 use anyhow::Result;
-use common::{JobSpec, JobInstance, JobStatus};
+use common::{JobSpec, JobInstance, JobStatus, JobArtifact};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -177,6 +177,18 @@ impl JobManager {
         
         // Don't save to disk for every log entry to avoid performance issues
         // Logs will be saved when job state changes
+        Ok(())
+    }
+
+    pub async fn add_job_artifact(&self, job_id: &str, artifact: JobArtifact) -> Result<()> {
+        let mut state = self.state.lock().await;
+        if let Some(job) = state.jobs.get_mut(job_id) {
+            job.artifacts.push(artifact);
+        }
+        drop(state);
+        if let Err(e) = self.save_to_disk().await {
+            warn!("Failed to save job state after artifact add: {}", e);
+        }
         Ok(())
     }
 
