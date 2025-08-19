@@ -12,6 +12,7 @@ pub mod configure;
 pub mod push;
 pub mod diag;
 pub mod whoami;
+pub mod package;
 
 pub use init::init;
 pub use init::key_show;
@@ -29,4 +30,5 @@ pub use configure::configure;
 pub use push::push;
 pub use diag::diag_quic;
 pub use whoami::whoami;
+pub use package::package_create;
 

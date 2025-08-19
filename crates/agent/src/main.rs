@@ -180,6 +180,9 @@ enum Commands {
         #[arg(long, default_value_t = true)]
         start: bool,
     },
+    /// Package-related commands
+    #[command(subcommand)]
+    Package(PackageCommands),
     /// Job orchestration commands
     #[command(subcommand)]
     Job(JobCommands),
@@ -191,6 +194,22 @@ enum Commands {
         /// Session timeout in minutes
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PackageCommands {
+    /// Create a .realm bundle from a directory
+    Create {
+        /// Directory containing component.wasm and optional static/config/seed-data
+        #[arg(long, default_value = ".")]
+        dir: String,
+        /// Override component name used in manifest
+        #[arg(long)]
+        name: Option<String>,
+        /// Output file path (.realm)
+        #[arg(long)]
+        output: Option<String>,
     },
 }
 
@@ -289,6 +308,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Whoami) => cmd::whoami().await,
         Some(Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start }) => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
         Some(Commands::DeployComponent { path, package, profile, features, target_peers, target_tags, name, start }) => cmd::deploy_component(path, package, profile, features, target_peers, target_tags, name, start).await,
+        Some(Commands::Package(pkg_cmd)) => match pkg_cmd {
+            PackageCommands::Create { dir, name, output } => cmd::package_create(dir, name, output).await,
+        },
         Some(Commands::Manage { owner_key, timeout }) => {
             use std::time::Duration;
             let timeout_duration = Duration::from_secs(timeout * 60);
