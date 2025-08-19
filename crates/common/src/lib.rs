@@ -20,6 +20,8 @@ pub enum Command {
     QueryJobStatus { job_id: String },
     CancelJob { job_id: String },
     QueryJobLogs { job_id: String, tail: usize },
+    /// Announce known peer addresses to improve mesh connectivity
+    AnnouncePeers { peers: Vec<String> },
     /// Inline push of a small blob into the CAS (intended for small attachments)
     /// Bytes must be base64-encoded; receivers verify digest before storing.
     StoragePut { digest: String, bytes_b64: String },

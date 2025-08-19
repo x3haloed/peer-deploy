@@ -912,6 +912,23 @@ pub async fn run_agent(
                                             let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), response);
                                         }
                                     }
+                                    Command::AnnouncePeers { peers } => {
+                                        // Gossip-based peer exchange: dial and add explicit peers
+                                        for addr_str in peers.iter() {
+                                            if let Ok(ma) = addr_str.parse::<libp2p::Multiaddr>() {
+                                                // Extract PeerId if present
+                                                if let Some(peer_id) = ma.iter().find_map(|p| {
+                                                    if let libp2p::multiaddr::Protocol::P2p(peer_id) = p {
+                                                        Some(peer_id)
+                                                    } else { None }
+                                                }) {
+                                                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                                                }
+                                                // Dial the address to establish connection
+                                                let _ = swarm.dial(ma);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
