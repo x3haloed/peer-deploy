@@ -8,7 +8,7 @@ mod policy;
 mod storage;
 
 use clap::{Parser, Subcommand};
-use tracing::{info};
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -312,7 +312,7 @@ async fn main() -> anyhow::Result<()> {
         None => {
             let shutdown = setup_shutdown_handler();
             tokio::select! {
-                result = p2p::run_agent(cli.wasm, cli.memory_max_mb, cli.fuel, cli.epoch_ms, cli.roles) => result,
+                result = p2p::run_agent(cli.wasm, cli.memory_max_mb, cli.fuel, cli.epoch_ms, cli.roles, false) => result,
                 _ = shutdown => {
                     info!("Shutdown signal received, stopping agent gracefully");
                     Ok(())
@@ -343,6 +343,16 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Manage { owner_key, timeout }) => {
             use std::time::Duration;
             let timeout_duration = Duration::from_secs(timeout * 60);
+            let wasm = cli.wasm.clone();
+            let memory_max_mb = cli.memory_max_mb;
+            let fuel = cli.fuel;
+            let epoch_ms = cli.epoch_ms;
+            let roles = cli.roles.clone();
+            tokio::spawn(async move {
+                if let Err(e) = p2p::run_agent(wasm, memory_max_mb, fuel, epoch_ms, roles, true).await {
+                    warn!(error=%e, "temporary agent exited");
+                }
+            });
             web::start_management_session(owner_key, timeout_duration).await
         },
         Some(Commands::Job(job_cmd)) => match job_cmd {
