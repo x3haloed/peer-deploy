@@ -1,7 +1,7 @@
 use anyhow::Result;
 use common::{JobSpec, JobInstance, JobStatus, JobArtifact, JobType};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
@@ -36,22 +36,51 @@ pub struct JobManager {
     state: Arc<Mutex<JobManagerState>>,
     data_dir: std::path::PathBuf,
     running_jobs: Arc<Mutex<HashMap<JobId, RunningJob>>>,
+    node_id: String,
+    last_update: AtomicU64,
 }
 
 impl JobManager {
-    pub fn new(data_dir: std::path::PathBuf) -> Self {
+    pub fn new(data_dir: std::path::PathBuf, node_id: String) -> Self {
         Self {
             state: Arc::new(Mutex::new(JobManagerState::default())),
             data_dir,
             running_jobs: Arc::new(Mutex::new(HashMap::new())),
+            node_id,
+            last_update: AtomicU64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            ),
         }
+    }
+
+    fn mark_update(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.last_update.store(now, Ordering::Relaxed);
+    }
+
+    pub fn last_update(&self) -> u64 {
+        self.last_update.load(Ordering::Relaxed)
     }
 
     pub async fn load_from_disk(&self) -> Result<()> {
         let state_file = self.data_dir.join("jobs.json");
         if state_file.exists() {
             let content = tokio::fs::read_to_string(&state_file).await?;
-            let loaded_state: JobManagerState = serde_json::from_str(&content)?;
+            let mut loaded_state: JobManagerState = serde_json::from_str(&content)?;
+            for job in loaded_state.jobs.values_mut() {
+                if job.updated_at == 0 {
+                    job.updated_at = job.submitted_at;
+                }
+                if job.origin_node_id.is_empty() {
+                    job.origin_node_id = self.node_id.clone();
+                }
+            }
             *self.state.lock().await = loaded_state;
             info!("Loaded {} jobs from disk", self.state.lock().await.jobs.len());
         }
@@ -67,24 +96,37 @@ impl JobManager {
         Ok(())
     }
 
-    pub async fn submit_job(&self, spec: JobSpec) -> Result<String> {
+    pub async fn submit_job(
+        &self,
+        spec: JobSpec,
+        origin_node_id: Option<String>,
+        job_id: Option<String>,
+    ) -> Result<String> {
         let mut state = self.state.lock().await;
-        let job_id = format!("{}-{}", spec.name, state.next_id);
-        state.next_id += 1;
+        let origin = origin_node_id.unwrap_or_else(|| self.node_id.clone());
+        let id = match job_id {
+            Some(id) => id,
+            None => {
+                let id = format!("{}-{}", origin, state.next_id);
+                state.next_id += 1;
+                id
+            }
+        };
 
-        let mut job = JobInstance::new(job_id.clone(), spec);
+        let mut job = JobInstance::new(id.clone(), origin.clone(), spec);
         job.add_log("info".to_string(), "Job submitted".to_string());
-        
-        state.jobs.insert(job_id.clone(), job);
+
+        state.jobs.insert(id.clone(), job);
         drop(state);
 
+        self.mark_update();
         // Save to disk
         if let Err(e) = self.save_to_disk().await {
             warn!("Failed to save job state: {}", e);
         }
 
-        info!("Job {} submitted successfully", job_id);
-        Ok(job_id)
+        info!("Job {} submitted successfully", id);
+        Ok(id)
     }
 
     pub async fn assign_job(&self, job_id: &str, node_id: &str) -> Result<()> {
@@ -92,9 +134,15 @@ impl JobManager {
         if let Some(job) = state.jobs.get_mut(job_id) {
             job.assigned_node = Some(node_id.to_string());
             job.add_log("info".to_string(), format!("Job assigned to node {}", node_id));
+            job.updated_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
         }
         drop(state);
-        
+
+        self.mark_update();
+
         if let Err(e) = self.save_to_disk().await {
             warn!("Failed to save job state: {}", e);
         }
@@ -112,7 +160,9 @@ impl JobManager {
             job.add_log("info".to_string(), "Job started".to_string());
         }
         drop(state);
-        
+
+        self.mark_update();
+
         if let Err(e) = self.save_to_disk().await {
             warn!("Failed to save job state: {}", e);
         }
@@ -126,7 +176,9 @@ impl JobManager {
             job.add_log("info".to_string(), format!("Job completed with exit code {}", exit_code));
         }
         drop(state);
-        
+
+        self.mark_update();
+
         if let Err(e) = self.save_to_disk().await {
             warn!("Failed to save job state: {}", e);
         }
@@ -140,7 +192,9 @@ impl JobManager {
             job.add_log("error".to_string(), format!("Job failed: {}", error));
         }
         drop(state);
-        
+
+        self.mark_update();
+
         if let Err(e) = self.save_to_disk().await {
             warn!("Failed to save job state: {}", e);
         }
@@ -162,10 +216,11 @@ impl JobManager {
                     running_job.handle.abort();
                     info!("Sent cancellation signal to running job: {}", job_id);
                 }
-                
+
                 if let Err(e) = self.save_to_disk().await {
                     warn!("Failed to save job state: {}", e);
                 }
+                self.mark_update();
                 return Ok(true);
             }
         }
@@ -211,7 +266,9 @@ impl JobManager {
             job.add_log(level, message);
         }
         drop(state);
-        
+
+        self.mark_update();
+
         // Don't save to disk for every log entry to avoid performance issues
         // Logs will be saved when job state changes
         Ok(())
@@ -221,8 +278,13 @@ impl JobManager {
         let mut state = self.state.lock().await;
         if let Some(job) = state.jobs.get_mut(job_id) {
             job.artifacts.push(artifact);
+            job.updated_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
         }
         drop(state);
+        self.mark_update();
         if let Err(e) = self.save_to_disk().await {
             warn!("Failed to save job state after artifact add: {}", e);
         }
@@ -254,6 +316,7 @@ impl JobManager {
                                 
                                 if should_run {
                                     job.last_scheduled_at = Some(now.timestamp() as u64);
+                                    job.updated_at = now.timestamp() as u64;
                                     due.push(job.spec.clone());
                                     info!("Job '{}' is due for execution based on schedule '{}'", job.spec.name, expr);
                                 }
@@ -266,6 +329,9 @@ impl JobManager {
                     }
                 }
             }
+        }
+        if !due.is_empty() {
+            self.mark_update();
         }
         Ok(due)
     }
@@ -299,16 +365,49 @@ impl JobManager {
                     if let Some(job) = state.jobs.get_mut(job_id) {
                         if let Some(a) = job.artifacts.iter_mut().find(|a| a.name == artifact.name) {
                             a.sha256_hex = Some(digest);
+                            job.updated_at = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
                         }
                     }
                 }
             }
         }
+        self.mark_update();
         Ok(())
     }
 
     /// Get artifact path for serving
     pub fn get_artifact_path(&self, job_id: &str, artifact_name: &str) -> std::path::PathBuf {
         self.data_dir.parent().unwrap().join("artifacts").join("jobs").join(job_id).join(artifact_name)
+    }
+
+    /// Merge remote job state into local store
+    pub async fn sync_job(&self, job: JobInstance) {
+        let mut state = self.state.lock().await;
+        match state.jobs.get_mut(&job.id) {
+            Some(local) => {
+                if job.updated_at > local.updated_at {
+                    *local = job;
+                }
+            }
+            None => {
+                state.jobs.insert(job.id.clone(), job);
+            }
+        }
+    }
+
+    /// Merge a list of remote jobs
+    pub async fn sync_jobs(&self, jobs: Vec<JobInstance>) -> Result<()> {
+        {
+            for job in jobs {
+                self.sync_job(job).await;
+            }
+        }
+        if let Err(e) = self.save_to_disk().await {
+            warn!("Failed to save job state: {}", e);
+        }
+        Ok(())
     }
 }

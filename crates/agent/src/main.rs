@@ -262,6 +262,9 @@ enum JobCommands {
         /// Maximum number of jobs to show
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        /// Refresh job state from peers before listing
+        #[arg(long)]
+        fresh: bool,
     },
     /// List jobs as JSON (for scripts)
     ListJson {
@@ -406,7 +409,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Some(Commands::Job(job_cmd)) => match job_cmd {
             JobCommands::Submit { file, assets, use_artifacts } => cmd::submit_job(file, assets, use_artifacts).await,
-            JobCommands::List { status, limit } => cmd::list_jobs(status, limit).await,
+            JobCommands::List { status, limit, fresh } => cmd::list_jobs(status, limit, fresh).await,
             JobCommands::ListJson { status, limit } => cmd::list_jobs_json(status, limit).await,
             JobCommands::NetListJson { status, limit } => cmd::net_list_jobs_json(status, limit).await,
             JobCommands::Status { job_id } => cmd::job_status(job_id).await,

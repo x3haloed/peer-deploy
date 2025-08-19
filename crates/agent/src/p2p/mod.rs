@@ -135,21 +135,22 @@ pub async fn run_agent(
         supervisor.clone().spawn_reconcile();
     }
 
-    // Initialize job manager and restore job state
-    let job_manager = std::sync::Arc::new(crate::job_manager::JobManager::new(
-        state::agent_data_dir().join("jobs")
-    ));
-    
-    if let Err(e) = job_manager.load_from_disk().await {
-        warn!(error=%e, "Failed to restore job state from disk, starting fresh");
-    }
-
     let id_keys = if ephemeral {
         identity::Keypair::generate_ed25519()
     } else {
         load_or_create_node_key()
     };
     let local_peer_id = PeerId::from(id_keys.public());
+
+    // Initialize job manager and restore job state
+    let job_manager = std::sync::Arc::new(crate::job_manager::JobManager::new(
+        state::agent_data_dir().join("jobs"),
+        local_peer_id.to_string(),
+    ));
+
+    if let Err(e) = job_manager.load_from_disk().await {
+        warn!(error=%e, "Failed to restore job state from disk, starting fresh");
+    }
 
     let gossip_config = gossipsub::ConfigBuilder::default()
         .max_transmit_size(10 * 1024 * 1024) // allow up to 10 MiB messages
@@ -376,6 +377,9 @@ pub async fn run_agent(
     let pending_storage: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<tokio::sync::oneshot::Sender<Option<Vec<u8>>>>>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let mut schedule_tick = tokio::time::interval(Duration::from_secs(60));
+    let mut job_sync_interval = 5u64;
+    let mut job_sync_tick = tokio::time::interval(Duration::from_secs(job_sync_interval));
+    let mut last_job_sync = job_manager.last_update();
     // Periodic peer announcement for peer exchange
     // track msgs per second by counting status publishes
     let mut last_publish_count: u64 = 0;
@@ -580,12 +584,38 @@ pub async fn run_agent(
                     );
                 }
             }
+            _ = job_sync_tick.tick() => {
+                let mut jobs = job_manager.list_jobs(None, usize::MAX).await;
+                jobs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                let mut trimmed = Vec::new();
+                for mut j in jobs.into_iter().take(32) {
+                    j.logs.clear();
+                    trimmed.push(j);
+                }
+                let msg = Command::SyncJobs { node_id: local_peer_id.to_string(), jobs: trimmed };
+                let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+
+                let current = job_manager.last_update();
+                if current <= last_job_sync {
+                    job_sync_interval = (job_sync_interval * 2).min(60);
+                } else {
+                    job_sync_interval = 5;
+                    last_job_sync = current;
+                }
+                job_sync_tick = tokio::time::interval(Duration::from_secs(job_sync_interval));
+            }
             _ = schedule_tick.tick() => {
                 // Evaluate recurring job schedules
                 if let Ok(due_specs) = job_manager.evaluate_schedules().await {
                     for spec in due_specs {
-                        // Re-publish the SubmitJob command so eligible nodes can take it
-                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&common::Command::SubmitJob(spec)));
+                        if let Ok(job_id) = job_manager.submit_job(spec.clone(), None, None).await {
+                            let msg = Command::SubmitJob {
+                                origin_node_id: local_peer_id.to_string(),
+                                job_id,
+                                spec,
+                            };
+                            let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg));
+                        }
                     }
                 }
             }
@@ -1033,8 +1063,7 @@ pub async fn run_agent(
                                             }
                                         }
                                     }
-                                    Command::SubmitJob(job) => {
-                                        let txj = tx.clone();
+                                    Command::SubmitJob { origin_node_id, job_id, spec: job } => {
                                         let logsj = logs.clone();
                                         let rolesj = roles.clone();
                                         let job_mgr = job_manager.clone();
@@ -1043,6 +1072,8 @@ pub async fn run_agent(
                                         let storage_tx = storage_req_tx.clone();
                                         let job_broadcast_tx_clone = job_broadcast_tx.clone();
                                         tokio::spawn(async move {
+                                            // Insert job locally with provided id
+                                            let _ = job_mgr.submit_job(job.clone(), Some(origin_node_id.clone()), Some(job_id.clone())).await;
                                             // Check if this node is eligible to execute the job
                                             let mut eligible = true;
                                             if let Some(t) = &job.targeting {
@@ -1057,29 +1088,21 @@ pub async fn run_agent(
                                                     eligible = t.node_ids.iter().any(|id| id == &node_id);
                                                 }
                                             }
-                                            
+
                                             if !eligible {
                                                 let _ = push_log(&logsj, "system", format!("Job {} not eligible for this node, ignoring", job.name)).await;
                                                 return;
                                             }
-                                            
+
                                             // This node is eligible - check if job is already accepted by another node
-                                            if let Some(existing) = job_mgr.get_job(&format!("{}-{}", job.name, "pending")).await {
+                                            if let Some(existing) = job_mgr.get_job(&job_id).await {
                                                 if existing.assigned_node.is_some() {
                                                     let _ = push_log(&logsj, "system", format!("Job {} already accepted by another node", job.name)).await;
                                                     return;
                                                 }
                                             }
-                                            
+
                                             // Accept the job and broadcast acceptance
-                                            let job_id = match job_mgr.submit_job(job.clone()).await {
-                                                Ok(id) => id,
-                                                Err(e) => {
-                                                    let _ = txj.send(Err(format!("job submission failed: {}", e)));
-                                                    return;
-                                                }
-                                            };
-                                            
                                             // Mark this node as the assigned executor
                                             let _ = job_mgr.assign_job(&job_id, &node_id).await;
                                             
@@ -1142,7 +1165,7 @@ pub async fn run_agent(
                                                         let oneshot_job_id = job_id.clone();
                                                         let oneshot_job = job.clone();
                                                         let oneshot_logs = logsj.clone();
-                                                        let oneshot_tx = txj.clone();
+                                                        let oneshot_tx = tx.clone();
                                                         let oneshot_storage_tx = storage_tx.clone();
                                                         let oneshot_broadcast_tx = job_broadcast_tx_clone.clone();
                                                         let oneshot_node_id = node_id.clone();
@@ -1158,7 +1181,7 @@ pub async fn run_agent(
                                                         let recurring_job_id = job_id.clone();
                                                         let recurring_job = job.clone();
                                                         let recurring_logs = logsj.clone();
-                                                        let recurring_tx = txj.clone();
+                                                        let recurring_tx = tx.clone();
                                                         let recurring_storage_tx = storage_tx.clone();
                                                         let recurring_broadcast_tx = job_broadcast_tx_clone.clone();
                                                         let recurring_node_id = node_id.clone();
@@ -1176,7 +1199,7 @@ pub async fn run_agent(
                                                         let service_job_id = job_id.clone();
                                                         let service_job = job.clone();
                                                         let service_logs = logsj.clone();
-                                                        let service_tx = txj.clone();
+                                                        let service_tx = tx.clone();
                                                         
                                                         let handle = tokio::spawn(async move {
                                                             if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
@@ -1192,6 +1215,17 @@ pub async fn run_agent(
                                                 let _ = job_mgr.add_job_log(&job_id, "info".to_string(), "Job not selected for execution on this node".to_string()).await;
                                             }
                                         });
+                                    }
+                                    Command::JobSyncRequest { .. } => {
+                                        let mut jobs = job_manager.list_jobs(None, usize::MAX).await;
+                                        jobs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                                        let mut trimmed = Vec::new();
+                                        for mut j in jobs.into_iter().take(32) {
+                                            j.logs.clear();
+                                            trimmed.push(j);
+                                        }
+                                        let msg = Command::SyncJobs { node_id: local_peer_id.to_string(), jobs: trimmed };
+                                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
                                     }
                                     Command::QueryJobs { status_filter, limit } => {
                                         let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
@@ -1253,6 +1287,9 @@ pub async fn run_agent(
                                             }
                                         }
                                     }
+                                    Command::SyncJobs { jobs, .. } => {
+                                        let _ = job_manager.sync_jobs(jobs).await;
+                                    }
                                     Command::AnnouncePeers { peers } => {
                                         // Gossip-based peer exchange: dial and add explicit peers
                                         for addr_str in peers.iter() {
@@ -1296,6 +1333,15 @@ pub async fn run_agent(
                         for pending in pending_job_broadcasts.values_mut() {
                             pending.peers.insert(peer_id.clone());
                         }
+                        let mut jobs = job_manager.list_jobs(None, usize::MAX).await;
+                        jobs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                        let mut trimmed = Vec::new();
+                        for mut j in jobs.into_iter().take(32) {
+                            j.logs.clear();
+                            trimmed.push(j);
+                        }
+                        let msg = Command::SyncJobs { node_id: local_peer_id.to_string(), jobs: trimmed };
+                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
                     }
                     SwarmEvent::ConnectionClosed { .. } => {
                         link_count = link_count.saturating_sub(1);
