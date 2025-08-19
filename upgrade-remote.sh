@@ -61,7 +61,7 @@ echo "🔎 Resolving build job ID from network..."
 BUILD_JOB_ID=""
 for i in $(seq 1 30); do
   # Look for the most recently submitted build job that's still active (exclude completed/failed/cancelled)
-  BUILD_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy" and (.status == "pending" or .status == "running"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
+  BUILD_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy" and (.status == "pending" or .status == "running" or .status == "started"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
   [ -n "$BUILD_JOB_ID" ] && break
   echo "   Waiting for active job to appear in network... (attempt $i/30)"
   sleep 2
