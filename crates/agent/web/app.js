@@ -67,6 +67,7 @@ class RealmApp {
                         this.showSuccess('Package deployed');
                         this.addActivity(`Deployed package${info?.name ? `: ${info.name}` : ''}`);
                         deployPkgForm.reset();
+                        document.getElementById('pkg-preview')?.classList.add('hidden');
                         this.switchView('components');
                     } else {
                         const t = await res.text();
@@ -76,6 +77,31 @@ class RealmApp {
                     this.hideLoading();
                 }
             });
+
+            // Inspect package preview
+            const inspectBtn = document.getElementById('inspect-pkg');
+            const fileInput = document.getElementById('deploy-pkg-file');
+            if (inspectBtn && fileInput) {
+                inspectBtn.addEventListener('click', async () => {
+                    const file = fileInput.files && fileInput.files[0];
+                    if (!file) { this.showError('Select a package file first'); return; }
+                    const fd = new FormData();
+                    fd.append('file', file);
+                    try {
+                        this.showLoading('Inspecting package...');
+                        const res = await fetch('/api/deploy-package/inspect', { method: 'POST', headers: { 'Authorization': `Bearer ${this.sessionToken}` }, body: fd });
+                        if (!res.ok) {
+                            const t = await res.text();
+                            this.showError(`Inspect failed: ${t}`);
+                            return;
+                        }
+                        const data = await res.json();
+                        this.renderPackagePreview(data);
+                    } finally {
+                        this.hideLoading();
+                    }
+                });
+            }
         }
 
         // Discover nodes
@@ -229,6 +255,8 @@ class RealmApp {
                 setupJobsHandlersModule(this);
                 break;
             case 'ops':
+                await this.loadVolumes();
+                await this.loadDeployHistory();
                 break;
             case 'logs':
                 await populateLogComponentsModule(this);
@@ -612,6 +640,97 @@ class RealmApp {
         }
         
         this.lastMetrics = metrics;
+    }
+
+    renderPackagePreview(data) {
+        const box = document.getElementById('pkg-preview');
+        const comp = document.getElementById('pkg-component');
+        const mounts = document.getElementById('pkg-mounts');
+        const files = document.getElementById('pkg-files');
+        if (!box || !comp || !mounts || !files) return;
+        comp.textContent = `${data.component?.name || '-'} → ${data.component?.wasm || '-'} (${data.component?.sha256 || 'no sha'})`;
+        mounts.innerHTML = '';
+        (data.mounts || []).forEach(m => {
+            const li = document.createElement('li');
+            li.textContent = `${m.kind} ${m.ro ? '(ro)' : '(rw)'}: ${m.host} → ${m.guest}`;
+            mounts.appendChild(li);
+        });
+        files.innerHTML = '';
+        (data.files || []).forEach(f => {
+            const d = document.createElement('div');
+            d.textContent = `${f.is_dir ? '📁' : '📄'} ${f.path}${!f.is_dir ? ` (${f.size} bytes)` : ''}`;
+            files.appendChild(d);
+        });
+        box.classList.remove('hidden');
+    }
+
+    async loadVolumes() {
+        try {
+            const res = await this.apiCall('/api/volumes');
+            const vols = await res.json();
+            const root = document.getElementById('volumes-list');
+            if (!root) return;
+            if (!vols.length) { root.textContent = 'No persistent volumes'; return; }
+            root.innerHTML = '';
+            vols.forEach(v => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between border-b border-graphite py-2';
+                row.innerHTML = `
+                    <div>
+                        <div class="font-mono text-xs text-gray-300">${v.path}</div>
+                        <div class="text-xs text-gray-400">${v.name} • ${v.size_mb} MB • ${v.files} files</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="border border-graphite px-2 py-1 rounded text-xs" data-act="open" data-path="${v.path}">Open</button>
+                        <button class="text-red-400 hover:text-red-300 text-xs" data-act="clear" data-name="${v.name}">Clear</button>
+                    </div>
+                `;
+                // Bind actions
+                row.querySelector('[data-act="clear"]').addEventListener('click', async (e) => {
+                    const name = e.currentTarget.getAttribute('data-name');
+                    if (!confirm(`Clear volume \"${name}\"? This cannot be undone.`)) return;
+                    try {
+                        await this.apiCall('/api/volumes/clear', { method: 'POST', body: JSON.stringify({ name }) });
+                        this.showSuccess('Volume cleared');
+                        this.loadVolumes();
+                    } catch (err) {
+                        this.showError('Failed to clear volume');
+                    }
+                });
+                row.querySelector('[data-act="open"]').addEventListener('click', (e) => {
+                    const p = e.currentTarget.getAttribute('data-path');
+                    this.showModal('Volume Path', `<pre class="text-xs whitespace-pre-wrap">${p}</pre>`);
+                });
+                root.appendChild(row);
+            });
+        } catch (e) {
+            const root = document.getElementById('volumes-list');
+            if (root) root.textContent = 'Failed to load volumes';
+        }
+    }
+
+    async loadDeployHistory() {
+        try {
+            const res = await this.apiCall('/api/deploy-history');
+            const items = await res.json();
+            const box = document.getElementById('deploy-history');
+            if (!box) return;
+            if (!items.length) { box.textContent = 'No deployments yet.'; return; }
+            box.innerHTML = '';
+            items.forEach(it => {
+                const div = document.createElement('div');
+                div.className = 'border-b border-graphite py-2';
+                const ts = it.timestamp ? new Date(it.timestamp * 1000).toLocaleString() : 'now';
+                div.innerHTML = `
+                    <div class="text-sm">${it.component} — <span class="font-mono">${it.digest?.slice(0, 12) || '-'}</span></div>
+                    <div class="text-xs text-gray-400">${ts}</div>
+                `;
+                box.appendChild(div);
+            });
+        } catch (e) {
+            const box = document.getElementById('deploy-history');
+            if (box) box.textContent = 'Failed to load deployment history';
+        }
     }
 
     addLogLine(timestamp, component, message) {

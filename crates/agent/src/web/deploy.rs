@@ -339,6 +339,16 @@ pub async fn api_deploy_package_inspect(mut multipart: Multipart) -> impl IntoRe
         Err(_) => return (StatusCode::BAD_REQUEST, "manifest.toml not found").into_response(),
     }
     let pkg_manifest: PackageManifest = match toml::from_str(&manifest_text) { Ok(m) => m, Err(e) => return (StatusCode::BAD_REQUEST, format!("manifest parse error: {}", e)).into_response() };
+    // Build file inventory
+    let mut files: Vec<serde_json::Value> = Vec::new();
+    for i in 0..archive.len() {
+        if let Ok(f) = archive.by_index(i) {
+            let name = f.name().to_string();
+            let is_dir = name.ends_with('/');
+            let size = if is_dir { 0 } else { f.size() };
+            files.push(json!({ "path": name, "is_dir": is_dir, "size": size }));
+        }
+    }
     // Construct proposed host mounts (without touching disk)
     let comp_name = pkg_manifest.component.name.clone();
     let mut mounts: Vec<serde_json::Value> = Vec::new();
@@ -361,6 +371,7 @@ pub async fn api_deploy_package_inspect(mut multipart: Multipart) -> impl IntoRe
     let body = json!({
         "component": { "name": pkg_manifest.component.name, "wasm": pkg_manifest.component.wasm, "sha256": pkg_manifest.component.sha256 },
         "mounts": mounts,
+        "files": files,
     });
     Response::builder().status(StatusCode::OK).header(header::CONTENT_TYPE, "application/json").body(axum::body::Body::from(serde_json::to_vec(&body).unwrap())).unwrap()
 }

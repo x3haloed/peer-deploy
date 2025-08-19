@@ -11,6 +11,8 @@ mod connect;
 mod install;
 mod discover;
 mod components_ops;
+mod volumes;
+mod history;
 
 pub use types::*;
 pub use handlers::{api_status, api_nodes, api_components, api_logs, api_push_multipart, api_upgrade_multipart, api_apply_multipart, api_install_cli, api_install_agent, api_connect_peer, api_discover, api_component_restart, api_component_stop};
@@ -18,6 +20,8 @@ pub use jobs::{api_jobs_list, api_jobs_submit, api_jobs_get, api_jobs_cancel, ap
 pub use websocket::*;
 pub use utils::*;
 pub use deploy::{api_deploy, api_deploy_multipart, api_deploy_package_multipart, api_deploy_package_inspect, api_log_components, install_package_from_bytes};
+pub use volumes::{api_volumes_list, api_volumes_clear};
+pub use history::{api_deploy_history};
 
 use anyhow::Result;
 use axum::{
@@ -56,6 +60,9 @@ fn create_app(state: WebState, session_id: String) -> Router {
         .route("/api/discover", post(api_discover))
         .route("/api/connect", post(api_connect_peer))
         .route("/api/log-components", get(api_log_components))
+        .route("/api/volumes", get(api_volumes_list))
+        .route("/api/volumes/clear", post(api_volumes_clear))
+        .route("/api/deploy-history", get(api_deploy_history))
         .route("/api/push", post(api_push_multipart))
         .route("/api/upgrade", post(api_upgrade_multipart))
         .route("/api/apply", post(api_apply_multipart))

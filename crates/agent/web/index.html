@@ -283,13 +283,30 @@
                             </div>
                             <div>
                                 <label class="block text-sm text-gray-300 mb-1">.realm Package File</label>
-                                <input type="file" name="file" accept=".realm,.zip" required class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                <input type="file" name="file" accept=".realm,.zip" required class="w-full bg-graphite border border-graphite rounded px-3 py-2" id="deploy-pkg-file">
                                 <p class="text-xs text-gray-400 mt-1">Upload a package bundle with manifest.toml, component.wasm and assets</p>
                             </div>
-                            <div>
+                            <div class="flex gap-3">
+                                <button type="button" id="inspect-pkg" class="border border-graphite px-4 py-2 rounded-lg text-sm">Inspect</button>
                                 <button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium">Deploy Package</button>
                             </div>
                         </form>
+
+                        <div id="pkg-preview" class="mt-4 hidden bg-charcoal border border-graphite rounded-lg p-4">
+                            <h4 class="font-semibold mb-2">Package Preview</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <div class="text-sm text-gray-400 mb-1">Component</div>
+                                    <div id="pkg-component" class="text-sm"></div>
+                                    <div class="text-sm text-gray-400 mt-3 mb-1">Mounts</div>
+                                    <ul id="pkg-mounts" class="text-sm list-disc pl-5"></ul>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-gray-400 mb-1">Files</div>
+                                    <div id="pkg-files" class="text-xs max-h-48 overflow-y-auto bg-graphite rounded p-2"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
@@ -441,6 +458,18 @@
                                     <button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded-lg text-sm font-medium">Connect</button>
                                 </div>
                             </form>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                        <div class="bg-charcoal border border-graphite rounded-lg p-6">
+                            <h3 class="font-semibold mb-4">Persistent Volumes</h3>
+                            <div class="text-sm text-gray-400 mb-2">List and manage state volumes provisioned by packages.</div>
+                            <div id="volumes-list" class="text-sm">Loading...</div>
+                        </div>
+                        <div class="bg-charcoal border border-graphite rounded-lg p-6">
+                            <h3 class="font-semibold mb-4">Deployment History</h3>
+                            <div id="deploy-history" class="text-sm">No deployments yet.</div>
                         </div>
                     </div>
                 </section>
