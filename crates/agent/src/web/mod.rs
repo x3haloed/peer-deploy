@@ -17,7 +17,7 @@ pub use handlers::{api_status, api_nodes, api_components, api_logs, api_push_mul
 pub use jobs::{api_jobs_list, api_jobs_submit, api_jobs_get, api_jobs_cancel, api_jobs_logs, api_jobs_artifacts, api_jobs_artifact_download};
 pub use websocket::*;
 pub use utils::*;
-pub use deploy::{api_deploy, api_deploy_multipart, api_deploy_package_multipart, api_log_components};
+pub use deploy::{api_deploy, api_deploy_multipart, api_deploy_package_multipart, api_deploy_package_inspect, api_log_components, install_package_from_bytes};
 
 use anyhow::Result;
 use axum::{
@@ -52,6 +52,7 @@ fn create_app(state: WebState, session_id: String) -> Router {
         .route("/api/deploy", post(api_deploy))
         .route("/api/deploy-multipart", post(api_deploy_multipart))
         .route("/api/deploy-package", post(api_deploy_package_multipart))
+        .route("/api/deploy-package/inspect", post(api_deploy_package_inspect))
         .route("/api/discover", post(api_discover))
         .route("/api/connect", post(api_connect_peer))
         .route("/api/log-components", get(api_log_components))

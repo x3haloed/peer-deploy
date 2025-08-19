@@ -28,6 +28,7 @@ pub use enroll::enroll;
 pub use deploy::deploy_component;
 pub use configure::configure;
 pub use push::push;
+pub use push::push_package;
 pub use diag::diag_quic;
 pub use whoami::whoami;
 pub use package::package_create;

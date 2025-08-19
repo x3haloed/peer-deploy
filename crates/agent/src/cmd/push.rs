@@ -118,3 +118,14 @@ pub async fn push(
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     Ok(())
 }
+
+/// Deploy a .realm package via CLI by calling the same internal installer as the web API.
+pub async fn push_package(file: String, name_override: Option<String>) -> anyhow::Result<()> {
+    let bytes = tokio::fs::read(&file).await.context("read package")?;
+    // Connect to management web state directly (local agent)
+    let state = crate::web::connect_to_agent().await?;
+    let (_name, _digest) = crate::web::install_package_from_bytes(&state, bytes, name_override).await
+        .map_err(|e: String| anyhow::anyhow!(e))?;
+    println!("Package deployed");
+    Ok(())
+}

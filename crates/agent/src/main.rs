@@ -121,6 +121,15 @@ enum Commands {
         #[arg(long, default_value_t = true)]
         start: bool,
     },
+    /// Deploy a .realm package locally (installs and starts component)
+    DeployPackage {
+        /// Path to .realm file
+        #[arg(long)]
+        file: String,
+        /// Optional name override
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Create a signed invite token for bootstrapping a new peer
     Invite {
         #[arg(long)]
@@ -308,6 +317,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Whoami) => cmd::whoami().await,
         Some(Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start }) => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
         Some(Commands::DeployComponent { path, package, profile, features, target_peers, target_tags, name, start }) => cmd::deploy_component(path, package, profile, features, target_peers, target_tags, name, start).await,
+        Some(Commands::DeployPackage { file, name }) => cmd::push_package(file, name).await,
         Some(Commands::Package(pkg_cmd)) => match pkg_cmd {
             PackageCommands::Create { dir, name, output } => cmd::package_create(dir, name, output).await,
         },
