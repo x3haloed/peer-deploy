@@ -64,7 +64,7 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
     for specifier in use_artifacts.into_iter() {
         if let Some((jid, name)) = specifier.split_once(':') {
             let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-            let job_manager = JobManager::new(data_dir);
+            let job_manager = JobManager::new(data_dir, "unknown".to_string());
             let _ = job_manager.load_from_disk().await;
             if let Some(prev) = job_manager.get_job(jid).await {
                 if let Some(art) = prev.artifacts.iter().find(|a| a.name == name) {
@@ -83,21 +83,36 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
         }
     }
 
-    let msg = Command::SubmitJob(spec.clone());
-    
+    let node_id = swarm.local_peer_id().to_string();
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = JobManager::new(data_dir, node_id.clone());
+    let _ = job_manager.load_from_disk().await;
+    let job_id = job_manager.submit_job(spec.clone(), Some(node_id.clone()), None).await?;
+    let msg = Command::SubmitJob { origin_node_id: node_id.clone(), job_id: job_id.clone(), spec: spec.clone() };
+
     // publish job command
     swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg))?;
-    
+
     // drive the swarm to flush the message (wait up to 2s for gossip propagation)
     let _ = tokio::time::timeout(Duration::from_secs(2), swarm.select_next_some()).await;
-    
-    println!("Job '{}' submitted successfully", spec.name);
+
+    println!("Job '{}' submitted successfully", job_id);
     Ok(())
 }
 
-pub async fn list_jobs(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
+pub async fn list_jobs(status_filter: Option<String>, limit: usize, fresh: bool) -> anyhow::Result<()> {
+    if fresh {
+        let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
+        libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+        mdns_warmup(&mut swarm).await;
+        dial_bootstrap(&mut swarm).await;
+        let msg = Command::JobSyncRequest { node_id: swarm.local_peer_id().to_string() };
+        swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg))?;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = JobManager::new(data_dir);
+    let job_manager = JobManager::new(data_dir, "unknown".to_string());
     
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
@@ -116,7 +131,7 @@ pub async fn list_jobs(status_filter: Option<String>, limit: usize) -> anyhow::R
 
 pub async fn list_jobs_json(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = JobManager::new(data_dir);
+    let job_manager = JobManager::new(data_dir, "unknown".to_string());
     if let Err(e) = job_manager.load_from_disk().await { eprintln!("Warning: Failed to load job state: {}", e); }
     let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
     println!("{}", serde_json::to_string_pretty(&jobs)?);
@@ -125,7 +140,7 @@ pub async fn list_jobs_json(status_filter: Option<String>, limit: usize) -> anyh
 
 pub async fn job_status_json(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = JobManager::new(data_dir);
+    let job_manager = JobManager::new(data_dir, "unknown".to_string());
     if let Err(e) = job_manager.load_from_disk().await { eprintln!("Warning: Failed to load job state: {}", e); }
     if let Some(job) = job_manager.get_job(&job_id).await { println!("{}", serde_json::to_string_pretty(&job)?); } else { eprintln!("Job '{}' not found", job_id); }
     Ok(())
@@ -147,7 +162,7 @@ pub async fn net_list_jobs_json(status_filter: Option<String>, limit: usize) -> 
             _ = tokio::time::sleep_until(deadline.into()) => {
                 // No network response; fallback to local job list
                 let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-                let job_manager = JobManager::new(data_dir);
+                let job_manager = JobManager::new(data_dir, "unknown".to_string());
                 let _ = job_manager.load_from_disk().await;
                 let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
                 println!("{}", serde_json::to_string_pretty(&jobs)?);
@@ -184,7 +199,7 @@ pub async fn net_status_job_json(job_id: String) -> anyhow::Result<()> {
             _ = tokio::time::sleep_until(deadline.into()) => {
                 // No network response; fallback to local job status
                 let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-                let job_manager = JobManager::new(data_dir);
+                let job_manager = JobManager::new(data_dir, "unknown".to_string());
                 let _ = job_manager.load_from_disk().await;
                 if let Some(job) = job_manager.get_job(&job_id).await {
                     println!("{}", serde_json::to_string_pretty(&job)?);
@@ -228,7 +243,7 @@ pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
             _ = tokio::time::sleep_until(deadline.into()) => {
                 // Include local job status if not already seen
                 let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-                let job_manager = JobManager::new(data_dir);
+                let job_manager = JobManager::new(data_dir, "unknown".to_string());
                 let _ = job_manager.load_from_disk().await;
                 if let Some(local_job) = job_manager.get_job(&job_id).await {
                     responses.insert("local".to_string(), local_job);
@@ -282,7 +297,7 @@ pub async fn net_list_jobs_json_all(status_filter: Option<String>, limit: usize)
             _ = tokio::time::sleep_until(deadline.into()) => {
                 // Include local job list if not already seen
                 let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-                let job_manager = JobManager::new(data_dir);
+                let job_manager = JobManager::new(data_dir, "unknown".to_string());
                 let _ = job_manager.load_from_disk().await;
                 let local_jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
                 responses.insert("local".to_string(), local_jobs);
@@ -333,7 +348,7 @@ struct AggregatedJobList {
 
 pub async fn job_status(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = JobManager::new(data_dir);
+    let job_manager = JobManager::new(data_dir, "unknown".to_string());
     
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
@@ -350,7 +365,7 @@ pub async fn job_status(job_id: String) -> anyhow::Result<()> {
 
 pub async fn cancel_job(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = JobManager::new(data_dir);
+    let job_manager = JobManager::new(data_dir, "unknown".to_string());
     
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
@@ -379,7 +394,7 @@ pub async fn cancel_job(job_id: String) -> anyhow::Result<()> {
 
 pub async fn job_logs(job_id: String, tail: usize, follow: bool) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = JobManager::new(data_dir);
+    let job_manager = JobManager::new(data_dir, "unknown".to_string());
     
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
@@ -440,12 +455,17 @@ pub async fn submit_job_from_spec(spec: JobSpec) -> anyhow::Result<()> {
     let _kp_bytes = tokio::fs::read(&key_path).await.context("read owner key")?;
     let _kp: OwnerKeypair = serde_json::from_slice(&_kp_bytes)?;
 
-    let msg = Command::SubmitJob(spec.clone());
+    let node_id = swarm.local_peer_id().to_string();
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = JobManager::new(data_dir, node_id.clone());
+    let _ = job_manager.load_from_disk().await;
+    let job_id = job_manager.submit_job(spec.clone(), Some(node_id.clone()), None).await?;
+    let msg = Command::SubmitJob { origin_node_id: node_id.clone(), job_id: job_id.clone(), spec: spec.clone() };
     // publish job command
     swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg))?;
     // drive the swarm to flush the message (wait up to 2s for gossip propagation)
     let _ = tokio::time::timeout(Duration::from_secs(2), swarm.select_next_some()).await;
-    println!("Job '{}' submitted successfully", spec.name);
+    println!("Job '{}' submitted successfully", job_id);
     Ok(())
 }
 
@@ -555,7 +575,7 @@ fn format_timestamp(unix_timestamp: u64) -> String {
 
 pub async fn job_artifacts(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = JobManager::new(data_dir);
+    let job_manager = JobManager::new(data_dir, "unknown".to_string());
     
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
@@ -587,7 +607,7 @@ pub async fn job_artifacts(job_id: String) -> anyhow::Result<()> {
 
 pub async fn job_download(job_id: String, artifact_name: String, output: Option<String>) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = JobManager::new(data_dir);
+    let job_manager = JobManager::new(data_dir, "unknown".to_string());
     
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
@@ -619,7 +639,7 @@ pub async fn job_download(job_id: String, artifact_name: String, output: Option<
 
 pub async fn job_artifacts_json(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = JobManager::new(data_dir);
+    let job_manager = JobManager::new(data_dir, "unknown".to_string());
     if let Err(e) = job_manager.load_from_disk().await { eprintln!("Warning: Failed to load job state: {}", e); }
     if let Some(job) = job_manager.get_job(&job_id).await {
         println!("{}", serde_json::to_string_pretty(&job.artifacts)?);

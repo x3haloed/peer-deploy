@@ -168,6 +168,7 @@ realm job submit build-job.toml --use-artifact build-peer-deploy-1:realm-linux-x
 - Web UI workflow:
   - Jobs → New → paste/edit Job TOML
   - Add files under “Attachments (optional)”; preview shows `/tmp/assets/<filename>` and sha256
+  - Cluster peers periodically gossip job states; `realm job list` shows the same data on any node. Use `--fresh` to request an immediate sync before listing.
   - Submit; assets are pushed to CAS (inline ≤8 MiB, chunked otherwise), announced via P2P, and pre-staged on target before execution
 - Size limits & transport:
   - Inline uploads up to ~8 MiB per message

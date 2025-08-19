@@ -19,7 +19,7 @@ pub async fn api_jobs_list(State(_state): State<WebState>, Query(params): Query<
         Err(e) => {
             tracing::warn!(error=%e, "net_query_jobs failed; falling back to local state");
             let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-            let job_manager = crate::job_manager::JobManager::new(data_dir);
+            let job_manager = crate::job_manager::JobManager::new(data_dir, "unknown".to_string());
             if let Err(e) = job_manager.load_from_disk().await { tracing::warn!("Failed to load job state: {}", e); }
             let jobs = job_manager.list_jobs(params.status.as_deref(), limit).await;
             Json(jobs)
@@ -86,7 +86,7 @@ pub async fn api_jobs_get(State(_state): State<WebState>, Path(job_id): Path<Str
         Err(e) => {
             tracing::warn!(error=%e, "net_query_job_status failed; falling back to local state");
             let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-            let job_manager = crate::job_manager::JobManager::new(data_dir);
+            let job_manager = crate::job_manager::JobManager::new(data_dir, "unknown".to_string());
             if let Err(e) = job_manager.load_from_disk().await { tracing::warn!("Failed to load job state: {}", e); }
             match job_manager.get_job(&job_id).await {
                 Some(job) => Json(job).into_response(),
@@ -98,7 +98,7 @@ pub async fn api_jobs_get(State(_state): State<WebState>, Path(job_id): Path<Str
 
 pub async fn api_jobs_cancel(State(state): State<WebState>, Path(job_id): Path<String>) -> impl IntoResponse {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    let job_manager = crate::job_manager::JobManager::new(data_dir, "unknown".to_string());
     if let Err(e) = job_manager.load_from_disk().await {
         tracing::warn!("Failed to load job state: {}", e);
     }
@@ -114,7 +114,7 @@ pub async fn api_jobs_cancel(State(state): State<WebState>, Path(job_id): Path<S
 
 pub async fn api_jobs_logs(State(_state): State<WebState>, Path(job_id): Path<String>) -> impl IntoResponse {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    let job_manager = crate::job_manager::JobManager::new(data_dir, "unknown".to_string());
     if let Err(e) = job_manager.load_from_disk().await {
         tracing::warn!("Failed to load job state: {}", e);
     }
@@ -126,7 +126,7 @@ pub async fn api_jobs_logs(State(_state): State<WebState>, Path(job_id): Path<St
 
 pub async fn api_jobs_artifacts(State(_state): State<WebState>, Path(job_id): Path<String>) -> impl IntoResponse {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    let job_manager = crate::job_manager::JobManager::new(data_dir, "unknown".to_string());
     if let Err(e) = job_manager.load_from_disk().await {
         tracing::warn!("Failed to load job state: {}", e);
     }
@@ -138,7 +138,7 @@ pub async fn api_jobs_artifacts(State(_state): State<WebState>, Path(job_id): Pa
 
 pub async fn api_jobs_artifact_download(Path((job_id, name)): Path<(String, String)>) -> impl IntoResponse {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-    let job_manager = crate::job_manager::JobManager::new(data_dir);
+    let job_manager = crate::job_manager::JobManager::new(data_dir, "unknown".to_string());
     if let Err(e) = job_manager.load_from_disk().await {
         tracing::warn!("Failed to load job state: {}", e);
     }
