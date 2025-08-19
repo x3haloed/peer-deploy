@@ -263,9 +263,23 @@ enum JobCommands {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
+    /// List jobs as JSON (for scripts)
+    ListJson {
+        /// Show only jobs with this status (pending, running, completed, failed)
+        #[arg(long)]
+        status: Option<String>,
+        /// Maximum number of jobs to show
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
     /// Show detailed status of a specific job
     Status {
         /// Job ID or name to query
+        job_id: String,
+    },
+    /// Show detailed status of a specific job (JSON)
+    StatusJson {
+        /// Job ID to query (must be full ID)
         job_id: String,
     },
     /// Cancel a running or scheduled job
@@ -379,7 +393,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Job(job_cmd)) => match job_cmd {
             JobCommands::Submit { file, assets, use_artifacts } => cmd::submit_job(file, assets, use_artifacts).await,
             JobCommands::List { status, limit } => cmd::list_jobs(status, limit).await,
+            JobCommands::ListJson { status, limit } => cmd::list_jobs_json(status, limit).await,
             JobCommands::Status { job_id } => cmd::job_status(job_id).await,
+            JobCommands::StatusJson { job_id } => cmd::job_status_json(job_id).await,
             JobCommands::Cancel { job_id } => cmd::cancel_job(job_id).await,
             JobCommands::Logs { job_id, tail, follow } => cmd::job_logs(job_id, tail, follow).await,
             JobCommands::Artifacts { job_id } => cmd::job_artifacts(job_id).await,

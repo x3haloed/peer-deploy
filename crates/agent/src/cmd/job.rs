@@ -109,6 +109,23 @@ pub async fn list_jobs(status_filter: Option<String>, limit: usize) -> anyhow::R
     Ok(())
 }
 
+pub async fn list_jobs_json(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = JobManager::new(data_dir);
+    if let Err(e) = job_manager.load_from_disk().await { eprintln!("Warning: Failed to load job state: {}", e); }
+    let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
+    println!("{}", serde_json::to_string_pretty(&jobs)?);
+    Ok(())
+}
+
+pub async fn job_status_json(job_id: String) -> anyhow::Result<()> {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = JobManager::new(data_dir);
+    if let Err(e) = job_manager.load_from_disk().await { eprintln!("Warning: Failed to load job state: {}", e); }
+    if let Some(job) = job_manager.get_job(&job_id).await { println!("{}", serde_json::to_string_pretty(&job)?); } else { eprintln!("Job '{}' not found", job_id); }
+    Ok(())
+}
+
 pub async fn job_status(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir);
