@@ -13,7 +13,6 @@ use common::Status;
 #[derive(Clone)]
 pub struct Session {
     pub id: String,
-    pub created_at: SystemTime,
     pub last_active: SystemTime,
     pub authenticated: bool,
 }
@@ -23,7 +22,6 @@ impl Session {
         let now = SystemTime::now();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            created_at: now,
             last_active: now,
             authenticated: false,
         }
@@ -88,17 +86,6 @@ impl WebState {
             if !session.is_expired() {
                 session.touch();
                 session.authenticated = true;
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn validate_session(&self, session_id: &str) -> bool {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(session) = sessions.get_mut(session_id) {
-            if session.authenticated && !session.is_expired() {
-                session.touch();
                 return true;
             }
         }

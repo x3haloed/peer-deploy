@@ -115,6 +115,7 @@ impl ContentStore {
         }
     }
 
+    #[allow(dead_code)]
     pub fn total_size_bytes(&self) -> u64 {
         let idx = self.load_index();
         idx.entries.values().map(|e| e.size_bytes).sum()

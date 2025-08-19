@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use axum::{
     extract::Multipart,
     http::StatusCode,

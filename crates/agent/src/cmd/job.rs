@@ -225,6 +225,7 @@ pub async fn net_status_job_json(job_id: String) -> anyhow::Result<()> {
 }
 
 /// Query a specific job over the network and collect responses from all nodes
+#[allow(dead_code)]
 pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
     use futures::StreamExt;
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
@@ -278,6 +279,7 @@ pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
 }
 
 /// Query jobs over the network and collect responses from all nodes
+#[allow(dead_code)]
 pub async fn net_list_jobs_json_all(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
     use futures::StreamExt;
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
@@ -331,6 +333,7 @@ pub async fn net_list_jobs_json_all(status_filter: Option<String>, limit: usize)
     }
 }
 
+#[allow(dead_code)]
 #[derive(serde::Serialize)]
 struct AggregatedJobStatus {
     job_id: String,
@@ -338,6 +341,7 @@ struct AggregatedJobStatus {
     total_nodes: usize,
 }
 
+#[allow(dead_code)]
 #[derive(serde::Serialize)]
 struct AggregatedJobList {
     status_filter: Option<String>,
