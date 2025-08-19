@@ -274,3 +274,67 @@ fn format_timestamp(unix_timestamp: u64) -> String {
         Err(_) => "future".to_string(),
     }
 }
+
+pub async fn job_artifacts(job_id: String) -> anyhow::Result<()> {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = JobManager::new(data_dir);
+    
+    if let Err(e) = job_manager.load_from_disk().await {
+        eprintln!("Warning: Failed to load job state: {}", e);
+    }
+
+    if let Some(job) = job_manager.get_job(&job_id).await {
+        if job.artifacts.is_empty() {
+            println!("No artifacts found for job '{}'", job_id);
+        } else {
+            println!("Artifacts for job '{}':", job_id);
+            println!("{:<20} {:<15} {:<30}", "NAME", "SIZE", "STORED PATH");
+            println!("{}", "-".repeat(70));
+            
+            for artifact in &job.artifacts {
+                let size_str = if let Some(size) = artifact.size_bytes {
+                    format!("{} bytes", size)
+                } else {
+                    "unknown".to_string()
+                };
+                println!("{:<20} {:<15} {:<30}", artifact.name, size_str, artifact.stored_path);
+            }
+        }
+    } else {
+        println!("Job '{}' not found", job_id);
+    }
+    
+    Ok(())
+}
+
+pub async fn job_download(job_id: String, artifact_name: String, output: Option<String>) -> anyhow::Result<()> {
+    let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+    let job_manager = JobManager::new(data_dir);
+    
+    if let Err(e) = job_manager.load_from_disk().await {
+        eprintln!("Warning: Failed to load job state: {}", e);
+    }
+
+    if let Some(job) = job_manager.get_job(&job_id).await {
+        if let Some(_artifact) = job.artifacts.iter().find(|a| a.name == artifact_name) {
+            // Get staged artifact path
+            let staged_path = job_manager.get_artifact_path(&job_id, &artifact_name);
+            
+            if !staged_path.exists() {
+                eprintln!("Artifact '{}' not found in staged location", artifact_name);
+                return Ok(());
+            }
+            
+            let output_path = output.unwrap_or_else(|| artifact_name.clone());
+            
+            tokio::fs::copy(&staged_path, &output_path).await?;
+            println!("Downloaded artifact '{}' to '{}'", artifact_name, output_path);
+        } else {
+            println!("Artifact '{}' not found for job '{}'", artifact_name, job_id);
+        }
+    } else {
+        println!("Job '{}' not found", job_id);
+    }
+    
+    Ok(())
+}

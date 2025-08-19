@@ -1,10 +1,13 @@
 use anyhow::Result;
-use common::{JobSpec, JobInstance, JobStatus, JobArtifact};
+use common::{JobSpec, JobInstance, JobStatus, JobArtifact, JobType};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
 use tracing::{info, warn};
+use cron::Schedule;
+use std::str::FromStr;
 
 type JobId = String;
 
@@ -12,6 +15,12 @@ type JobId = String;
 pub struct JobManagerState {
     pub jobs: HashMap<JobId, JobInstance>,
     pub next_id: u64,
+}
+
+#[derive(Debug)]
+pub struct RunningJob {
+    pub handle: JoinHandle<()>,
+    pub cancel_tx: tokio::sync::oneshot::Sender<()>,
 }
 
 impl Default for JobManagerState {
@@ -26,6 +35,7 @@ impl Default for JobManagerState {
 pub struct JobManager {
     state: Arc<Mutex<JobManagerState>>,
     data_dir: std::path::PathBuf,
+    running_jobs: Arc<Mutex<HashMap<JobId, RunningJob>>>,
 }
 
 impl JobManager {
@@ -33,6 +43,7 @@ impl JobManager {
         Self {
             state: Arc::new(Mutex::new(JobManagerState::default())),
             data_dir,
+            running_jobs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -126,6 +137,14 @@ impl JobManager {
                 job.add_log("warn".to_string(), "Job cancelled".to_string());
                 drop(state);
                 
+                // Send cancellation signal to running job if it exists
+                let mut running_jobs = self.running_jobs.lock().await;
+                if let Some(running_job) = running_jobs.remove(job_id) {
+                    let _ = running_job.cancel_tx.send(());
+                    running_job.handle.abort();
+                    info!("Sent cancellation signal to running job: {}", job_id);
+                }
+                
                 if let Err(e) = self.save_to_disk().await {
                     warn!("Failed to save job state: {}", e);
                 }
@@ -194,61 +213,74 @@ impl JobManager {
 
     /// For recurring jobs, decide if they are due and create a new pending instance
     pub async fn evaluate_schedules(&self) -> Result<Vec<JobSpec>> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        use chrono::{DateTime, Utc};
+        let now = Utc::now();
         let mut due: Vec<JobSpec> = Vec::new();
 
         let mut state = self.state.lock().await;
         for (_id, job) in state.jobs.iter_mut() {
-            if matches!(&job.spec.job_type, common::JobType::Recurring) {
+            if matches!(&job.spec.job_type, JobType::Recurring) {
                 if let Some(expr) = &job.spec.schedule {
-                    // Very small scheduler: support patterns like "*/N * * * *" or "0 H * * *"
-                    let is_due = is_cron_due(expr, now, job.last_scheduled_at);
-                    if is_due {
-                        job.last_scheduled_at = Some(now);
-                        due.push(job.spec.clone());
+                    match Schedule::from_str(expr) {
+                        Ok(schedule) => {
+                            let last_run = job.last_scheduled_at
+                                .map(|ts| DateTime::from_timestamp(ts as i64, 0).unwrap_or(now));
+                            
+                            // Check if the job is due to run based on the cron schedule
+                            if let Some(next_run) = schedule.upcoming(Utc).next() {
+                                let should_run = if let Some(last) = last_run {
+                                    next_run > last && next_run <= now
+                                } else {
+                                    next_run <= now
+                                };
+                                
+                                if should_run {
+                                    job.last_scheduled_at = Some(now.timestamp() as u64);
+                                    due.push(job.spec.clone());
+                                    info!("Job '{}' is due for execution based on schedule '{}'", job.spec.name, expr);
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            warn!("Invalid cron expression '{}' for job '{}': {}", expr, job.spec.name, e);
+                            continue;
+                        }
                     }
                 }
             }
         }
         Ok(due)
     }
-}
 
-fn is_cron_due(expr: &str, now: u64, last_run: Option<u64>) -> bool {
-    // Extremely simplified: only minute and hour fields are considered
-    // Patterns supported:
-    //  - "*/N * * * *" every N minutes
-    //  - "0 H * * *" at minute 0 of hour H
-    fn minutes_since_epoch(sec: u64) -> u64 { sec / 60 }
-    let parts: Vec<&str> = expr.split_whitespace().collect();
-    if parts.len() < 5 { return false; }
-    let minute = parts[0];
-    let hour = parts[1];
-    let now_min = minutes_since_epoch(now);
-    let last_min = last_run.map(minutes_since_epoch);
-
-    // every N minutes
-    if minute.starts_with("*/") && (hour == "*" || hour == "*") {
-        if let Ok(n) = minute.trim_start_matches("*/").parse::<u64>() {
-            if n == 0 { return false; }
-            // fire when changed bucket and divisible by n
-            let due_now = now_min % n == 0;
-            let not_already_fired = match last_min { Some(prev) => prev != now_min, None => true };
-            return due_now && not_already_fired;
-        }
+    /// Add methods for tracking running jobs and artifact management
+    pub async fn register_running_job(&self, job_id: String, handle: JoinHandle<()>, cancel_tx: tokio::sync::oneshot::Sender<()>) {
+        let mut running_jobs = self.running_jobs.lock().await;
+        running_jobs.insert(job_id, RunningJob { handle, cancel_tx });
     }
-    // at specific hour, minute 0
-    if minute == "0" && hour != "*" {
-        if let Ok(h) = hour.parse::<u64>() {
-            let mins_in_day = 24 * 60;
-            let day_min = now_min % mins_in_day;
-            let target = h * 60;
-            if day_min == target {
-                let not_already_fired = match last_min { Some(prev) => prev != now_min, None => true };
-                return not_already_fired;
+
+    pub async fn unregister_running_job(&self, job_id: &str) -> Option<RunningJob> {
+        let mut running_jobs = self.running_jobs.lock().await;
+        running_jobs.remove(job_id)
+    }
+
+    /// Copy artifacts to job-specific directory
+    pub async fn stage_artifacts(&self, job_id: &str, artifacts: &[common::JobArtifact]) -> Result<()> {
+        let artifacts_dir = self.data_dir.parent().unwrap().join("artifacts").join("jobs").join(job_id);
+        tokio::fs::create_dir_all(&artifacts_dir).await?;
+
+        for artifact in artifacts {
+            let dest_path = artifacts_dir.join(&artifact.name);
+            if let Err(e) = tokio::fs::copy(&artifact.stored_path, &dest_path).await {
+                warn!("Failed to copy artifact '{}' to {}: {}", artifact.name, dest_path.display(), e);
+            } else {
+                info!("Staged artifact '{}' to {}", artifact.name, dest_path.display());
             }
         }
+        Ok(())
     }
-    false
+
+    /// Get artifact path for serving
+    pub fn get_artifact_path(&self, job_id: &str, artifact_name: &str) -> std::path::PathBuf {
+        self.data_dir.parent().unwrap().join("artifacts").join("jobs").join(job_id).join(artifact_name)
+    }
 }

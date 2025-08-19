@@ -51,17 +51,78 @@ export async function loadJobsData(app) {
 }
 
 export function openJobSubmitModal(app) {
+	const examples = {
+		'one-shot': `name = "example-oneshot"
+job_type = "one-shot"
+
+[runtime]
+type = "wasm"
+source = "file:///path/to/task.wasm"
+memory_mb = 64
+fuel = 5000000
+epoch_ms = 100
+
+[execution]
+timeout_minutes = 30
+artifacts = [
+  { path = "/output/result.txt", name = "result.txt" }
+]
+
+[targeting]
+platform = "linux/x86_64"
+tags = ["worker"]`,
+		'recurring': `name = "scheduled-backup"
+job_type = "recurring"
+schedule = "0 2 * * *"  # Daily at 2 AM
+
+[runtime]
+type = "wasm"
+source = "file:///path/to/backup.wasm"
+memory_mb = 128
+fuel = 10000000
+epoch_ms = 100
+
+[execution]
+timeout_minutes = 60
+artifacts = [
+  { path = "/backup/data.tar.gz", name = "daily-backup.tar.gz" }
+]`,
+		'service': `name = "web-service"
+job_type = "service"
+
+[runtime]
+type = "wasm" 
+source = "file:///path/to/service.wasm"
+memory_mb = 256
+fuel = 50000000
+epoch_ms = 1000
+
+[targeting]
+tags = ["server"]`
+	};
+
 	const body = `
-		<form id="job-submit-form" class="space-y-3">
+		<form id="job-submit-form" class="space-y-4">
+			<div>
+				<label class="block text-sm text-gray-300 mb-2">Job Type Templates</label>
+				<div class="flex space-x-2 mb-3">
+					<button type="button" class="text-xs bg-azure hover:bg-neon-blue px-3 py-1 rounded" onclick="setJobTemplate('one-shot')">One-Shot</button>
+					<button type="button" class="text-xs bg-azure hover:bg-neon-blue px-3 py-1 rounded" onclick="setJobTemplate('recurring')">Recurring</button>
+					<button type="button" class="text-xs bg-azure hover:bg-neon-blue px-3 py-1 rounded" onclick="setJobTemplate('service')">Service</button>
+				</div>
+			</div>
 			<div>
 				<label class="block text-sm text-gray-300 mb-1">Job TOML</label>
-				<textarea id="job-toml" rows="10" class="w-full bg-graphite border border-graphite rounded px-3 py-2" placeholder="[job]\nname='example'\n type='one-shot'\n\n[runtime]\n type='wasm'\n source='file:///path/to.wasm'\n memory_mb=64\n fuel=5000000\n epoch_ms=100\n"></textarea>
+				<textarea id="job-toml" rows="15" class="w-full bg-graphite border border-graphite rounded px-3 py-2 text-sm font-mono" placeholder="Select a template above or enter custom TOML...">${examples['one-shot']}</textarea>
 			</div>
 			<div class="flex items-center justify-end gap-2">
 				<button type="button" class="border border-graphite px-4 py-2 rounded" id="job-cancel">Close</button>
 				<button type="submit" class="bg-neon-blue hover:bg-azure px-4 py-2 rounded">Submit</button>
 			</div>
 		</form>`;
+		
+	// Make examples globally available for template buttons
+	window.jobExamples = examples;
 	showModal('Submit Job', body, null);
 	const form = document.getElementById('job-submit-form');
 	const closeBtn = document.getElementById('job-cancel');
@@ -86,12 +147,34 @@ export async function viewJob(app, jobId) {
 		const res = await apiCall(app.sessionToken, `/api/jobs/${encodeURIComponent(jobId)}`);
 		const job = await res.json();
 		const logsHtml = (job.logs || []).map(l => `<div class='text-xs text-gray-300'>${new Date(l.timestamp*1000).toLocaleTimeString()} [${l.level}] ${l.message}</div>`).join('');
+		
+		// Get artifacts
+		let artifactsHtml = '';
+		if (job.artifacts && job.artifacts.length > 0) {
+			artifactsHtml = `
+				<div><strong>Artifacts:</strong>
+					<div class='mt-2 space-y-1'>
+						${job.artifacts.map(artifact => `
+							<div class='flex justify-between items-center p-2 bg-graphite rounded'>
+								<span class='text-sm'>${artifact.name} (${artifact.size_bytes ? (artifact.size_bytes + ' bytes') : 'unknown size'})</span>
+								<button class='text-azure hover:text-neon-blue text-sm' onclick="downloadArtifact('${jobId}', '${artifact.name}')">
+									<i class="fa-solid fa-download mr-1"></i>Download
+								</button>
+							</div>
+						`).join('')}
+					</div>
+				</div>`;
+		}
+		
 		showModal('Job Details', `
-			<div class='space-y-2'>
+			<div class='space-y-4'>
 				<div><strong>ID:</strong> ${job.id}</div>
 				<div><strong>Name:</strong> ${job.spec?.name || '-'}</div>
 				<div><strong>Status:</strong> ${job.status}</div>
+				<div><strong>Type:</strong> ${job.spec?.job_type || '-'}</div>
 				<div><strong>Node:</strong> ${job.assigned_node || '-'}</div>
+				${job.spec?.schedule ? `<div><strong>Schedule:</strong> ${job.spec.schedule}</div>` : ''}
+				${artifactsHtml}
 				<div><strong>Logs:</strong><div class='mt-2 max-h-64 overflow-y-auto bg-graphite p-2 rounded'>${logsHtml || 'No logs'}</div></div>
 			</div>`);
 	} catch (e) { showError('Failed to load job'); }
@@ -105,4 +188,40 @@ export async function cancelJob(app, jobId) {
 		loadJobsData(app);
 	} catch (e) { showError('Cancel failed'); }
 }
+
+// Global function for artifact download
+window.downloadArtifact = async function(jobId, artifactName) {
+	try {
+		const app = window.app; // Access the global app instance
+		const response = await apiCall(app.sessionToken, `/api/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(artifactName)}`);
+		
+		if (!response.ok) {
+			throw new Error('Download failed');
+		}
+		
+		const blob = await response.blob();
+		const url = window.URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.style.display = 'none';
+		a.href = url;
+		a.download = artifactName;
+		document.body.appendChild(a);
+		a.click();
+		window.URL.revokeObjectURL(url);
+		document.body.removeChild(a);
+		
+		showSuccess(`Downloaded artifact: ${artifactName}`);
+	} catch (e) {
+		showError('Failed to download artifact');
+		console.error('Download error:', e);
+	}
+};
+
+// Global function for job template selection
+window.setJobTemplate = function(templateType) {
+	const textarea = document.getElementById('job-toml');
+	if (textarea && window.jobExamples && window.jobExamples[templateType]) {
+		textarea.value = window.jobExamples[templateType];
+	}
+};
 

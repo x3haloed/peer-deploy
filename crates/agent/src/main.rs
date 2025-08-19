@@ -231,6 +231,21 @@ enum JobCommands {
         #[arg(long, short = 'f')]
         follow: bool,
     },
+    /// List artifacts for a specific job
+    Artifacts {
+        /// Job ID to list artifacts for
+        job_id: String,
+    },
+    /// Download an artifact from a specific job
+    Download {
+        /// Job ID
+        job_id: String,
+        /// Artifact name
+        artifact_name: String,
+        /// Output file path (optional, defaults to artifact name)
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+    },
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -285,6 +300,8 @@ async fn main() -> anyhow::Result<()> {
             JobCommands::Status { job_id } => cmd::job_status(job_id).await,
             JobCommands::Cancel { job_id } => cmd::cancel_job(job_id).await,
             JobCommands::Logs { job_id, tail, follow } => cmd::job_logs(job_id, tail, follow).await,
+            JobCommands::Artifacts { job_id } => cmd::job_artifacts(job_id).await,
+            JobCommands::Download { job_id, artifact_name, output } => cmd::job_download(job_id, artifact_name, output).await,
         },
     }
 }

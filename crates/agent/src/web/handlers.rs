@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State, Multipart},
-    http::StatusCode,
-    response::IntoResponse,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
     Json,
 };
 use std::path::PathBuf;
@@ -831,13 +831,26 @@ pub async fn api_jobs_artifact_download(Path((job_id, name)): Path<(String, Stri
     }
     match job_manager.get_job(&job_id).await {
         Some(job) => {
-            if let Some(art) = job.artifacts.iter().find(|a| a.name == name) {
-                if let Ok(bytes) = tokio::fs::read(&art.stored_path).await {
-                    return (StatusCode::OK, bytes).into_response();
+            if let Some(_art) = job.artifacts.iter().find(|a| a.name == name) {
+                // Serve from staged artifacts directory
+                let artifact_path = job_manager.get_artifact_path(&job_id, &name);
+                
+                if let Ok(bytes) = tokio::fs::read(&artifact_path).await {
+                    // Set appropriate content type based on file extension
+                    let content_type = mime_guess::from_path(&artifact_path)
+                        .first_or_octet_stream()
+                        .to_string();
+                    
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, content_type)
+                        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", name))
+                        .body(axum::body::Body::from(bytes))
+                        .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response());
                 }
-                return (StatusCode::NOT_FOUND, "artifact not found").into_response();
+                return (StatusCode::NOT_FOUND, "artifact file not found in staged location").into_response();
             }
-            (StatusCode::NOT_FOUND, "artifact not found").into_response()
+            (StatusCode::NOT_FOUND, "artifact not found in job metadata").into_response()
         }
         None => (StatusCode::NOT_FOUND, format!("Job '{}' not found", job_id)).into_response(),
     }
