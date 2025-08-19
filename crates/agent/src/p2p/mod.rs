@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
+use rand::{thread_rng, Rng};
 use lru::LruCache;
 
 use anyhow::anyhow;
@@ -46,6 +47,7 @@ struct PendingJob {
     cmd: Command,
     peers: HashSet<PeerId>,
     last_sent: Instant,
+    retry_count: u32,
 }
 
 fn job_status_key(cmd: &Command) -> Option<(String, String)> {
@@ -379,7 +381,7 @@ pub async fn run_agent(
                     let peers: HashSet<PeerId> = swarm.connected_peers().cloned().collect();
                     pending_job_broadcasts.insert(
                         (job_id.clone(), status.clone()),
-                        PendingJob { cmd: job_broadcast.clone(), peers, last_sent: Instant::now() },
+                        PendingJob { cmd: job_broadcast.clone(), peers, last_sent: Instant::now(), retry_count: 0 },
                     );
                 }
                 let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&job_broadcast));
@@ -483,10 +485,23 @@ pub async fn run_agent(
                     metrics.status_published_total.fetch_add(1, Ordering::Relaxed);
                     last_publish_count = last_publish_count.saturating_add(1);
                 }
+                // Retry pending job broadcasts with exponential backoff and jitter
                 for pending in pending_job_broadcasts.values_mut() {
-                    if !pending.peers.is_empty() && pending.last_sent.elapsed() >= Duration::from_secs(5) {
+                    // Re-seed peers if none connected
+                    if pending.peers.is_empty() {
+                        pending.peers = swarm.connected_peers().cloned().collect();
+                    }
+                    let retry_count = pending.retry_count;
+                    let backoff_secs = if retry_count >= 5 { 32 } else { 1 << retry_count };
+                    let half = backoff_secs / 2;
+                    let mut delay_secs = half + thread_rng().gen_range(0..=half);
+                    if delay_secs < 1 {
+                        delay_secs = 1;
+                    }
+                    if !pending.peers.is_empty() && pending.last_sent.elapsed() >= Duration::from_secs(delay_secs) {
                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&pending.cmd));
                         pending.last_sent = Instant::now();
+                        pending.retry_count = pending.retry_count.saturating_add(1);
                     }
                 }
             }
@@ -1201,8 +1216,12 @@ pub async fn run_agent(
                         }
                         info!(%dial, "listening");
                     }
-                    SwarmEvent::ConnectionEstablished { .. } => {
+                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                         link_count = link_count.saturating_add(1);
+                        // Add new peer to pending job broadcasts
+                        for pending in pending_job_broadcasts.values_mut() {
+                            pending.peers.insert(peer_id.clone());
+                        }
                     }
                     SwarmEvent::ConnectionClosed { .. } => {
                         link_count = link_count.saturating_sub(1);
