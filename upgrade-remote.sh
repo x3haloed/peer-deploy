@@ -56,96 +56,102 @@ echo ""
 echo "🏗️  Submitting build job..."
 BUILD_JOB_OUTPUT=$($REALM_BIN job submit build-job.toml --asset workspace.tar.gz)
 echo "$BUILD_JOB_OUTPUT"
-# Since job status sync is unreliable, we'll wait based on time and check completion signals
-echo "🔎 Job submitted successfully, monitoring via alternative method..."
-if echo "$BUILD_JOB_OUTPUT" | grep -q "submitted successfully"; then
-    echo "✅ Build job submitted (job status sync may be delayed)"
-    # We'll use time-based waiting since job status visibility is unreliable
-    BUILD_JOB_ID="build-job-$(date +%s)"  # Placeholder for logging
-else
-    echo "❌ Job submission failed: $BUILD_JOB_OUTPUT"
+# Resolve job ID by querying the network (retry with longer timeout for network sync)
+echo "🔎 Resolving build job ID from network..."
+BUILD_JOB_ID=""
+for i in $(seq 1 30); do
+  # Look for the most recently submitted build job that's still active (exclude completed/failed/cancelled)
+  BUILD_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy" and (.status == "pending" or .status == "running" or .status == "started"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
+  [ -n "$BUILD_JOB_ID" ] && break
+  echo "   Waiting for active job to appear in network... (attempt $i/30)"
+  sleep 2
+done
+
+if [ -z "$BUILD_JOB_ID" ]; then
+    echo "❌ Failed to resolve build job ID from network."
     exit 1
 fi
 
 echo "✅ Build job submitted: $BUILD_JOB_ID"
 
-# Step 4: Wait for build to complete using time-based approach
+# Step 4: Wait for build to complete and show progress
 echo ""
-echo "⏳ Waiting for build to complete (estimated 3-5 minutes)..."
-echo "   Note: Due to job status sync issues, we're using time-based monitoring"
+echo "⏳ Waiting for build to complete..."
+echo "   (You can also run: $REALM_BIN job logs $BUILD_JOB_ID)"
 
-# Monitor for about 10 minutes, checking every 30 seconds
-for i in $(seq 1 20); do
-    echo "   Build in progress... ($((i * 30)) seconds elapsed)"
+while true; do
+    STATUS=$($REALM_BIN job net-status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
     
-    # Check if we can find any completed build jobs (they might show up eventually)
-    COMPLETED_COUNT=$($REALM_BIN job net-list-json --limit 50 2>/dev/null | jq '[.[] | select(.spec.name=="build-peer-deploy" and .status=="completed")] | length' 2>/dev/null || echo "0")
-    
-    if [ "$COMPLETED_COUNT" -gt 0 ]; then
-        echo "✅ Build appears to have completed (found $COMPLETED_COUNT completed build job(s))"
-        break
-    fi
-    
-    # After 5 minutes, assume it's likely done
-    if [ $i -ge 10 ]; then
-        echo "✅ Build time elapsed, assuming completion (job sync issues prevent direct monitoring)"
-        break
-    fi
-    
-    sleep 30
+    case "$STATUS" in
+        "completed")
+            echo "✅ Build completed successfully!"
+            break
+            ;;
+        "failed")
+            echo "❌ Build failed. Check logs with: realm job logs $BUILD_JOB_ID"
+            exit 1
+            ;;
+        "cancelled")
+            echo "❌ Build was cancelled"
+            exit 1
+            ;;
+        *)
+            echo "⏳ Build status: $STATUS (waiting...)"
+            sleep 10
+            ;;
+    esac
 done
 
-# Step 5: Submit the self-upgrade job 
+# Step 5: Submit the self-upgrade job reusing the built artifact
 echo ""
 echo "🔄 Submitting self-upgrade job..."
-# Since we can't reliably get artifacts from job status, use default name
-ART_NAME="realm-linux-x86_64"
-echo "ℹ️  Using default artifact name: $ART_NAME (job status sync issues)"
-
-# Try to find any completed build job to get the artifact
-LATEST_BUILD_JOB=$($REALM_BIN job net-list-json --limit 50 2>/dev/null | jq -r '[.[] | select(.spec.name=="build-peer-deploy" and .status=="completed")] | sort_by(.submitted_at) | reverse | (.[0].id // empty)' 2>/dev/null || echo "")
-
-if [ -n "$LATEST_BUILD_JOB" ]; then
-    echo "ℹ️  Found completed build job: $LATEST_BUILD_JOB"
-    UPGRADE_JOB_OUTPUT=$($REALM_BIN job submit upgrade-job.toml --use-artifact "$LATEST_BUILD_JOB:$ART_NAME")
-else
-    echo "⚠️  No completed build job visible, proceeding with upgrade anyway"
-    UPGRADE_JOB_OUTPUT=$($REALM_BIN job submit upgrade-job.toml)
-fi
-
+# Discover the built artifact name and reuse it (via network status)
+ART_NAME=$($REALM_BIN job net-status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.artifacts[0].name // empty')
+if [ -z "$ART_NAME" ]; then ART_NAME="realm-linux-x86_64"; fi
+UPGRADE_JOB_OUTPUT=$($REALM_BIN job submit upgrade-job.toml --use-artifact "$BUILD_JOB_ID:$ART_NAME")
 echo "$UPGRADE_JOB_OUTPUT"
+# Resolve upgrade job ID by querying the network (retry with longer timeout)
+UPGRADE_JOB_ID=""
+for i in $(seq 1 30); do
+  # Look for the most recently submitted upgrade job that's still active (exclude completed/failed/cancelled)
+  UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent" and (.status == "pending" or .status == "running" or .status == "started"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
+  [ -n "$UPGRADE_JOB_ID" ] && break
+  echo "   Waiting for active upgrade job to appear in network... (attempt $i/30)"
+  sleep 2
+done
 
-if echo "$UPGRADE_JOB_OUTPUT" | grep -q "submitted successfully"; then
-    echo "✅ Self-upgrade job submitted (monitoring via time-based approach)"
-    UPGRADE_JOB_ID="upgrade-job-$(date +%s)"  # Placeholder
-else
-    echo "❌ Upgrade job submission failed: $UPGRADE_JOB_OUTPUT"
+if [ -z "$UPGRADE_JOB_ID" ]; then
+    echo "❌ Failed to extract upgrade job ID from: $UPGRADE_JOB_OUTPUT"
     exit 1
 fi
 
+echo "✅ Self-upgrade job submitted: $UPGRADE_JOB_ID"
+
 # Step 6: Wait for upgrade to complete
 echo ""
-echo "⏳ Waiting for self-upgrade to complete (estimated 1-2 minutes)..."
+echo "⏳ Waiting for self-upgrade to complete..."
 
-# Monitor for about 5 minutes, checking every 15 seconds
-for i in $(seq 1 20); do
-    echo "   Upgrade in progress... ($((i * 15)) seconds elapsed)"
+while true; do
+    STATUS=$($REALM_BIN job net-status-json "$UPGRADE_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
     
-    # Check if we can find any completed upgrade jobs
-    UPGRADE_COMPLETED_COUNT=$($REALM_BIN job net-list-json --limit 50 2>/dev/null | jq '[.[] | select(.spec.name=="self-upgrade-agent" and .status=="completed")] | length' 2>/dev/null || echo "0")
-    
-    if [ "$UPGRADE_COMPLETED_COUNT" -gt 0 ]; then
-        echo "✅ Self-upgrade appears to have completed (found $UPGRADE_COMPLETED_COUNT completed upgrade job(s))"
-        break
-    fi
-    
-    # After 2 minutes, assume it's likely done
-    if [ $i -ge 8 ]; then
-        echo "✅ Upgrade time elapsed, assuming completion"
-        break
-    fi
-    
-    sleep 15
+    case "$STATUS" in
+        "completed")
+            echo "✅ Self-upgrade completed successfully!"
+            break
+            ;;
+        "failed")
+            echo "❌ Self-upgrade failed. Check logs with: realm job logs $UPGRADE_JOB_ID"
+            exit 1
+            ;;
+        "cancelled")
+            echo "❌ Self-upgrade was cancelled"
+            exit 1
+            ;;
+        *)
+            echo "⏳ Upgrade status: $STATUS (waiting...)"
+            sleep 5
+            ;;
+    esac
 done
 
 # Step 7: Verify the upgrade
@@ -159,13 +165,13 @@ if realm status >/dev/null 2>&1; then
     echo "🎉 UPGRADE COMPLETE! 🎉"
     echo ""
     echo "📊 Job Summary:"
-    echo "   Build Job:   Completed (time-based monitoring due to sync issues)"
-    echo "   Upgrade Job: Completed (time-based monitoring due to sync issues)"
+    echo "   Build Job:   $BUILD_JOB_ID"
+    echo "   Upgrade Job: $UPGRADE_JOB_ID"
     echo ""
     echo "💡 Pro Tips:"
-    echo "   • View recent jobs: realm job net-list-json | jq '.[] | select(.spec.name==\"build-peer-deploy\" or .spec.name==\"self-upgrade-agent\")'"
+    echo "   • View logs: realm job logs <job-id>"
+    echo "   • Download artifacts: $REALM_BIN job download $BUILD_JOB_ID realm-linux-x86_64"
     echo "   • Check status: realm status"
-    echo "   • Job status sync issues are known and being worked on"
 else
     echo "⚠️  Remote agent may still be restarting..."
     echo "   Wait a moment and try: realm status"
