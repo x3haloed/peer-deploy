@@ -41,6 +41,7 @@ cargo build --release
 ```bash
 ./target/release/realm manage --owner-key <your-key>
 ```
+This starts a temporary node with a random peer ID and ports, avoiding conflicts with a running agent.
 
 ### Install binaries
 - Build and install via Cargo:
@@ -76,7 +77,7 @@ Start the agent (example with tags/roles):
 ```bash
 realm --role dev --role darwin --role arm64
 ```
-The agent exposes metrics, logs, and web management on `http://127.0.0.1:9920`.
+The agent exposes metrics, logs, and web management on `http://127.0.0.1:9920`. When running `realm manage`, a random high port is chosen to avoid conflicts with a local agent.
 
 On startup, the agent prints a copy‑pastable libp2p multiaddr to stdout, for example:
 
@@ -155,7 +156,7 @@ Upgrade behavior on agents:
 - **Show owner public key**: `realm key show`
 - **Status query**: `realm status`
 - **Run agent (default)**: `realm --role dev --memory-max-mb 128`
-- **Launch web UI**: `realm manage --owner-key <key> --timeout 30`
+ - **Launch web UI**: `realm manage --owner-key <key> --timeout 30` (spawns a temporary node with random ports)
 - **Push component**: `realm push ...` or use web UI Deploy tab
 - **Apply manifest**: `realm apply --file realm.toml --version N` or use web UI Ops tab
 - **Upgrade agents**: `realm upgrade --file ./agent --version N [--peer ...] [--tag ...]` or use web UI Ops tab

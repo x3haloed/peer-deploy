@@ -75,6 +75,7 @@ pub async fn run_agent(
     fuel: u64,
     epoch_ms: u64,
     roles: Vec<String>,
+    ephemeral: bool,
 ) -> anyhow::Result<()> {
     let metrics = Arc::new(Metrics::new());
     let logs: SharedLogs =
@@ -100,7 +101,11 @@ pub async fn run_agent(
         warn!(error=%e, "Failed to restore job state from disk, starting fresh");
     }
 
-    let id_keys = load_or_create_node_key();
+    let id_keys = if ephemeral {
+        identity::Keypair::generate_ed25519()
+    } else {
+        load_or_create_node_key()
+    };
     let local_peer_id = PeerId::from(id_keys.public());
 
     let gossip_config = gossipsub::ConfigBuilder::default()
@@ -154,7 +159,10 @@ pub async fn run_agent(
         .build();
 
     // Use a persisted UDP port if available to keep stable multiaddrs across restarts
-    let listen_addr: Multiaddr = if let Some(port) = load_listen_port() {
+    let listen_addr: Multiaddr = if ephemeral {
+        "/ip4/0.0.0.0/udp/0/quic-v1".parse()
+            .map_err(|e| anyhow!("Failed to parse UDP multiaddr: {}", e))?
+    } else if let Some(port) = load_listen_port() {
         format!("/ip4/0.0.0.0/udp/{}/quic-v1", port).parse()
             .map_err(|e| anyhow!("Failed to parse UDP multiaddr: {}", e))?
     } else {
@@ -163,7 +171,10 @@ pub async fn run_agent(
     };
     Swarm::listen_on(&mut swarm, listen_addr)?;
     // Also listen on TCP to support environments where UDP/QUIC is unavailable; reuse persisted port if any
-    let listen_tcp: Multiaddr = if let Some(port) = load_listen_port_tcp() {
+    let listen_tcp: Multiaddr = if ephemeral {
+        "/ip4/0.0.0.0/tcp/0".parse()
+            .map_err(|e| anyhow!("Failed to parse TCP multiaddr: {}", e))?
+    } else if let Some(port) = load_listen_port_tcp() {
         format!("/ip4/0.0.0.0/tcp/{}", port).parse()
             .map_err(|e| anyhow!("Failed to parse TCP multiaddr: {}", e))?
     } else {
@@ -224,55 +235,57 @@ pub async fn run_agent(
     metrics.set_manifest_version(boot_state.manifest_version);
     metrics.set_agent_version(boot_state.agent_version);
 
-    // Spawn metrics server
-    tokio::spawn(serve_metrics(
-        metrics.clone(),
-        logs.clone(),
-        "127.0.0.1:9920",
-    ));
+    if !ephemeral {
+        // Spawn metrics server
+        tokio::spawn(serve_metrics(
+            metrics.clone(),
+            logs.clone(),
+            "127.0.0.1:9920",
+        ));
 
-    // Spawn gateway manager: always serve loopback; add public bind if visibility requires it
-    {
-        let sup_for_local = supervisor.clone();
-        let m = metrics.clone();
-        tokio::spawn(async move {
-            gateway::serve_gateway(sup_for_local, Some(m), "127.0.0.1:8080").await;
-        });
-    }
-    {
-        let sup_for_public = supervisor.clone();
-        let metrics_for_public = metrics.clone();
-        let roles_for_public = roles.clone();
-        tokio::spawn(async move {
-            let mut public_spawned = false;
-            let mut intv = tokio::time::interval(Duration::from_secs(2));
-            loop {
-                intv.tick().await;
-                if !public_spawned {
-                    let desired = sup_for_public.get_desired_snapshot().await;
-                    let mut any_public = false;
-                    for (_name, comp) in desired.iter() {
-                        if let Some(vis) = &comp.spec.visibility {
-                            if matches!(vis, common::Visibility::Public) {
-                                any_public = true;
-                                break;
+        // Spawn gateway manager: always serve loopback; add public bind if visibility requires it
+        {
+            let sup_for_local = supervisor.clone();
+            let m = metrics.clone();
+            tokio::spawn(async move {
+                gateway::serve_gateway(sup_for_local, Some(m), "127.0.0.1:8080").await;
+            });
+        }
+        {
+            let sup_for_public = supervisor.clone();
+            let metrics_for_public = metrics.clone();
+            let roles_for_public = roles.clone();
+            tokio::spawn(async move {
+                let mut public_spawned = false;
+                let mut intv = tokio::time::interval(Duration::from_secs(2));
+                loop {
+                    intv.tick().await;
+                    if !public_spawned {
+                        let desired = sup_for_public.get_desired_snapshot().await;
+                        let mut any_public = false;
+                        for (_name, comp) in desired.iter() {
+                            if let Some(vis) = &comp.spec.visibility {
+                                if matches!(vis, common::Visibility::Public) {
+                                    any_public = true;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    // gate public binding on 'edge' role present on this peer
-                    let is_edge = roles_for_public.iter().any(|r| r == "edge");
-                    if any_public && is_edge {
-                        // Best effort: start public gateway; if bind fails, log and continue loop
-                        let sup2 = sup_for_public.clone();
-                        let m2 = metrics_for_public.clone();
-                        tokio::spawn(async move {
-                            gateway::serve_gateway(sup2, Some(m2), "0.0.0.0:8080").await;
-                        });
-                        public_spawned = true;
+                        // gate public binding on 'edge' role present on this peer
+                        let is_edge = roles_for_public.iter().any(|r| r == "edge");
+                        if any_public && is_edge {
+                            // Best effort: start public gateway; if bind fails, log and continue loop
+                            let sup2 = sup_for_public.clone();
+                            let m2 = metrics_for_public.clone();
+                            tokio::spawn(async move {
+                                gateway::serve_gateway(sup2, Some(m2), "0.0.0.0:8080").await;
+                            });
+                            public_spawned = true;
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
     }
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -839,12 +852,14 @@ pub async fn run_agent(
                         let dial = format!("{address}/p2p/{local_peer_id}");
                         // Print to stdout so users always see a copy-pastable address
                         println!("Agent listen multiaddr: {dial}");
-                        // Persist PeerId for CLI whoami/debug
-                        let _ = std::fs::create_dir_all(state::agent_data_dir());
-                        let _ = std::fs::write(state::agent_data_dir().join("node.peer"), local_peer_id.to_string());
-                        // Persist the chosen UDP/TCP port for stable restarts
-                        if let Some(port) = address.iter().find_map(|p| match p { libp2p::multiaddr::Protocol::Udp(p) => Some(p), _ => None }) { save_listen_port(port); }
-                        if let Some(port) = address.iter().find_map(|p| match p { libp2p::multiaddr::Protocol::Tcp(p) => Some(p), _ => None }) { save_listen_port_tcp(port); }
+                        if !ephemeral {
+                            // Persist PeerId for CLI whoami/debug
+                            let _ = std::fs::create_dir_all(state::agent_data_dir());
+                            let _ = std::fs::write(state::agent_data_dir().join("node.peer"), local_peer_id.to_string());
+                            // Persist the chosen UDP/TCP port for stable restarts
+                            if let Some(port) = address.iter().find_map(|p| match p { libp2p::multiaddr::Protocol::Udp(p) => Some(p), _ => None }) { save_listen_port(port); }
+                            if let Some(port) = address.iter().find_map(|p| match p { libp2p::multiaddr::Protocol::Tcp(p) => Some(p), _ => None }) { save_listen_port_tcp(port); }
+                        }
                         info!(%dial, "listening");
                     }
                     SwarmEvent::ConnectionEstablished { .. } => {
