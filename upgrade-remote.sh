@@ -56,14 +56,20 @@ echo ""
 echo "🏗️  Submitting build job..."
 BUILD_JOB_OUTPUT=$($REALM_BIN job submit build-job.toml --asset workspace.tar.gz)
 echo "$BUILD_JOB_OUTPUT"
-# Resolve job ID by name from JSON listings
-BUILD_JOB_ID=$($REALM_BIN job list-json --status pending --limit 20 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy")) | (.[0].id // empty)')
-if [ -z "$BUILD_JOB_ID" ]; then
-  BUILD_JOB_ID=$($REALM_BIN job list-json --status running --limit 20 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy")) | (.[0].id // empty)')
-fi
+# Resolve job ID by querying the network (retry a few seconds)
+echo "🔎 Resolving build job ID from network..."
+BUILD_JOB_ID=""
+for i in $(seq 1 20); do
+  BUILD_JOB_ID=$($REALM_BIN job net-list-json --status pending --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy")) | (.[0].id // empty)')
+  if [ -z "$BUILD_JOB_ID" ]; then
+    BUILD_JOB_ID=$($REALM_BIN job net-list-json --status running --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy")) | (.[0].id // empty)')
+  fi
+  [ -n "$BUILD_JOB_ID" ] && break
+  sleep 1
+done
 
 if [ -z "$BUILD_JOB_ID" ]; then
-    echo "❌ Failed to extract build job ID from: $BUILD_JOB_OUTPUT"
+    echo "❌ Failed to resolve build job ID from network."
     exit 1
 fi
 
@@ -72,10 +78,10 @@ echo "✅ Build job submitted: $BUILD_JOB_ID"
 # Step 4: Wait for build to complete and show progress
 echo ""
 echo "⏳ Waiting for build to complete..."
-echo "   (You can also run: realm job logs $BUILD_JOB_ID)"
+echo "   (You can also run: $REALM_BIN job logs $BUILD_JOB_ID)"
 
 while true; do
-    STATUS=$($REALM_BIN job status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+    STATUS=$($REALM_BIN job net-status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
     
     case "$STATUS" in
         "completed")
@@ -100,16 +106,21 @@ done
 # Step 5: Submit the self-upgrade job reusing the built artifact
 echo ""
 echo "🔄 Submitting self-upgrade job..."
-# Discover the built artifact name and reuse it
-ART_NAME=$($REALM_BIN job artifacts-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.[0].name // empty')
+# Discover the built artifact name and reuse it (via network status)
+ART_NAME=$($REALM_BIN job net-status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.artifacts[0].name // empty')
 if [ -z "$ART_NAME" ]; then ART_NAME="realm-linux-x86_64"; fi
 UPGRADE_JOB_OUTPUT=$($REALM_BIN job submit upgrade-job.toml --use-artifact "$BUILD_JOB_ID:$ART_NAME")
 echo "$UPGRADE_JOB_OUTPUT"
-# Fallback to latest pending/running job as ID
-UPGRADE_JOB_ID=$($REALM_BIN job list-json --status pending --limit 20 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent")) | (.[0].id // empty)')
-if [ -z "$UPGRADE_JOB_ID" ]; then
-  UPGRADE_JOB_ID=$($REALM_BIN job list-json --status running --limit 20 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent")) | (.[0].id // empty)')
-fi
+# Resolve upgrade job ID by querying the network (retry)
+UPGRADE_JOB_ID=""
+for i in $(seq 1 20); do
+  UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --status pending --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent")) | (.[0].id // empty)')
+  if [ -z "$UPGRADE_JOB_ID" ]; then
+    UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --status running --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent")) | (.[0].id // empty)')
+  fi
+  [ -n "$UPGRADE_JOB_ID" ] && break
+  sleep 1
+done
 
 if [ -z "$UPGRADE_JOB_ID" ]; then
     echo "❌ Failed to extract upgrade job ID from: $UPGRADE_JOB_OUTPUT"
@@ -123,7 +134,7 @@ echo ""
 echo "⏳ Waiting for self-upgrade to complete..."
 
 while true; do
-    STATUS=$($REALM_BIN job status-json "$UPGRADE_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+    STATUS=$($REALM_BIN job net-status-json "$UPGRADE_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
     
     case "$STATUS" in
         "completed")

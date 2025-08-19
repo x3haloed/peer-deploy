@@ -126,6 +126,69 @@ pub async fn job_status_json(job_id: String) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Query jobs over the network and print JSON of the first response
+pub async fn net_list_jobs_json(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
+    use futures::StreamExt;
+    let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
+    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    mdns_warmup(&mut swarm).await;
+    let status_filter_owned = status_filter.clone();
+    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobs { status_filter: status_filter_owned, limit }));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline.into()) => {
+                println!("[]");
+                return Ok(());
+            }
+            event = swarm.select_next_some() => {
+                if let libp2p::swarm::SwarmEvent::Behaviour(super::util::NodeBehaviourEvent::Gossipsub(ev)) = event {
+                    if let libp2p::gossipsub::Event::Message { message, .. } = ev {
+                        if message.topic == topic_status.hash() {
+                            if let Ok(list) = common::deserialize_message::<Vec<JobInstance>>(&message.data) {
+                                println!("{}", serde_json::to_string_pretty(&list)?);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Query a specific job over the network and print JSON of the first response
+pub async fn net_status_job_json(job_id: String) -> anyhow::Result<()> {
+    use futures::StreamExt;
+    let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
+    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    mdns_warmup(&mut swarm).await;
+    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobStatus { job_id: job_id.clone() }));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline.into()) => {
+                println!("null");
+                return Ok(());
+            }
+            event = swarm.select_next_some() => {
+                if let libp2p::swarm::SwarmEvent::Behaviour(super::util::NodeBehaviourEvent::Gossipsub(ev)) = event {
+                    if let libp2p::gossipsub::Event::Message { message, .. } = ev {
+                        if message.topic == topic_status.hash() {
+                            if let Ok(item) = common::deserialize_message::<JobInstance>(&message.data) {
+                                println!("{}", serde_json::to_string_pretty(&item)?);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub async fn job_status(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir);
