@@ -25,6 +25,8 @@ I vibe-coded this in about 5 days in the hopes that a Rust dev will re-write thi
 
 Realm can host tiny, self-contained WebAssemly applications on any number of target hosts. Use the `push` command to send the .wasm file to any computer with Realm installed and specify how much resources you'll allow it consume and how many instances should run. See [components/hello](https://github.com/x3haloed/peer-deploy/tree/main/components/hello) for an example of a tiny WASI web server that can be hosted by Realm. This feature is very similar to what [Spin](https://github.com/spinframework/spin) is doing.
 
+Realm can also host QEMU-hosted services and navtive binary daemons. They're just less cool.
+
 ### An entire CI/CD pipeline on one computer
 
 In addition to long-lived services, Realm can run one-off tasks through WASI modules, QEMU VMs, and regular old executable binaries. What does this mean? If you have a computer, you have a bulid pipline. Use any scripting language you like to send jobs out to a Realm machine. In my example, I've got one Debian server that sits around waiting for tasks all day. When I want to make new builds of Realm for every OS and architecture, I can just send a tarball of source code over to it through Realm and have it start making binaries.
