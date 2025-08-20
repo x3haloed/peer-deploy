@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as AsyncMutex;
@@ -21,7 +23,7 @@ use libp2p::{
     swarm::{Swarm, SwarmEvent},
     Multiaddr, PeerId, SwarmBuilder,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use base64::Engine;
 
 use crate::runner::run_wasm_module_with_limits;
@@ -384,6 +386,8 @@ pub async fn run_agent(
     let mut job_sync_interval = 5u64;
     let mut job_sync_tick = tokio::time::interval(Duration::from_secs(job_sync_interval));
     let mut last_job_sync = job_manager.last_update();
+    // Track last broadcasted job state hash to prevent redundant broadcasts
+    let mut last_job_state_hash: Option<u64> = None;
     // Periodic peer announcement for peer exchange
     // track msgs per second by counting status publishes
     let mut last_publish_count: u64 = 0;
@@ -598,8 +602,27 @@ pub async fn run_agent(
                     trimmed.push(j);
                 }
                 if !trimmed.is_empty() {
-                    let msg = Command::SyncJobs { node_id: local_peer_id.to_string(), jobs: trimmed };
-                    let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+                    // Calculate hash of current job state for deduplication
+                    // Hash the key fields that indicate meaningful job state changes
+                    let mut hasher = DefaultHasher::new();
+                    for job in &trimmed {
+                        job.id.hash(&mut hasher);
+                        job.status.hash(&mut hasher);
+                        job.updated_at.hash(&mut hasher);
+                        job.assigned_node.hash(&mut hasher);
+                        job.exit_code.hash(&mut hasher);
+                    }
+                    let current_hash = hasher.finish();
+                    
+                    // Only broadcast if job state has actually changed
+                    if last_job_state_hash.map_or(true, |last| last != current_hash) {
+                        let msg = Command::SyncJobs { node_id: local_peer_id.to_string(), jobs: trimmed };
+                        let _ = swarm.behaviour_mut().gossipsub.publish(topic_status.clone(), serialize_message(&msg));
+                        last_job_state_hash = Some(current_hash);
+                        info!("Job sync broadcast sent (hash: {})", current_hash);
+                    } else {
+                        debug!("Skipping redundant job sync broadcast (hash: {})", current_hash);
+                    }
                 }
 
                 let current = job_manager.last_update();

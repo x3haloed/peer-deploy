@@ -564,7 +564,7 @@ pub struct JobArtifact {
 
 // ===================== Job State & Management =====================
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum JobStatus {
     Pending,
