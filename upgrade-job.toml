@@ -8,17 +8,28 @@ binary = "/usr/bin/bash"
 args = ["-c", """
 set -e
 echo "=== Preparing self-upgrade ==="
-chmod +x /tmp/assets/realm-linux-x86_64 || true
-chmod +x /tmp/artifacts/realm-linux-x86_64 || true
-ls -la /tmp/assets/realm-linux-x86_64 || true
-ls -la /tmp/artifacts/realm-linux_x86_64 || true
 
-echo "=== Performing self-upgrade via init ==="
+# Check if we have a freshly built binary
+if [ -f /tmp/workspace/target/release/realm ]; then
+  echo "Found freshly built binary, copying to artifacts..."
+  mkdir -p /tmp/artifacts
+  cp /tmp/workspace/target/release/realm /tmp/artifacts/realm-linux-x86_64
+  chmod +x /tmp/artifacts/realm-linux-x86_64
+else
+  echo "No built binary found, checking for pre-staged binaries..."
+  chmod +x /tmp/assets/realm-linux-x86_64 || true
+  chmod +x /tmp/artifacts/realm-linux-x86_64 || true
+fi
+
+ls -la /tmp/assets/realm-linux-x86_64 || true
+ls -la /tmp/artifacts/realm-linux-x86_64 || true
+
+echo "=== Performing self-upgrade ==="
 # Prefer artifact path if present, else fall back to pre-staged attachment path
 if [ -f /tmp/artifacts/realm-linux-x86_64 ]; then
-  /tmp/artifacts/realm-linux-x86_64 init
+  /tmp/artifacts/realm-linux-x86_64 install
 elif [ -f /tmp/assets/realm-linux-x86_64 ]; then
-  /tmp/assets/realm-linux-x86_64 init
+  /tmp/assets/realm-linux-x86_64 install
 else
   echo "No upgrade binary found in /tmp/artifacts or /tmp/assets" >&2
   exit 1
