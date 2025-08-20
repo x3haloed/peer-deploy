@@ -5,7 +5,7 @@
 
 "push → run everywhere" with hard isolation and humane ergonamics. If you've ever wanted to just run runs things on your own servers without losing your mind, this is for you.
 
-<img width="1505" height="628" alt="image" src="https://github.com/user-attachments/assets/48d43906-e69e-4e02-b6c3-f33c019507d4" />2
+<img width="1505" height="628" alt="image" src="https://github.com/user-attachments/assets/48d43906-e69e-4e02-b6c3-f33c019507d4" />
 
 I vibe-coded this in about 5 days in the hopes that a Rust dev will re-write this the right way and then we can all live in nirvana. Different features are in different states of working or broken. Just trying to get the ideas out.
 
