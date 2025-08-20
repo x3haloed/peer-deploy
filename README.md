@@ -1,23 +1,74 @@
-## peer-deploy
 
-"push → run everywhere" with hard isolation. Powered by Wasmtime + WASI and a libp2p control plane.
 
-### What is this?
-- **Agent**: a single Rust binary that runs on your nodes. It hosts WASI components with strict resource limits and participates in a P2P control plane.
-- **CLI**: a unified command-line tool named `realm` with subcommands to bootstrap, inspect, push components, and upgrade agents.
-- **Web UI**: a management interface served by the agent for deployment, monitoring, and operations via browser.
-- **Common protocol**: signed messages over libp2p gossipsub; agents provide HTTP endpoints for metrics, logs, and management.
+# REALM
+
+## WARNING vibe-coded prototype
+## NOT FOR PRODUCTIOM USE
+
+"push → run everywhere" with hard isolation and humane ergonamics. If you've ever wanted to just run runs things on your own servers without losing your mind, this is for you.
+
+I vibe-coded this in about 5 days in the hopes that a real Rust dev will re-write this the right way and then we can all live in nirvana. Different features are in different states of working or broken. Just trying to get the ideas out.
 
 ## Features
+- **Multiplatform** builds and runs on Mac, Linux, and Windows
+- **Single binary** stand-along program file that optionally installs iteself with `./realm install`
+- **Host services** WASI, qemu, and native processes can all be orchestrated remotely
+- **One-off tasks** run any tool on any machine you control
+- **P2P control plane** means every deployment server is also an admin server
+- **Bundled web interface** makes everything push-button and easy
+- **Rich CLI** makes everything scriptable
 - **WASI components** executed under Wasmtime with memory caps, fuel metering and epoch deadlines.
-- **P2P** discovery and command distribution (QUIC + Noise + mDNS + Kademlia).
-- **Signed intents**: owner key signs manifests and upgrades; agents enforce signature and TOFU owner trust.
-- **Metrics & Logs**: Prometheus metrics and lightweight log tailing served by the agent.
-- **Web Management**: browser-based UI for deployment, monitoring, operations, and real-time updates.
 - **Ad‑hoc or desired state**: push a single component, or apply a signed TOML manifest.
-- **Gateway & exposure**: local HTTP gateway on `127.0.0.1:8080` that dispatches HTTP requests into components via the WASI HTTP component model (`wasi:http/incoming-handler`). Optional public bind on peers tagged with `--role edge` when a component requests `visibility=Public`.
+
+## Scenarios
+### Sandboxed WASI Services
+
+Realm can host tiny, self-contained WebAssemly applications on any number of target hosts. Let's say you have a microservice that will compile to Wastime. You can use the `push` command to send the .wasm file to any computer with Realm installed and specify how much resources you'll allow it consume and how many instances should run. See components/hello for an example of a tiny WASI web server that can be hosted by Realm. This feature is very similar to what Spin is doing.
+
+### An entire CI/CD pipeline on one computer
+
+In addition to long-lived services, Realm can run one-off tasks through WASI modules, QEMU VM's and regular old executable binaries. What does this mean? If you have a computer, you have a bulid pipline. Use any scripting language you like to send jobs out to a Realm machine. In my example, I've got one Debian server that sits around waiting for tasks all day. When I want to make new builds of Realm for every OS and architecture, I can just send a tarball of source code over to it through Realm and have it start making binaries.
+
+See build.toml, deploy.toml, and deploy.sh for examples.
+
+## Generic Rentable Computing Platform
+
+"Rent" as in "borrow" -- not as in "apartment." Say you have a few machines of various types floating around like a Linux server, a MacBook, a Windows desktop, and a Raspberry Pi. If they all have realm installed, you now have a computing blob that can churn away on virtually any task. Just send a job out to the swarm, and a capable machine with the right specs and available resources will pick it up and run it.
+
+## WHY?
+### I love containers. I hate Docker and LXC
+We all know the pitch for containers. All of the dependencies and the full environment are shipped together, faster than a VM, deploy to any host. But Docker is so bloated an painful, I'd rather just deploy to a normal VM. LXC, on the otherhand, it's so obtuse that you have to mmorize the manpage and LXD manpage, and the chroot manpage and ... well. I gave up on that years ago.
+
+I've fallen in love with WebAssembly. It's very fast and very portable. It's still rough around the edges, but it's a sandboxed VM in a process, which means it's essentially just a program file you can run next to other program files together on one machine without all of the InSaNiTy. I've got a native host for Wasmtime WASI components in Realm to allow for simple, efficient managed deployments of things like small web applications. It's theoretically possible to build .NET and Node servers that would work here as well, though I don't think any of the major web frameworks will work out of the box. 
+
+Realm packs the whole solution in one binary with a built-in admin UI. Still in the concept phase, Realm is rough around the edges, but I hope you can see where I'm trying to go with it.
+
+### I love IaC. I hate Docker Compose, K8s, and Terraform.
+Infrstructure as code is a very practical concept in my mind. It's natural to want to merge our infrastructure specifications with the mechanisms to create the infrastructure, such that when we define the infrastructure we want, it gets built out for us procedurally. No reason it shouldn't work, but it's awful. You won't have to search far to find all kinds of complaints about each of these solutions, but for me, it comes down to the obtusity problem again. I don't think that devs should have to decipher a tome in order to use a tool. That's why Realm supports declaritive deployment specifications in TOML, but allows on-the fly adjustments via CLI or web GUI that can be preserved back to the TOML spec. Not only can this save your butt in an emergency, it also helps us learn as we go, and cement our infra into specification as we build it, rather than having to try and work it out the other way around.
+
+The other issue is administration via centralized control planes. Container orchestration typically pushes you so far out of your own systems that it's really tough to reach into a running machine and figure out what's going on. The reason that Realm uses P2P technology is that it enables every deployment node to be an admin interface. Devops professionals are very familiar with just logging into machines and doing work. With Realm, you might have a bunch of different bare metal machines that host Realm services, you can RDP into one, pop open the web UI, put in your password, and start taking command of your whole deployment system.
+
+### I love CI/CD. I hate Azure DevOps and GitHub Actions.
+Getting your software into as many hands as possible as quickly as possible is a reality of modern business. Not only are we expected to ship quick, it also helps us learn what's working about our software and what needs to change. Having code that's automatically built, tested, and released as soon as I check it in is awesome! So why does it make me want to jump off a cliff? Annoying, obtuse languages and formats, and expensive computing requirements. It inevitably takes weeks to set up a production grade CI/CD, thanks to the lousy specs, languages, and formats, and of course you have to rent server space from someone to actually run the builds, or else install an agent on a workstation in the office somewhere and forward ports, and make secret keys, and then the agent can't be found by the platforms, and it stole all your disk space, and deployments are down. It goes on forever. Realm can build any program on a computer that you already have access to. Just tell it to do it. And then save it to TOML.
+
+### I love ... nothing about Cloud.
+Oh Cloud. Not terrible in concept, but always terrible in execution. (Noticing a pattern?) I don't know why I have to learn the 'az redis' command syntax provided by the Azure CLI TO USE REDIS **ON AZURE**. Know what I mean? And then of course our SOC 2 requirements mean that our 20-person business needs a 4 hour RTO window in case a pandemic and a volcano hit the same geographic region while a Cloudflare and AWS outage took down our recovery datacenter at the same time, so of course we have to have deployments with *all three* major cloud vendors, meaning I need to learn three sets of specialized commands for one open source platform that we use solely for the purpose of caching blacklisted, expired authentication tokens. I'd rather just rent a good VM from all three and just push our whole deploment to all three of them with Realm and give the clouds a finger.
+
+### If we've come this far, why not the whole enchilada?
+After solving all of the problems above, tacking on traditional VMs via QEMU, native native binary support, and one-off tasks is a breeze. Why not  ¯\\_(ツ)_/¯ Plus, with the addition of those extra things, we get the CI/CD-style platform automation features for cheap. I kind of just stubled across it as I was building out the other stuff. F*** DevOps, Jenkins, GitHub Actions, and all their crazy formats, proprietary lock-in, expensive VMs, rate-limiting... the problems just never end. I keep coming back to this mantra: I have a computer that's powerful enough to do these things--why is every single automation platform and paradigm built around a proprietary format that runs on someone else's machines at someone else's rates?
+
+### Conclusion
+We've lost something in computing. That magical feeling of writing code on your own computer for free, pointing it at the internet, and watching people use your stuff. The languages are all free(-ish), but it's impossible to share your work with other people without paying *somebody* a monthly rent. And for that reason, it's becoming harder and harder to *learn* anything. It's hard to learn how to push iOS apps to an iPhone without paying Apple a developer fee. It's hard to learn how to deploy an ASP.NET Core application to Azure without paying for hosting fees, and it's hard to learn IaC when everything requires an account and a signup and a fee. My biggest hope is that Realm enables people to do stuff with their own computers again. The internet is hard and complicated now, and there's no going back. Everything has to available, durable, and responsive. They're all important things -- it makes the world go 'round. But maybe we can meet those needs on our own darn computers again.
 
 ## Getting started
+
+NOTE: All the following is out of date and I'm still working on fixing it. If you want to know how to do things, open the web UI
+
+```bash
+cargo run --release -- manage --owner-key --timeout 30
+```
+
+Or honestly, open the repo in Cursor and ask Claude. Sorry.
 
 ### Prerequisites
 - Rust toolchain (stable) and `cargo`
@@ -29,8 +80,7 @@
 cargo build --release
 ```
 - Outputs:
-  - `target/release/realm` (unified CLI)
-  - `target/release/agent` (agent binary)
+  - `target/release/realm` (unified binary)
 
 ### Quick start
 - Run the agent (default command):
@@ -39,21 +89,14 @@ cargo build --release
 ```
 - Or launch the web management UI:
 ```bash
-./target/release/realm manage --owner-key <your-key>
+./target/release/realm manage --owner-key --timeout 30
 ```
 This starts a temporary node with a random peer ID and ports, avoiding conflicts with a running agent.
 
 ### Install binaries
-- Build and install via Cargo:
-```bash
-cargo install --path crates/agent --bin realm
-cargo install --path crates/agent --bin agent
-```
-
 What the installer does (user-mode on macOS/Linux):
 - Copies the binary to a versioned path, maintains a `current` symlink, and places a convenience symlink on your PATH:
   - CLI: `~/.local/bin/realm -> ~/Library/Application Support/realm/bin/current`
-  - Agent: `~/.local/bin/realm-agent -> ~/Library/Application Support/realm-agent/bin/current`
 
 Tip for macOS: ensure `~/.local/bin` is on your PATH (zsh):
 ```bash
@@ -219,7 +262,7 @@ realm job submit build-job.toml --use-artifact build-peer-deploy-1:realm-linux-x
 - The agent’s memory metrics currently report process RSS as a proxy. When Wasmtime exposes per-component stats we’ll switch to those.
 - Gateway invokes components via WASI HTTP. TLS termination and reverse-proxy features are planned next.
 
-## Runtime Extensions (Phase 4)
+## Runtime Extensions
 Realm adds optional native and QEMU-emulated job runtimes. These are disabled by default for security. Enable via policy:
 
 Create `policy.json` in the agent data dir (see logs for path, usually `~/.local/share/realm-agent/` on Linux, `~/Library/Application Support/realm-agent/` on macOS):
@@ -235,7 +278,7 @@ Or set environment variables before starting the agent:
 REALM_ALLOW_NATIVE_EXECUTION=1 REALM_ALLOW_EMULATION=1 realm
 ```
 
-## Dynamic Peer Discovery (Phase 6+)
+## Dynamic Peer Discovery
 Realm features robust peer discovery that automatically forms and maintains mesh networks:
 
 ### Multi-layered Discovery
