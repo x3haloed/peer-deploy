@@ -1,7 +1,7 @@
 # REALM
 
 ## WARNING vibe-coded prototype
-## NOT FOR PRODUCTIOM USE
+## NOT FOR PRODUCTION USE
 
 "push → run everywhere" with hard isolation and humane ergonamics. If you've ever wanted to just run runs things on your own servers without losing your mind, this is for you.
 
