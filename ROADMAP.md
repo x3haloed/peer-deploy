@@ -1,5 +1,7 @@
 # Realm: The Ultimate Developer Experience
 
+NOTE: Everything on this roadmap is pretty much done. Leaving here for documentation.
+
 ## The Grand Vision
 
 **Realm is a self-organizing, P2P compute mesh that eliminates traditional CI/CD infrastructure and replaces centralized cloud orchestration with a distributed, owner-controlled network.**
