@@ -194,7 +194,7 @@ Upgrade behavior on agents:
 - Writes versioned binary, updates `current` symlink, spawns new process, exits old
 - Emits progress to the agent logs so you can observe each phase in the web UI
 
-### Submit jobs with attachments (Phase 6)
+### Submit jobs with attachments
 - Attach local files/bundles to a job; they are content-addressed and pre-staged before execution.
 - CLI examples:
 ```bash
