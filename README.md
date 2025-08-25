@@ -20,6 +20,17 @@ I vibe-coded this in about 5 days in the hopes that a Rust dev will re-write thi
 - **WASI components** executed under Wasmtime with memory caps, fuel metering and epoch deadlines.
 - **Ad‑hoc or desired state**: push a single component, or apply a signed TOML manifest.
 
+## Table of Contents
+- [Scenarios](https://github.com/x3haloed/peer-deploy/tree/main#scenarios)
+- [Why I made this](https://github.com/x3haloed/peer-deploy/tree/main#why)
+- [Getting Started](https://github.com/x3haloed/peer-deploy/tree/main#getting-started)
+- [Key Commands](https://github.com/x3haloed/peer-deploy/tree/main#key-commands)
+- [Packages and Mount Lifecycle](https://github.com/x3haloed/peer-deploy/tree/main#packages-and-mount-lifecycle)
+- [Agent Command‑Line Options](https://github.com/x3haloed/peer-deploy/tree/main#agent-commandline-options)
+- [Metrics and Logs](https://github.com/x3haloed/peer-deploy/tree/main#metrics-and-logs)
+- [Runtime Extensions](https://github.com/x3haloed/peer-deploy/tree/main#runtime-extensions)
+- [Dynamic Peer Discovery](https://github.com/x3haloed/peer-deploy/tree/main#dynamic-peer-discovery)
+
 ## Scenarios
 ### Sandboxed WASI Services
 
@@ -33,7 +44,7 @@ In addition to long-lived services, Realm can run one-off tasks through WASI mod
 
 See [build-job.toml](https://github.com/x3haloed/peer-deploy/blob/main/build-job.toml), [upgrade-job.toml](https://github.com/x3haloed/peer-deploy/blob/main/upgrade-job.toml), and [upgrade-remote.sh](https://github.com/x3haloed/peer-deploy/blob/main/upgrade-remote.sh) for examples.
 
-## Generic Rentable Computing Platform
+### Generic Rentable Computing Platform
 
 "Rent" as in "borrow" -- not as in "apartment." Say you have a few machines of various types floating around like a Linux server, a MacBook, a Windows desktop, and a Raspberry Pi. If they all have realm installed, you now have a computing blob that can churn away on virtually any task. Just send a job out to the swarm, and a capable machine with the right specs and available resources will pick it up and run it.
 
