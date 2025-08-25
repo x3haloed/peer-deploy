@@ -69,13 +69,9 @@ The CLI is robust and supports all functionality. I suggest reviewing the [manpa
 
 ### Installation and First Use
 
-NOTE: All the following is out of date and I'm still working on fixing it. If you want to know how to do things, open the web UI
-
 ```bash
 cargo run --release -- manage --owner-key --timeout 30
 ```
-
-Or honestly, open the repo in Cursor and ask Claude. Sorry.
 
 ### Prerequisites
 - Rust toolchain (stable) and `cargo`
@@ -101,9 +97,20 @@ cargo build --release
 This starts a temporary node with a random peer ID and ports, avoiding conflicts with a running agent.
 
 ### Install binaries
-What the installer does (user-mode on macOS/Linux):
-- Copies the binary to a versioned path, maintains a `current` symlink, and places a convenience symlink on your PATH:
-  - CLI: `~/.local/bin/realm -> ~/Library/Application Support/realm/bin/current`
+What the agent installer does (user-mode on macOS/Linux):
+- Copies the agent binary to a versioned path, maintains a `current` symlink, and places a convenience symlink on your PATH.
+- User service (default):
+  - Binary store: `<data_dir>/realm-agent/bin/realm-agent-<digest16>`
+  - Symlink: `<data_dir>/realm-agent/bin/current`
+  - PATH link: `~/.local/bin/realm-agent -> <data_dir>/realm-agent/bin/current`
+  - Unit: `~/.config/systemd/user/realm-agent.service`
+- System service (`--system`):
+  - Binary store: `/usr/local/lib/realm-agent/bin/realm-agent-<digest16>`
+  - Symlink: `/usr/local/lib/realm-agent/bin/current`
+  - PATH link: `/usr/local/bin/realm-agent -> .../current`
+  - Unit: `/etc/systemd/system/realm-agent.service`
+
+See: [realm-install](docs/man/realm-install.md)
 
 Tip for macOS: ensure `~/.local/bin` is on your PATH (zsh):
 ```bash
@@ -113,7 +120,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ### Generate an owner key
 ```bash
 realm init
-realm key show   # prints your owner public key (ed25519:BASE58...)
+realm key-show   # prints your owner public key (ed25519:BASE58...)
 realm whoami     # prints CLI owner pub, agent's trusted owner (if set), and agent PeerId (if running)
 ```
 
@@ -127,7 +134,7 @@ Start the agent (example with tags/roles):
 ```bash
 realm --role dev --role darwin --role arm64
 ```
-The agent exposes metrics, logs, and web management on `http://127.0.0.1:9920`. When running `realm manage`, a random high port is chosen to avoid conflicts with a local agent.
+The agent exposes metrics and logs on `http://127.0.0.1:9920`. The management web UI is launched separately via `realm manage` and will print a local URL (random high port) to the console.
 
 On startup, the agent prints a copy‑pastable libp2p multiaddr to stdout, for example:
 
@@ -162,7 +169,8 @@ realm push \
 - Selection can target specific peer IDs (`--peer`) or any peers with matching tags (`--tag`).
 
 #### Expose a web app (WASI HTTP)
-- Components implement `wasi:http/incoming-handler`; the gateway invokes your component per request.
+- Components implement `wasi:http/incoming-handler`; the agent’s gateway invokes your component per request.
+- Agents always serve a loopback gateway on `http://127.0.0.1:8080`. A public bind on `0.0.0.0:8080` is enabled automatically when at least one component requests `--visibility public` and the node has the `edge` role.
 - Push a component and access it under `http://127.0.0.1:8080/{component}/...`:
 ```bash
 realm push \
@@ -183,7 +191,7 @@ realm apply --file ./realm.toml --version 1
 - Agents verify signature, enforce TOFU on first owner, verify component digests, stage artifacts, and reconcile desired replicas.
 
 ### Upgrade agents remotely
-- From the web UI: navigate to Ops → Upgrade Agent and upload the new binary.
+- From the web UI: Ops → Upgrade Agent (multipart upload).
 - Or via CLI:
 ```bash
 # Single platform (let agents sniff compatibility)
@@ -247,7 +255,7 @@ realm job submit build-job.toml --use-artifact build-peer-deploy-1:realm-linux-x
 - Package manifest supports mount kinds with clear data lifecycle semantics:
   - **static**: read‑only assets from the package, content‑addressed under `artifacts/packages/{digest}/…`; swapped on upgrade.
   - **config**: read‑only initial configuration from the package.
-  - **work**: read‑write ephemeral working directory. The agent allocates a unique per‑replica subdirectory under `work/components/{name}/{replica-id}` for isolation and removes it when the replica exits or the component is stopped.
+  - **work**: read‑write ephemeral working directory under `work/components/{name}`. Intended for scratch space; may be cleaned between runs.
   - **state**: read‑write persistent volume under `state/components/{volume}` that survives restarts/upgrades. Optional `seed` copies data from the package into an empty volume on first install only.
 - The Web UI (Deploy tab → “Deploy Package”) lets you upload a `.realm`, inspect its manifest and proposed mounts, and view/manage persistent volumes under Ops → Volumes.
 
@@ -259,7 +267,7 @@ realm job submit build-job.toml --use-artifact build-peer-deploy-1:realm-linux-x
 ## Metrics and logs
 - Metrics (Prometheus): `http://127.0.0.1:9920/metrics`
 - Logs (plain text): `http://127.0.0.1:9920/logs?component=__all__&tail=200`
-- Web UI (management): `http://127.0.0.1:9920/` (when launched via `realm manage`)
+- Web UI (management): launched via `realm manage` (prints local URL and port)
 - Web UI polls these endpoints to render overview tiles and logs.
   - Gateway metrics included: `gateway_requests_total`, `gateway_errors_total`, `gateway_last_latency_ms`
 
@@ -291,14 +299,14 @@ Realm features robust peer discovery that automatically forms and maintains mesh
 ### Multi-layered Discovery
 - **mDNS**: Local network discovery for zero-config local mesh formation
 - **Bootstrap Peers**: Static multiaddrs in `~/.local/share/realm-agent/bootstrap.json` for initial connections
-- **Gossip-based Peer Exchange (PEX)**: Peers periodically share their known addresses via gossipsub 
+- **Gossip-based Peer Exchange (PEX)**: Peers periodically share their known addresses via gossipsub
 - **Kademlia DHT**: Distributed hash table for wide-area peer discovery and routing
 
 ### Automatic Mesh Formation
-- Agents automatically discover and connect to all available peers 
-- Bootstrap addresses are propagated throughout the mesh every 30 seconds
-- DHT bootstrap runs every 2 minutes to refresh routing tables
-- Newly discovered peers (via mDNS or identify) are added to both gossipsub and Kademlia
+- Agents automatically discover and connect to available peers.
+- Bootstrap and known peer addresses are announced approximately every 60 seconds.
+- DHT bootstrap runs every ~120 seconds to refresh routing tables.
+- Newly discovered peers (via mDNS or identify) are added to both gossipsub and Kademlia.
 
 ### Configuration
 No manual configuration required! The system automatically:
