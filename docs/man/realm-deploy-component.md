@@ -2,6 +2,10 @@
 
 Build a cargo-component and push to agents.
 
+### Name
+
+realm deploy-component - build a WASI component with cargo and deploy in one step
+
 ### Synopsis
 
 ```
@@ -19,4 +23,27 @@ realm deploy-component [--path <DIR>] [--package <NAME>] [--profile <debug|relea
 - `--name <NAME>`: Component name for deployment (defaults to package name).
 - `--start <true|false>`: Start immediately after push. Default: `true`.
 
+### Files
+
+- Reads the signing owner key from: `<config_dir>/realm/owner.key.json`
+- Builds artifact at: `<path>/target/wasm32-wasip1/<profile>/<package>.wasm` (or `${CARGO_TARGET_DIR}/wasm32-wasip1/...` if set)
+
+Platform examples for `<config_dir>`:
+
+- Linux: `~/.config`
+- macOS: `~/Library/Application Support`
+- Windows: `%APPDATA%`
+
+### Examples
+
+Build and deploy the current package in release mode targeting peers with `edge` tag:
+
+```
+realm deploy-component --path . --profile release --tag edge
+```
+
+### See Also
+
+- `realm-push(1)` for deploying an already-built `.wasm`
+- `cargo-component` documentation for build requirements
 
