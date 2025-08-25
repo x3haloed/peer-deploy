@@ -28,6 +28,7 @@ pub async fn api_nodes(State(state): State<WebState>) -> Json<Vec<ApiNode>> {
             components_desired: status.components_desired as u32,
             cpu_percent: status.cpu_percent as u32,
             mem_percent: status.mem_percent as u32,
+            alias: None,
         });
     }
     if nodes.is_empty() {
@@ -40,6 +41,7 @@ pub async fn api_nodes(State(state): State<WebState>) -> Json<Vec<ApiNode>> {
             components_desired: state.metrics.components_desired.load(Ordering::Relaxed) as u32,
             cpu_percent: 0,
             mem_percent: 0,
+            alias: None,
         });
     }
     Json(nodes)

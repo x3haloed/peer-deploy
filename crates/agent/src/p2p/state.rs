@@ -80,6 +80,17 @@ pub struct AgentState {
     pub agent_version: u64,
     #[serde(default)]
     pub previous_agent_version: u64,
+    /// Optional human-friendly aliases and notes per known node
+    #[serde(default)]
+    pub node_annotations: std::collections::BTreeMap<String, NodeAnnotation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NodeAnnotation {
+    #[serde(default)]
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 pub fn load_state() -> AgentState {

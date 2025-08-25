@@ -16,7 +16,7 @@ mod history;
 mod monitor;
 
 pub use types::*;
-pub use handlers::{api_status, api_nodes, api_components, api_logs, api_push_multipart, api_upgrade_multipart, api_apply_multipart, api_install_cli, api_install_agent, api_connect_peer, api_discover, api_component_restart, api_component_stop, api_get_policy, api_set_policy, api_qemu_status, api_storage_list, api_storage_pin, api_storage_gc};
+pub use handlers::{api_status, api_nodes, api_components, api_logs, api_push_multipart, api_upgrade_multipart, api_apply_multipart, api_install_cli, api_install_agent, api_connect_peer, api_discover, api_component_restart, api_component_stop, api_get_policy, api_set_policy, api_qemu_status, api_storage_list, api_storage_pin, api_storage_gc, api_node_get, api_node_update};
 pub use jobs::{api_jobs_list, api_jobs_submit, api_jobs_get, api_jobs_cancel, api_jobs_logs, api_jobs_artifacts, api_jobs_artifact_download};
 pub use websocket::*;
 pub use utils::*;
@@ -54,6 +54,7 @@ fn create_app(state: WebState, session_id: String) -> Router {
         .route("/api/status", get(api_status))
         .route("/api/nodes", get(api_nodes))
         .route("/api/components", get(api_components))
+        .route("/api/nodes/:id", get(api_node_get).post(api_node_update))
         .route("/api/logs", get(api_logs))
         .route("/api/deploy", post(api_deploy))
         .route("/api/deploy-multipart", post(api_deploy_multipart))

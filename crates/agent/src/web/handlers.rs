@@ -14,6 +14,7 @@ use super::utils::format_timestamp;
 use crate::supervisor::DesiredComponent;
 use common::{ComponentSpec, Manifest};
 use crate::cmd;
+use crate::p2p::state::{load_state, save_state, NodeAnnotation};
 
 // API handlers with real data integration
 pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
@@ -40,8 +41,10 @@ pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
 pub async fn api_nodes(State(state): State<WebState>) -> Json<Vec<ApiNode>> {
     let peers = state.peer_status.lock().await;
     let mut nodes = Vec::new();
+    let agent_state = load_state();
     
     for (node_id, status) in peers.iter() {
+        let alias = agent_state.node_annotations.get(node_id).and_then(|a| a.alias.clone());
         nodes.push(ApiNode {
             id: node_id.clone(),
             online: true, // If we have status, assume online
@@ -50,12 +53,14 @@ pub async fn api_nodes(State(state): State<WebState>) -> Json<Vec<ApiNode>> {
             components_desired: status.components_desired as u32,
             cpu_percent: status.cpu_percent as u32,
             mem_percent: status.mem_percent as u32,
+            alias,
         });
     }
     
     // If no peers, show local node with current metrics
     if nodes.is_empty() {
         use std::sync::atomic::Ordering;
+        let alias = agent_state.node_annotations.get("local-node").and_then(|a| a.alias.clone());
         nodes.push(ApiNode {
             id: "local-node".to_string(),
             online: true,
@@ -64,10 +69,47 @@ pub async fn api_nodes(State(state): State<WebState>) -> Json<Vec<ApiNode>> {
             components_desired: state.metrics.components_desired.load(Ordering::Relaxed) as u32,
             cpu_percent: 0, // We don't track local CPU in this endpoint
             mem_percent: 0, // We don't track local memory in this endpoint
+            alias,
         });
     }
     
     Json(nodes)
+}
+
+// ================= Node Details =================
+pub async fn api_node_get(Path(node_id): Path<String>, State(state): State<WebState>) -> impl IntoResponse {
+    let peers = state.peer_status.lock().await;
+    let agent_state = load_state();
+    if let Some(status) = peers.get(&node_id) {
+        let alias = agent_state.node_annotations.get(&node_id).and_then(|a| a.alias.clone());
+        let notes = agent_state.node_annotations.get(&node_id).and_then(|a| a.notes.clone());
+        let body = ApiNodeDetails {
+            id: node_id.clone(),
+            online: true,
+            roles: status.tags.clone(),
+            components_running: status.components_running as u32,
+            components_desired: status.components_desired as u32,
+            cpu_percent: status.cpu_percent as u32,
+            mem_percent: status.mem_percent as u32,
+            alias,
+            notes,
+        };
+        (StatusCode::OK, Json(body)).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "node not found").into_response()
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiNodeUpdateReq { pub alias: Option<String>, pub notes: Option<String> }
+
+pub async fn api_node_update(Path(node_id): Path<String>, Json(req): Json<ApiNodeUpdateReq>) -> impl IntoResponse {
+    let mut st = load_state();
+    let entry = st.node_annotations.entry(node_id.clone()).or_insert(NodeAnnotation::default());
+    if let Some(a) = req.alias { entry.alias = Some(a); }
+    if let Some(n) = req.notes { entry.notes = Some(n); }
+    save_state(&st);
+    (StatusCode::OK, "ok").into_response()
 }
 
 pub async fn api_components(State(state): State<WebState>) -> Json<Vec<ApiComponent>> {

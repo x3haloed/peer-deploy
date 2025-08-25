@@ -114,6 +114,8 @@ pub struct ApiNode {
     pub components_desired: u32,
     pub cpu_percent: u32,
     pub mem_percent: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -124,6 +126,21 @@ pub struct ApiComponent {
     pub replicas_desired: u32,
     pub memory_mb: u32,
     pub nodes: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ApiNodeDetails {
+    pub id: String,
+    pub online: bool,
+    pub roles: Vec<String>,
+    pub components_running: u32,
+    pub components_desired: u32,
+    pub cpu_percent: u32,
+    pub mem_percent: u32,
+    #[serde(default)]
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 #[derive(Serialize)]

@@ -369,7 +369,7 @@ class RealmApp {
                     ? '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-900/30 text-green-400">Online</span>'
                     : '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-900/30 text-red-400">Offline</span>';
                 row.innerHTML = `
-                    <td class="p-4" title="${node.id}">${node.id.substring(0, 12)}...</td>
+                    <td class="p-4" title="${node.id}">${node.alias ? `<span class=\"font-medium\">${node.alias}</span><div class=\"text-xs text-gray-400\">${node.id.substring(0, 12)}...</div>` : `${node.id.substring(0, 12)}...`}</td>
                     <td class="p-4">${statusHtml}</td>
                     <td class="p-4">${node.roles.join(', ')}</td>
                     <td class="p-4">${node.components_running}/${node.components_desired}</td>
@@ -1117,11 +1117,58 @@ class RealmApp {
     hideLoading() { hideLoading(); }
     showNotification(message, type) { showNotification(message, type); }
 
-    viewNodeDetails(nodeId) {
-        this.showModal('Node Details', `
-            <p><strong>Node ID:</strong> ${nodeId}</p>
-            <p>Detailed node information would be displayed here.</p>
-        `);
+    async viewNodeDetails(nodeId) {
+        try {
+            const res = await this.apiCall(`/api/nodes/${encodeURIComponent(nodeId)}`);
+            const details = await res.json();
+            const alias = details.alias || '';
+            const notes = details.notes || '';
+            const roles = (details.roles || []).join(', ');
+            const body = `
+                <div class="space-y-3 text-sm">
+                    <div>
+                        <div class="text-gray-400">Node ID</div>
+                        <div class="font-mono break-all">${details.id}</div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-gray-300 mb-1">Alias</label>
+                            <input id="node-alias" type="text" value="${alias.replace(/"/g, '&quot;')}" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                        </div>
+                        <div>
+                            <label class="block text-gray-300 mb-1">Roles</label>
+                            <div class="bg-graphite border border-graphite rounded px-3 py-2">${roles || '-'}</div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <div class="text-gray-400">Components</div>
+                            <div>${details.components_running}/${details.components_desired}</div>
+                        </div>
+                        <div>
+                            <div class="text-gray-400">CPU / Mem</div>
+                            <div>${details.cpu_percent}% / ${details.mem_percent}%</div>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-gray-300 mb-1">Notes</label>
+                        <textarea id="node-notes" rows="4" class="w-full bg-graphite border border-graphite rounded px-3 py-2">${notes.replace(/</g,'&lt;')}</textarea>
+                    </div>
+                </div>`;
+            this.showModal('Node Details', body, async () => {
+                const newAlias = document.getElementById('node-alias').value.trim();
+                const newNotes = document.getElementById('node-notes').value;
+                try {
+                    await this.apiCall(`/api/nodes/${encodeURIComponent(nodeId)}`, { method: 'POST', body: JSON.stringify({ alias: newAlias, notes: newNotes }) });
+                    this.showSuccess('Node updated');
+                    if (this.currentView === 'nodes') { this.loadNodesData(); }
+                } catch (e) {
+                    this.showError('Failed to update node');
+                }
+            });
+        } catch (e) {
+            this.showError('Failed to load node details');
+        }
     }
 }
 
