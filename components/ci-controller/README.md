@@ -60,6 +60,7 @@ To verify webhook signatures and/or provide a fallback workspace bundle:
 - Secret: mount file at `/config/secret`
 - Workspace tarball: mount file at `/workspace/workspace.tar.gz`
 - Platforms config: `/config/platforms.json` (JSON array of strings) or `/config/platforms.txt` (CSV/newline list)
+- GitHub token (for uploading assets to release): `/config/github_token` (plain text)
 
 Mounts are specified when you package/deploy the component (add to `--mount` in CLI or Manifest mounts).
 
@@ -78,6 +79,8 @@ A job equivalent to:
 - Steps: extract `workspace.tar.gz` to `/tmp/workspace` and run `cargo build --release --bin realm`
 - Captures artifact `target/release/realm` as `realm-binary`
 - Targeting: `linux/x86_64` (adjust as needed)
+
+If `/config/github_token` is present, the controller passes it to the build job as an attachment (`/tmp/assets/gh_token`). The job will look up the GitHub release by tag and upload the built artifact to that release's assets.
 
 You can customize `components/ci-controller/src/lib.rs` to:
 - Add more platforms (`linux/aarch64`) and submit multiple jobs

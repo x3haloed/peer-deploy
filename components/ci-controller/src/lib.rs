@@ -139,8 +139,8 @@ mod component_impl {
         Ok(out)
     }
 
-    // Build multipart form with job_toml and optional workspace asset
-    fn build_multipart(job_toml: &str, workspace: Option<&[u8]>) -> (String, Vec<u8>) {
+    // Build multipart form with job_toml and optional assets (workspace, gh_token)
+    fn build_multipart(job_toml: &str, workspace: Option<&[u8]>, gh_token: Option<&[u8]>) -> (String, Vec<u8>) {
         let boundary = "--------------------------realmci";
         let mut data = Vec::new();
         data.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
@@ -154,24 +154,54 @@ mod component_impl {
             data.extend_from_slice(bytes);
             data.extend_from_slice(b"\r\n");
         }
+        if let Some(bytes) = gh_token {
+            data.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+            data.extend_from_slice(b"Content-Disposition: form-data; name=\"asset\"; filename=\"gh_token\"\r\n\r\n");
+            data.extend_from_slice(bytes);
+            data.extend_from_slice(b"\r\n");
+        }
         data.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
         (boundary.to_string(), data)
     }
 
-    fn make_job_toml(name: &str, platform: &str) -> String {
+    fn make_job_toml(name: &str, platform: &str, repo_full: &str, tag_name: &str, asset_name: &str) -> String {
         format!(
-            "name = \"{}\"\n\n[runtime]\ntype = \"native\"\nbinary = \"/usr/bin/bash\"\nargs = [\"-c\", \"set -e; mkdir -p /tmp/workspace; tar -xzf /tmp/assets/workspace.tar.gz -C /tmp/workspace; cd /tmp/workspace; cargo build --release --bin realm\"]\nmemory_mb = 4096\n\n[execution]\nworking_dir = \"/tmp\"\ntimeout_minutes = 45\nartifacts = [ {{ path = \"/tmp/workspace/target/release/realm\", name = \"realm-binary\" }} ]\n\n[targeting]\nplatform = \"{}\"\n",
-            name, platform
+            "name = \"{name}\"\n\n[runtime]\ntype = \"native\"\nbinary = \"/usr/bin/bash\"\nargs = [\"-c\", \"set -e; \
+mkdir -p /tmp/workspace; \
+tar -xzf /tmp/assets/workspace.tar.gz -C /tmp/workspace; \
+cd /tmp/workspace; \
+cargo build --release --bin realm; \
+ASSET=/{asset_path}; \
+if [ -f /tmp/assets/gh_token ]; then \
+  TOKEN=$(cat /tmp/assets/gh_token); \
+  if [ -n \"$TOKEN\" ]; then \
+    echo 'Uploading asset to GitHub release...'; \
+    REL=$(curl -s -H \"Authorization: Bearer $TOKEN\" https://api.github.com/repos/{repo}/releases/tags/{tag}); \
+    RID=$(printf '%s' \"$REL\" | grep -m1 '"id":' | sed -E 's/.*\"id\": ([0-9]+).*/\\1/'); \
+    if [ -n \"$RID\" ]; then \
+      curl -s -X POST -H \"Authorization: Bearer $TOKEN\" -H \"Content-Type: application/octet-stream\" --data-binary @\"$ASSET\" \"https://uploads.github.com/repos/{repo}/releases/$RID/assets?name={asset_name}\" > /dev/null || true; \
+    else \
+      echo 'Release ID not found for tag'; \
+    fi; \
+  fi; \
+fi\"]\nmemory_mb = 4096\n\n[execution]\nworking_dir = \"/tmp\"\ntimeout_minutes = 45\nartifacts = [ {{ path = \"/tmp/workspace/target/release/realm\", name = \"{asset_name}\" }} ]\n\n[targeting]\nplatform = \"{platform}\"\n",
+            name = name,
+            platform = platform,
+            repo = repo_full,
+            tag = tag_name,
+            asset_name = asset_name,
+            asset_path = "tmp/workspace/target/release/realm"
         )
     }
 
-    fn submit_jobs_for_platforms(base_name: &str, platforms: &[String], workspace_bytes: Option<Vec<u8>>) -> (u16, usize) {
+    fn submit_jobs_for_platforms(base_name: &str, platforms: &[String], workspace_bytes: Option<Vec<u8>>, repo_full: &str, tag_name: &str, gh_token_bytes: Option<Vec<u8>>) -> (u16, usize) {
         let mut ok = 0usize;
         let mut last_status = 500u16;
         for p in platforms {
             let job_name = format!("{}-{}", base_name, p.replace('/', "-"));
-            let job_toml = make_job_toml(&job_name, p);
-            let (boundary, form) = build_multipart(&job_toml, workspace_bytes.as_deref());
+            let asset_name = format!("realm-{}", p.replace('/', "-"));
+            let job_toml = make_job_toml(&job_name, p, repo_full, tag_name, &asset_name);
+            let (boundary, form) = build_multipart(&job_toml, workspace_bytes.as_deref(), gh_token_bytes.as_deref());
             let status = post_form("/api/jobs/submit", &boundary, &form).unwrap_or(500);
             last_status = status;
             if status >= 200 && status < 300 { ok += 1; }
@@ -209,7 +239,10 @@ mod component_impl {
                 }
                 let workspace_bytes = downloaded.or_else(|| std::fs::read("/workspace/workspace.tar.gz").ok());
                 let base_name = tag.clone().unwrap_or_else(|| "manual".to_string());
-                let (status, ok_count) = submit_jobs_for_platforms(&format!("build-{}", base_name), &platforms, workspace_bytes);
+                let gh_tok = std::fs::read("/config/github_token").ok();
+                let repo_full = repo.unwrap_or_else(|| "".to_string());
+                let tag_name = tag.unwrap_or_else(|| base_name.clone());
+                let (status, ok_count) = submit_jobs_for_platforms(&format!("build-{}", base_name), &platforms, workspace_bytes, &repo_full, &tag_name, gh_tok);
                 let mut w = body.write().expect("write");
                 let _ = w.write(format!("submitted {} job(s) (status {})\n", ok_count, status).as_bytes());
                 drop(w);
@@ -270,7 +303,10 @@ mod component_impl {
                 let workspace_bytes = downloaded.or_else(|| std::fs::read("/workspace/workspace.tar.gz").ok());
                 let platforms = read_platforms_config();
                 let base = tag_name.clone().unwrap_or_else(|| "release".to_string());
-                let (status, ok_count) = submit_jobs_for_platforms(&format!("build-{}", base), &platforms, workspace_bytes);
+                let gh_tok = std::fs::read("/config/github_token").ok();
+                let repo_full = repo_full.unwrap_or_else(|| "".to_string());
+                let tag_val = tag_name.clone().unwrap_or_else(|| base.clone());
+                let (status, ok_count) = submit_jobs_for_platforms(&format!("build-{}", base), &platforms, workspace_bytes, &repo_full, &tag_val, gh_tok);
                 let mut w = body.write().expect("write");
                 let _ = w.write(format!("submitted {} job(s) (status {})\n", ok_count, status).as_bytes());
                 drop(w);
