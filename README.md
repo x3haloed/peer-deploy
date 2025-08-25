@@ -20,6 +20,9 @@ I vibe-coded this in about 5 days in the hopes that a Rust dev will re-write thi
 - **WASI components** executed under Wasmtime with memory caps, fuel metering and epoch deadlines.
 - **Ad‑hoc or desired state**: push a single component, or apply a signed TOML manifest.
 
+## Ask the Realm GPT
+The [Realm GPT](https://chatgpt.com/g/g-68abeff5b4ec8191b02393f63e4cda46-realm-expert) has access to the entire repo and can help you understand what it's good for, how it works, and how to use it.
+
 ## Table of Contents
 - [Scenarios](#scenarios)
 - [Why I made this](#why)
