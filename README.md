@@ -21,15 +21,15 @@ I vibe-coded this in about 5 days in the hopes that a Rust dev will re-write thi
 - **Ad‑hoc or desired state**: push a single component, or apply a signed TOML manifest.
 
 ## Table of Contents
-- [Scenarios](https://github.com/x3haloed/peer-deploy/tree/main#scenarios)
-- [Why I made this](https://github.com/x3haloed/peer-deploy/tree/main#why)
-- [Getting Started](https://github.com/x3haloed/peer-deploy/tree/main#getting-started)
-- [Key Commands](https://github.com/x3haloed/peer-deploy/tree/main#key-commands)
-- [Packages and Mount Lifecycle](https://github.com/x3haloed/peer-deploy/tree/main#packages-and-mount-lifecycle)
-- [Agent Command‑Line Options](https://github.com/x3haloed/peer-deploy/tree/main#agent-commandline-options)
-- [Metrics and Logs](https://github.com/x3haloed/peer-deploy/tree/main#metrics-and-logs)
-- [Runtime Extensions](https://github.com/x3haloed/peer-deploy/tree/main#runtime-extensions)
-- [Dynamic Peer Discovery](https://github.com/x3haloed/peer-deploy/tree/main#dynamic-peer-discovery)
+- [Scenarios](#scenarios)
+- [Why I made this](#why)
+- [Getting Started](#getting-started)
+- [Key Commands](#key-commands)
+- [Packages and Mount Lifecycle](#packages-and-mount-lifecycle)
+- [Agent Command‑Line Options](#agent-commandline-options)
+- [Metrics and Logs](#metrics-and-logs)
+- [Runtime Extensions](#runtime-extensions)
+- [Dynamic Peer Discovery](#dynamic-peer-discovery)
 
 ## Scenarios
 ### Sandboxed WASI Services
