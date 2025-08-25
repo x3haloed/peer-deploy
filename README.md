@@ -11,7 +11,7 @@ I vibe-coded this in about 5 days in the hopes that a Rust dev will re-write thi
 
 ## Features
 - **Multiplatform** builds and runs on Mac, Linux, and Windows
-- **Single binary** stand-along program file that optionally installs iteself with `./realm install`
+- **Single binary** stand-alone program file that optionally installs iteself with `./realm install`
 - **Host services** WASI, qemu, and native processes can all be orchestrated remotely
 - **One-off tasks** run any tool on any machine you control
 - **P2P control plane** means every deployment server is also an admin server
