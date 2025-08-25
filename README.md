@@ -64,6 +64,11 @@ We've lost something in computing. That magical feeling of writing code on your 
 
 ## Getting started
 
+### Uing the CLI
+The CLI is robust and supports all functionality. I suggest reviewing the [manpage-style docs](https://github.com/x3haloed/peer-deploy/blob/main/docs/man/realm.md).
+
+### Installation and First Use
+
 NOTE: All the following is out of date and I'm still working on fixing it. If you want to know how to do things, open the web UI
 
 ```bash
