@@ -80,15 +80,11 @@ The CLI is robust and supports all functionality. I suggest reviewing the [manpa
 
 ### Installation and First Use
 
-```bash
-cargo run --release -- manage --owner-key --timeout 30
-```
-
-### Prerequisites
+#### Prerequisites
 - Rust toolchain (stable) and `cargo`
 - macOS or Linux
 
-### Build
+#### Build
 - Build release binaries:
 ```bash
 cargo build --release
@@ -96,7 +92,7 @@ cargo build --release
 - Outputs:
   - `target/release/realm` (unified binary)
 
-### Quick start
+#### Quick start
 - Run the agent (default command):
 ```bash
 ./target/release/realm --role dev
@@ -107,7 +103,7 @@ cargo build --release
 ```
 This starts a temporary node with a random peer ID and ports, avoiding conflicts with a running agent.
 
-### Install binaries
+#### Install binaries
 What the agent installer does (user-mode on macOS/Linux):
 - Copies the agent binary to a versioned path, maintains a `current` symlink, and places a convenience symlink on your PATH.
 - User service (default):
@@ -128,14 +124,14 @@ Tip for macOS: ensure `~/.local/bin` is on your PATH (zsh):
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```
 
-### Generate an owner key
+#### Generate an owner key
 ```bash
 realm init
 realm key-show   # prints your owner public key (ed25519:BASE58...)
 realm whoami     # prints CLI owner pub, agent's trusted owner (if set), and agent PeerId (if running)
 ```
 
-### Configure an agent
+#### Configure an agent
 On a node that runs the agent, trust the owner and optionally add bootstrap peers:
 ```bash
 realm configure --owner <ed25519:BASE58...> --bootstrap \
@@ -157,13 +153,13 @@ The agent now persists its chosen UDP listen port in `~/.local/share/realm-agent
 REALM_LISTEN_PORT=60856 realm configure --owner <ed25519:...>
 ```
 
-### Discover and view status
+#### Discover and view status
 From the web UI, peers discovered via mDNS will show up automatically. Or use the command:
 ```bash
 realm status
 ```
 
-### Push a WASI component ad‑hoc
+#### Push a WASI component ad‑hoc
 The quickest way to try execution on a target peer:
 ```bash
 realm push \
@@ -193,7 +189,7 @@ realm push \
 ```
 Then open `http://127.0.0.1:8080/hello/`.
 
-### Apply a signed manifest
+#### Apply a signed manifest
 Create a TOML file that lists components and digests (sha256) and apply it:
 ```bash
 realm apply --file ./realm.toml --version 1
@@ -201,7 +197,7 @@ realm apply --file ./realm.toml --version 1
 - The CLI signs the manifest with your owner key.
 - Agents verify signature, enforce TOFU on first owner, verify component digests, stage artifacts, and reconcile desired replicas.
 
-### Upgrade agents remotely
+#### Upgrade agents remotely
 - From the web UI: Ops → Upgrade Agent (multipart upload).
 - Or via CLI:
 ```bash
@@ -220,7 +216,7 @@ Upgrade behavior on agents:
 - Writes versioned binary, updates `current` symlink, spawns new process, exits old
 - Emits progress to the agent logs so you can observe each phase in the web UI
 
-### Submit jobs with attachments
+#### Submit jobs with attachments
 - Attach local files/bundles to a job; they are content-addressed and pre-staged before execution.
 - CLI examples:
 ```bash
