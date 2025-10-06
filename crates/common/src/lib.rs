@@ -117,6 +117,11 @@ pub enum Command {
         node_id: String,
         jobs: Vec<JobInstance>,
     },
+    /// Update the roles/tags advertised by a node
+    UpdateRoles {
+        target_peer_ids: Vec<String>,
+        roles: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

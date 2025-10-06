@@ -1123,7 +1123,7 @@ class RealmApp {
             const details = await res.json();
             const alias = details.alias || '';
             const notes = details.notes || '';
-            const roles = (details.roles || []).join(', ');
+            const rolesCsv = (details.roles || []).join(', ');
             const body = `
                 <div class="space-y-3 text-sm">
                     <div>
@@ -1136,8 +1136,8 @@ class RealmApp {
                             <input id="node-alias" type="text" value="${alias.replace(/"/g, '&quot;')}" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
                         </div>
                         <div>
-                            <label class="block text-gray-300 mb-1">Roles</label>
-                            <div class="bg-graphite border border-graphite rounded px-3 py-2">${roles || '-'}</div>
+                            <label class="block text-gray-300 mb-1">Roles (comma-separated)</label>
+                            <input id="node-roles" type="text" value="${rolesCsv.replace(/"/g, '&quot;')}" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-3">
@@ -1158,8 +1158,11 @@ class RealmApp {
             this.showModal('Node Details', body, async () => {
                 const newAlias = document.getElementById('node-alias').value.trim();
                 const newNotes = document.getElementById('node-notes').value;
+                const rolesField = document.getElementById('node-roles').value || '';
+                const newRoles = rolesField.split(',').map(s => s.trim()).filter(Boolean);
                 try {
                     await this.apiCall(`/api/nodes/${encodeURIComponent(nodeId)}`, { method: 'POST', body: JSON.stringify({ alias: newAlias, notes: newNotes }) });
+                    await this.apiCall(`/api/nodes/${encodeURIComponent(nodeId)}/roles`, { method: 'POST', body: JSON.stringify({ roles: newRoles }) });
                     this.showSuccess('Node updated');
                     if (this.currentView === 'nodes') { this.loadNodesData(); }
                 } catch (e) {

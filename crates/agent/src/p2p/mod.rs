@@ -116,7 +116,7 @@ pub async fn run_agent(
     memory_max_mb: u64,
     fuel: u64,
     epoch_ms: u64,
-    roles: Vec<String>,
+    mut roles: Vec<String>,
     ephemeral: bool,
     // Optional sink to mirror mesh status updates into a shared map (for web UI)
     status_sink: Option<Arc<AsyncMutex<std::collections::BTreeMap<String, common::Status>>>>,
@@ -1102,6 +1102,13 @@ pub async fn run_agent(
                                             } else {
                                                 warn!("push: unsigned serialize err");
                                             }
+                                        }
+                                    }
+                                    Command::UpdateRoles { target_peer_ids, roles: new_roles } => {
+                                        let applies = target_peer_ids.is_empty() || target_peer_ids.iter().any(|s| s == &local_peer_id.to_string());
+                                        if applies {
+                                            info!("received UpdateRoles; updating roles to {:?}", new_roles);
+                                            roles = new_roles.clone();
                                         }
                                     }
                                     Command::SubmitJob { origin_node_id, job_id, spec: job } => {

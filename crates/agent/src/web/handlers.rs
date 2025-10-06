@@ -15,6 +15,7 @@ use crate::supervisor::DesiredComponent;
 use common::{ComponentSpec, Manifest};
 use crate::cmd;
 use crate::p2p::state::{load_state, save_state, NodeAnnotation};
+use crate::cmd::util::{new_swarm, mdns_warmup, dial_bootstrap};
 
 // API handlers with real data integration
 pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
@@ -108,8 +109,40 @@ pub async fn api_node_update(Path(node_id): Path<String>, Json(req): Json<ApiNod
     let entry = st.node_annotations.entry(node_id.clone()).or_insert(NodeAnnotation::default());
     if let Some(a) = req.alias { entry.alias = Some(a); }
     if let Some(n) = req.notes { entry.notes = Some(n); }
+    // If roles included in notes payload in future, they'll be ignored here; separate endpoint is recommended for schema parity.
     save_state(&st);
     (StatusCode::OK, "ok").into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiNodeRolesUpdateReq { pub roles: Vec<String> }
+
+/// Broadcast a roles update to the specified node id; also refresh local cache for UI
+pub async fn api_node_update_roles(Path(node_id): Path<String>, State(state): State<WebState>, Json(req): Json<ApiNodeRolesUpdateReq>) -> impl IntoResponse {
+    // Optimistically update in-memory view so UI reflects immediately
+    {
+        let mut peers = state.peer_status.lock().await;
+        if let Some(st) = peers.get_mut(&node_id) {
+            st.tags = req.roles.clone();
+        }
+    }
+    // Map node_id to PeerId string equality for now
+    match new_swarm().await {
+        Ok((mut swarm, topic_cmd, _topic_status)) => {
+            // Warm up mDNS briefly to find peers
+            let _ = libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap());
+            mdns_warmup(&mut swarm).await;
+            // Dial configured bootstrap peers
+            dial_bootstrap(&mut swarm).await;
+            let msg = common::Command::UpdateRoles { target_peer_ids: vec![node_id.clone()], roles: req.roles.clone() };
+            let _ = libp2p::Swarm::behaviour_mut(&mut swarm).gossipsub.publish(topic_cmd.clone(), common::serialize_message(&msg));
+            // Pump the swarm briefly to flush publish
+            // Allow a short delay to let gossipsub broadcast
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            (StatusCode::OK, "ok").into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("roles update failed: {}", e)).into_response(),
+    }
 }
 
 pub async fn api_components(State(state): State<WebState>) -> Json<Vec<ApiComponent>> {
