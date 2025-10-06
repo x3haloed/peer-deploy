@@ -34,7 +34,7 @@ pub async fn connect_to_agent() -> Result<WebState> {
     let supervisor = Arc::new(Supervisor::new(logs.clone(), metrics.clone()));
 
     // Restore components from disk
-    if let Err(e) = supervisor.restore_from_disk().await {
+    if let Err(e) = supervisor.restore_from_disk(None, None).await {
         tracing::warn!(error=%e, "Failed to restore component state from disk");
         // Continue anyway - web interface should work even if no components are deployed
     }

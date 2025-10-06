@@ -253,6 +253,36 @@ pub struct ComponentSpec {
     pub mounts: Option<Vec<MountSpec>>,  // preopened directories
     pub ports: Option<Vec<ServicePort>>, // declared guest ports (Service)
     pub visibility: Option<Visibility>,  // gateway binding policy
+    #[serde(default)]
+    pub target_peer_ids: Vec<String>,
+    #[serde(default)]
+    pub target_tags: Vec<String>,
+    #[serde(default = "default_start_true")]
+    pub start: bool,
+}
+
+impl ComponentSpec {
+    pub fn matches_target(&self, peer_id: Option<&str>, roles: Option<&[String]>) -> bool {
+        if !self.target_peer_ids.is_empty() {
+            if let Some(id) = peer_id {
+                if !self.target_peer_ids.iter().any(|p| p == id) {
+                    return false;
+                }
+            }
+        }
+        if !self.target_tags.is_empty() {
+            if let Some(role_list) = roles {
+                if !self
+                    .target_tags
+                    .iter()
+                    .any(|tag| role_list.iter().any(|r| r == tag))
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,6 +362,10 @@ pub enum Protocol {
 
 fn default_protocol() -> Protocol {
     Protocol::Tcp
+}
+
+fn default_start_true() -> bool {
+    true
 }
 
 // Removed legacy static file routing; HTTP is now handled via WASI HTTP.

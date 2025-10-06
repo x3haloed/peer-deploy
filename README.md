@@ -200,6 +200,21 @@ realm apply --file ./realm.toml --version 1
 - The CLI signs the manifest with your owner key.
 - Agents verify signature, enforce TOFU on first owner, verify component digests, stage artifacts, and reconcile desired replicas.
 
+Example component entry with placement and staging controls:
+
+```toml
+[components."edge-cache"]
+source = "https://example.com/edge-cache.wasm"
+sha256_hex = "<sha256>"
+replicas = 2
+memory_max_mb = 128
+target_peer_ids = ["12D3KooWExamplePeerId"]
+target_tags = ["edge"]
+start = true # set to false to stage the artifact without launching it
+```
+
+Agents skip components that specify peer IDs or tags that do not match the local node. When both lists are empty (the default), the component applies to every peer.
+
 #### Upgrade agents remotely
 - From the web UI: Ops → Upgrade Agent (multipart upload).
 - Or via CLI:

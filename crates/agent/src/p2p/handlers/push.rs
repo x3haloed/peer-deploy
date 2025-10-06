@@ -141,6 +141,9 @@ pub async fn handle_push_package(
             mounts: clone_mounts(&pkg.unsigned.mounts),
             ports: clone_ports(&pkg.unsigned.ports),
             visibility: pkg.unsigned.visibility.clone(),
+            target_peer_ids: pkg.unsigned.target_peer_ids.clone(),
+            target_tags: pkg.unsigned.target_tags.clone(),
+            start: pkg.unsigned.start,
         };
         let desired = DesiredComponent {
             name: component.clone(),

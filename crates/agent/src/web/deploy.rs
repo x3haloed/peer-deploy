@@ -24,6 +24,7 @@ pub async fn api_deploy(
         )
             .into_response();
     }
+    let start_flag = request.start.unwrap_or(true);
     let spec = ComponentSpec {
         source: request.source.clone(),
         sha256_hex: request.sha256_hex,
@@ -34,6 +35,9 @@ pub async fn api_deploy(
         mounts: None,
         ports: None,
         visibility: None,
+        target_peer_ids: request.target_peer_ids.clone(),
+        target_tags: request.target_tags.clone(),
+        start: start_flag,
     };
     let path = if request.source.starts_with("file://") {
         PathBuf::from(
@@ -52,19 +56,33 @@ pub async fn api_deploy(
     if !path.exists() {
         return (StatusCode::BAD_REQUEST, "Component file does not exist").into_response();
     }
-    let desired_component = DesiredComponent {
-        name: request.name.clone(),
-        path,
-        spec,
+    let response_msg = if start_flag {
+        let desired_component = DesiredComponent {
+            name: request.name.clone(),
+            path,
+            spec,
+        };
+        state.supervisor.upsert_component(desired_component).await;
+        crate::p2p::metrics::push_log(
+            &state.logs,
+            "system",
+            format!("Component '{}' deployed via web interface", request.name),
+        )
+        .await;
+        "Component deployed successfully"
+    } else {
+        crate::p2p::metrics::push_log(
+            &state.logs,
+            "system",
+            format!(
+                "Component '{}' staged via web interface (start=false)",
+                request.name
+            ),
+        )
+        .await;
+        "Component staged"
     };
-    state.supervisor.upsert_component(desired_component).await;
-    crate::p2p::metrics::push_log(
-        &state.logs,
-        "system",
-        format!("Component '{}' deployed via web interface", request.name),
-    )
-    .await;
-    (StatusCode::OK, "Component deployed successfully").into_response()
+    (StatusCode::OK, response_msg).into_response()
 }
 
 pub async fn api_deploy_multipart(
@@ -126,6 +144,13 @@ pub async fn api_deploy_multipart(
                 .into_response();
         }
     }
+    let target_tags: Vec<String> = tags_csv
+        .unwrap_or_default()
+        .split(',')
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .collect();
     let spec = ComponentSpec {
         source: format!("cached:{}", digest),
         sha256_hex: digest.clone(),
@@ -136,6 +161,9 @@ pub async fn api_deploy_multipart(
         mounts: None,
         ports: None,
         visibility: None,
+        target_peer_ids: Vec::new(),
+        target_tags: target_tags.clone(),
+        start: true,
     };
     let desired_component = DesiredComponent {
         name: name.clone(),
@@ -144,7 +172,6 @@ pub async fn api_deploy_multipart(
     };
     state.supervisor.upsert_component(desired_component).await;
     crate::p2p::state::update_persistent_manifest_with_component(&name, spec);
-    let _ = tags_csv;
     crate::p2p::metrics::push_log(
         &state.logs,
         "system",
@@ -378,6 +405,9 @@ pub async fn api_deploy_package_multipart(
         },
         ports: None,
         visibility: None,
+        target_peer_ids: Vec::new(),
+        target_tags: Vec::new(),
+        start: true,
     };
 
     // Also stage the wasm into artifacts cache with the standard name pattern used by supervisor restore
@@ -571,6 +601,9 @@ pub async fn install_package_from_bytes(
         },
         ports: None,
         visibility: None,
+        target_peer_ids: Vec::new(),
+        target_tags: Vec::new(),
+        start: true,
     };
     let desired_component = DesiredComponent {
         name: comp_name.clone(),

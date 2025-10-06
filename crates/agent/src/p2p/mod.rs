@@ -171,11 +171,22 @@ pub async fn run_agent(
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
     let sys = std::sync::Arc::new(tokio::sync::Mutex::new(sysinfo::System::new_all()));
 
+    let id_keys = if ephemeral {
+        identity::Keypair::generate_ed25519()
+    } else {
+        load_or_create_node_key()
+    };
+    let local_peer_id = PeerId::from(id_keys.public());
+    let local_peer_string = local_peer_id.to_string();
+
     // Start supervisor and restore persistent state
     let supervisor = std::sync::Arc::new(Supervisor::new(logs.clone(), metrics.clone()));
 
     // CRITICAL: Restore persistent component state before starting reconciliation
-    if let Err(e) = supervisor.restore_from_disk().await {
+    if let Err(e) = supervisor
+        .restore_from_disk(Some(local_peer_string.as_str()), Some(&roles))
+        .await
+    {
         warn!(error=%e, "Failed to restore component state from disk, starting fresh");
     }
 
@@ -184,17 +195,10 @@ pub async fn run_agent(
         supervisor.clone().spawn_reconcile();
     }
 
-    let id_keys = if ephemeral {
-        identity::Keypair::generate_ed25519()
-    } else {
-        load_or_create_node_key()
-    };
-    let local_peer_id = PeerId::from(id_keys.public());
-
     // Initialize job manager and restore job state
     let job_manager = std::sync::Arc::new(crate::job_manager::JobManager::new(
         state::agent_data_dir().join("jobs"),
-        local_peer_id.to_string(),
+        local_peer_string.clone(),
     ));
 
     if let Err(e) = job_manager.load_from_disk().await {
@@ -980,9 +984,20 @@ pub async fn run_agent(
                                         let logs2 = logs.clone();
                                         let m2 = metrics.clone();
                                         let sup = supervisor.clone();
+                                        let local_peer_str = local_peer_id.to_string();
+                                        let roles_clone = roles.clone();
                                         tokio::spawn(async move {
                                             push_log(&logs2, "apply", format!("apply v{}", signed.version)).await;
-                                            handle_apply_manifest(tx2, signed, logs2, m2, sup).await;
+                                            handle_apply_manifest(
+                                                tx2,
+                                                signed,
+                                                logs2,
+                                                m2,
+                                                sup,
+                                                local_peer_str,
+                                                roles_clone,
+                                            )
+                                            .await;
                                         });
                                     }
                                     Command::UpgradeAgent(pkg) => {

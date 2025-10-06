@@ -21,10 +21,9 @@ pub(crate) async fn fetch_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 pub(super) async fn verify_and_stage_artifacts(
-    manifest_toml: &str,
+    manifest: &Manifest,
 ) -> anyhow::Result<std::collections::BTreeMap<String, std::path::PathBuf>> {
     use common::sha256_hex;
-    let manifest: Manifest = toml::from_str(manifest_toml)?;
     let mut staged = std::collections::BTreeMap::new();
     let stage_dir = agent_data_dir().join("artifacts");
     tokio::fs::create_dir_all(&stage_dir).await.ok();

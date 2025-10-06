@@ -41,7 +41,11 @@ impl Supervisor {
     }
 
     /// Restore desired state from disk on startup
-    pub async fn restore_from_disk(&self) -> anyhow::Result<()> {
+    pub async fn restore_from_disk(
+        &self,
+        local_peer_id: Option<&str>,
+        agent_roles: Option<&[String]>,
+    ) -> anyhow::Result<()> {
         if let Some(manifest_toml) = load_desired_manifest() {
             info!("Restoring component state from persistent manifest");
 
@@ -51,6 +55,14 @@ impl Supervisor {
                     let stage_dir = agent_data_dir().join("artifacts");
 
                     for (name, spec) in manifest.components {
+                        if !spec.matches_target(local_peer_id, agent_roles) {
+                            info!(component=%name, "Skipping restore: not targeted to this node");
+                            continue;
+                        }
+                        if !spec.start {
+                            info!(component=%name, "Manifest start=false; staged only");
+                            continue;
+                        }
                         // Resolve artifact path from cache using the pattern from handlers.rs
                         let artifact_path =
                             stage_dir.join(format!("{}-{}.wasm", name, &spec.sha256_hex[..16]));
