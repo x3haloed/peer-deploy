@@ -39,7 +39,10 @@ pub use websocket::*;
 
 use anyhow::Result;
 use axum::{
-    http::{header, StatusCode, Uri},
+    body::Body,
+    extract::State,
+    http::{header, Method, Request, StatusCode, Uri},
+    middleware::{from_fn_with_state, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -56,6 +59,8 @@ static WEB_ASSETS: Dir<'_> = include_dir!("crates/agent/web");
 fn create_app(state: WebState, session_id: String) -> Router {
     // Authenticate the session immediately
     state.authenticate_session(&session_id);
+
+    let auth_state = state.clone();
 
     Router::new()
         // Static files and main interface
@@ -113,7 +118,11 @@ fn create_app(state: WebState, session_id: String) -> Router {
         .route("/api/alerts/acknowledge", post(api_acknowledge_alert))
         // WebSocket for real-time updates
         .route("/ws", get(websocket_handler))
-        .layer(ServiceBuilder::new().layer(CorsLayer::permissive()))
+        .layer(
+            ServiceBuilder::new()
+                .layer(from_fn_with_state(auth_state, auth_middleware))
+                .layer(CorsLayer::permissive()),
+        )
         .with_state(state)
 }
 
@@ -145,6 +154,80 @@ async fn serve_static_file(path: &str) -> impl IntoResponse {
             .body(axum::body::Body::from("File not found"))
             .unwrap(),
     }
+}
+
+async fn auth_middleware(
+    State(state): State<WebState>,
+    req: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if req.method() == Method::OPTIONS {
+        return Ok(next.run(req).await);
+    }
+
+    let path = req.uri().path().to_owned();
+    let auth_header = req.headers().get(header::AUTHORIZATION).cloned();
+    let query_string = req.uri().query().map(|s| s.to_owned());
+
+    let needs_auth = path.starts_with("/api/");
+    let is_ws = path == "/ws";
+
+    if needs_auth {
+        if !authorize_bearer_header(&state, auth_header.as_ref()) {
+            return Ok((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
+        }
+    } else if is_ws {
+        if !authorize_ws_request(&state, auth_header.as_ref(), query_string.as_deref()) {
+            return Ok((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
+        }
+    }
+
+    Ok(next.run(req).await)
+}
+
+fn authorize_bearer_header(state: &WebState, value: Option<&header::HeaderValue>) -> bool {
+    let Some(raw) = value else {
+        return false;
+    };
+    let Ok(text) = raw.to_str() else {
+        return false;
+    };
+    let token = text
+        .strip_prefix("Bearer ")
+        .or_else(|| text.strip_prefix("bearer "))
+        .unwrap_or("")
+        .trim();
+    if token.is_empty() {
+        return false;
+    }
+    state.validate_bearer(token)
+}
+
+fn authorize_ws_request(
+    state: &WebState,
+    header: Option<&header::HeaderValue>,
+    query: Option<&str>,
+) -> bool {
+    if authorize_bearer_header(state, header) {
+        return true;
+    }
+    if let Some(token) = extract_token_from_query(query) {
+        return state.validate_bearer(&token);
+    }
+    false
+}
+
+fn extract_token_from_query(query: Option<&str>) -> Option<String> {
+    let query = query?;
+    for pair in query.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next()?.trim();
+        let value = parts.next().unwrap_or("");
+        if key == "token" {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 // Management session starter

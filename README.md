@@ -293,6 +293,7 @@ realm job submit build-job.toml --use-artifact build-peer-deploy-1:realm-linux-x
 - Metrics (Prometheus): `http://127.0.0.1:9920/metrics`
 - Logs (plain text): `http://127.0.0.1:9920/logs?component=__all__&tail=200`
 - Web UI (management): launched via `realm manage` (prints local URL and port)
+- The printed URL includes a `?token=...` query parameter. All Web API and WebSocket calls must send this token as `Authorization: Bearer <token>`; requests without it are rejected.
 - Web UI polls these endpoints to render overview tiles and logs.
   - Gateway metrics included: `gateway_requests_total`, `gateway_errors_total`, `gateway_last_latency_ms`
 

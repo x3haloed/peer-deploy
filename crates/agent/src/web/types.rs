@@ -95,6 +95,18 @@ impl WebState {
         }
         false
     }
+
+    pub fn validate_bearer(&self, token: &str) -> bool {
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.retain(|_, session| !session.is_expired());
+        if let Some(session) = sessions.get_mut(token) {
+            if session.authenticated {
+                session.touch();
+                return true;
+            }
+        }
+        false
+    }
 }
 
 // API response types
