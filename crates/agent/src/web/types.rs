@@ -171,6 +171,12 @@ pub struct DeployRequest {
     pub target_tags: Vec<String>,
     #[serde(default)]
     pub start: Option<bool>,
+    #[serde(default)]
+    pub ports: Option<Vec<String>>,
+    #[serde(default)]
+    pub mounts: Option<Vec<String>>,
+    #[serde(default)]
+    pub visibility: Option<String>,
 }
 
 #[derive(Deserialize)]

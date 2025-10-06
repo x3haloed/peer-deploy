@@ -272,6 +272,41 @@
                                 <input type="number" id="memory-limit" name="memory" value="64" min="1" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
                             </div>
                         </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="fuel" class="block text-sm text-gray-300 mb-1">Fuel (instructions)</label>
+                                <input type="number" id="fuel" name="fuel" value="5000000" min="0" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                            </div>
+                            <div>
+                                <label for="epoch-ms" class="block text-sm text-gray-300 mb-1">Epoch Deadline (ms)</label>
+                                <input type="number" id="epoch-ms" name="epoch_ms" value="100" min="1" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                            <div>
+                                <label for="visibility" class="block text-sm text-gray-300 mb-1">Gateway Visibility</label>
+                                <select id="visibility" name="visibility" class="w-full bg-graphite border border-graphite rounded px-3 py-2">
+                                    <option value="">Agent default</option>
+                                    <option value="local">Local only</option>
+                                    <option value="public">Public</option>
+                                </select>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <input type="hidden" name="start" value="false">
+                                <input type="checkbox" id="start-toggle" name="start" value="true" class="h-4 w-4 text-neon-blue border-graphite rounded bg-graphite" checked>
+                                <label for="start-toggle" class="text-sm text-gray-300">Start immediately after deploy</label>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="mounts" class="block text-sm text-gray-300 mb-1">Mounts</label>
+                            <textarea id="mounts" name="mounts" rows="3" placeholder="host=/var/www,guest=/www,ro=true" class="w-full bg-graphite border border-graphite rounded px-3 py-2 text-sm"></textarea>
+                            <p class="text-xs text-gray-400 mt-1">Optional; one mount per line using <code>host=/abs/path,guest=/guest/path[,ro=true]</code>.</p>
+                        </div>
+                        <div>
+                            <label for="ports" class="block text-sm text-gray-300 mb-1">Service Ports</label>
+                            <textarea id="ports" name="ports" rows="2" placeholder="8080/tcp" class="w-full bg-graphite border border-graphite rounded px-3 py-2 text-sm"></textarea>
+                            <p class="text-xs text-gray-400 mt-1">Optional; one port per line using <code>PORT/protocol</code>, e.g. <code>9090/udp</code>.</p>
+                        </div>
                         <div>
                             <label for="target-tags" class="block text-sm text-gray-300 mb-1">Target Tags (comma-separated)</label>
                             <input type="text" id="target-tags" name="tags" placeholder="production, edge, gpu" class="w-full bg-graphite border border-graphite rounded px-3 py-2">

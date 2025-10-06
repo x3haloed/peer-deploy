@@ -16,7 +16,10 @@ use crate::p2p::{handle_push_package, PushAcceptanceError};
 use crate::policy::{find_any_qemu_user, load_policy, save_policy, ExecutionPolicy};
 use crate::storage::ContentStore;
 use base64::Engine;
-use common::{sign_bytes_ed25519, Manifest, OwnerKeypair, PushPackage, PushUnsigned};
+use common::{
+    sign_bytes_ed25519, Manifest, MountSpec, OwnerKeypair, Protocol, PushPackage, PushUnsigned,
+    ServicePort, Visibility,
+};
 
 // API handlers with real data integration
 pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
@@ -362,6 +365,21 @@ pub async fn api_deploy(
         return (StatusCode::BAD_REQUEST, "Digest mismatch").into_response();
     }
 
+    let mount_strings = request.mounts.clone().unwrap_or_default();
+    let mounts = match parse_mount_entries(&mount_strings) {
+        Ok(m) => m,
+        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    };
+    let port_strings = request.ports.clone().unwrap_or_default();
+    let ports = match parse_port_entries(&port_strings) {
+        Ok(p) => p,
+        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    };
+    let visibility = match parse_visibility(request.visibility.as_deref()) {
+        Ok(v) => v,
+        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    };
+
     // Load owner signing key (same as CLI `realm push`)
     let owner_dir = match crate::cmd::util::owner_dir() {
         Ok(dir) => dir,
@@ -409,9 +427,9 @@ pub async fn api_deploy(
         replicas,
         start: start_flag,
         binary_sha256_hex: digest,
-        mounts: None,
-        ports: None,
-        visibility: None,
+        mounts,
+        ports,
+        visibility,
     };
     let unsigned_bytes = serde_json::to_vec(&unsigned).expect("PushUnsigned serialization");
     let signature = match sign_bytes_ed25519(&owner.private_hex, &unsigned_bytes) {
@@ -440,6 +458,97 @@ pub async fn api_deploy(
             };
             (status, err.to_string()).into_response()
         }
+    }
+}
+
+fn parse_mount_entries(entries: &[String]) -> Result<Option<Vec<MountSpec>>, String> {
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let mut out = Vec::new();
+    for entry in entries {
+        let mut host: Option<String> = None;
+        let mut guest: Option<String> = None;
+        let mut ro = false;
+        for part in entry.split(',') {
+            let mut kv = part.splitn(2, '=');
+            let key = kv.next().unwrap_or("").trim();
+            let value = kv.next().unwrap_or("").trim();
+            match key {
+                "host" => host = Some(value.to_string()),
+                "guest" => guest = Some(value.to_string()),
+                "ro" => {
+                    ro = matches!(
+                        value.to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                }
+                "" => {}
+                other => return Err(format!("invalid mount key '{other}' in '{entry}'")),
+            }
+        }
+        let (host, guest) = match (host, guest) {
+            (Some(h), Some(g)) => (h, g),
+            _ => {
+                return Err(format!(
+                    "mount entry '{entry}' must include host= and guest="
+                ))
+            }
+        };
+        out.push(MountSpec { host, guest, ro });
+    }
+    if out.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(out))
+    }
+}
+
+fn parse_port_entries(entries: &[String]) -> Result<Option<Vec<ServicePort>>, String> {
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let mut out = Vec::new();
+    for entry in entries {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.split('/').map(str::trim);
+        let port_str = parts.next().unwrap_or("");
+        if port_str.is_empty() {
+            return Err(format!("invalid port '{entry}'"));
+        }
+        let proto_str = parts.next().unwrap_or("tcp");
+        let port = port_str
+            .parse::<u16>()
+            .map_err(|_| format!("invalid port number '{port_str}'"))?;
+        let protocol = if proto_str.eq_ignore_ascii_case("udp") {
+            Protocol::Udp
+        } else {
+            Protocol::Tcp
+        };
+        out.push(ServicePort {
+            name: None,
+            port,
+            protocol,
+        });
+    }
+    if out.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(out))
+    }
+}
+
+fn parse_visibility(raw: Option<&str>) -> Result<Option<Visibility>, String> {
+    match raw.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(value) => match value.to_ascii_lowercase().as_str() {
+            "local" => Ok(Some(Visibility::Local)),
+            "public" => Ok(Some(Visibility::Public)),
+            other => Err(format!("invalid visibility '{other}'")),
+        },
     }
 }
 
@@ -512,7 +621,7 @@ pub async fn api_deploy_multipart(
     State(state): State<WebState>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    // Expected fields: name (text), file (file), replicas, memory, fuel, epoch_ms, tags
+    // Expected fields: name (text), file (file), replicas, memory, fuel, epoch_ms, tags, mounts, ports, visibility, start
     let mut name: Option<String> = None;
     let mut replicas: Option<u32> = None;
     let mut memory_max_mb: Option<u64> = None;
@@ -520,6 +629,10 @@ pub async fn api_deploy_multipart(
     let mut epoch_ms: Option<u64> = None;
     let mut tags_csv: Option<String> = None;
     let mut file_bytes: Option<Vec<u8>> = None;
+    let mut mount_entries: Vec<String> = Vec::new();
+    let mut port_entries: Vec<String> = Vec::new();
+    let mut visibility_raw: Option<String> = None;
+    let mut start_flag: Option<bool> = None;
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let fname = field.name().unwrap_or("").to_string();
@@ -541,6 +654,51 @@ pub async fn api_deploy_multipart(
             }
             "tags" => {
                 tags_csv = field.text().await.ok();
+            }
+            "mount" => {
+                if let Ok(text) = field.text().await {
+                    if !text.trim().is_empty() {
+                        mount_entries.push(text);
+                    }
+                }
+            }
+            "mounts" => {
+                if let Ok(text) = field.text().await {
+                    mount_entries.extend(
+                        text.lines()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string()),
+                    );
+                }
+            }
+            "port" => {
+                if let Ok(text) = field.text().await {
+                    if !text.trim().is_empty() {
+                        port_entries.push(text);
+                    }
+                }
+            }
+            "ports" => {
+                if let Ok(text) = field.text().await {
+                    port_entries.extend(
+                        text.lines()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string()),
+                    );
+                }
+            }
+            "visibility" => {
+                visibility_raw = field.text().await.ok();
+            }
+            "start" => {
+                if let Ok(text) = field.text().await {
+                    let normalized = text.trim().to_lowercase();
+                    start_flag = Some(matches!(normalized.as_str(), "1" | "true" | "yes" | "on"));
+                } else {
+                    start_flag = Some(true);
+                }
             }
             "file" => {
                 file_bytes = field.bytes().await.ok().map(|b| b.to_vec());
@@ -567,6 +725,19 @@ pub async fn api_deploy_multipart(
         .collect();
 
     let replicas_value = replicas.unwrap_or(1);
+    let mounts = match parse_mount_entries(&mount_entries) {
+        Ok(m) => m,
+        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    };
+    let ports = match parse_port_entries(&port_entries) {
+        Ok(p) => p,
+        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    };
+    let visibility = match parse_visibility(visibility_raw.as_deref()) {
+        Ok(v) => v,
+        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    };
+    let start = start_flag.unwrap_or(true);
 
     // Load owner signing key (same as CLI `realm push`)
     let owner_dir = match crate::cmd::util::owner_dir() {
@@ -612,11 +783,11 @@ pub async fn api_deploy_multipart(
         fuel,
         epoch_ms,
         replicas: replicas_value,
-        start: true,
+        start,
         binary_sha256_hex: digest.clone(),
-        mounts: None,
-        ports: None,
-        visibility: None,
+        mounts,
+        ports,
+        visibility,
     };
     let unsigned_bytes = serde_json::to_vec(&unsigned).expect("PushUnsigned serialization");
     let signature = match sign_bytes_ed25519(&owner.private_hex, &unsigned_bytes) {

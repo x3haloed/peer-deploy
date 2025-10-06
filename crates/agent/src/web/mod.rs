@@ -16,15 +16,15 @@ mod volumes;
 mod websocket;
 
 pub use deploy::{
-    api_deploy, api_deploy_multipart, api_deploy_package_inspect, api_deploy_package_multipart,
-    api_log_components, install_package_from_bytes,
+    api_deploy_package_inspect, api_deploy_package_multipart, api_log_components,
+    install_package_from_bytes,
 };
 pub use handlers::{
     api_apply_multipart, api_component_restart, api_component_stop, api_components,
-    api_connect_peer, api_discover, api_get_policy, api_install_agent, api_install_cli, api_logs,
-    api_node_get, api_node_update, api_node_update_roles, api_nodes, api_push_multipart,
-    api_qemu_status, api_set_policy, api_status, api_storage_gc, api_storage_list, api_storage_pin,
-    api_upgrade_multipart,
+    api_connect_peer, api_deploy, api_deploy_multipart, api_discover, api_get_policy,
+    api_install_agent, api_install_cli, api_logs, api_node_get, api_node_update,
+    api_node_update_roles, api_nodes, api_push_multipart, api_qemu_status, api_set_policy,
+    api_status, api_storage_gc, api_storage_list, api_storage_pin, api_upgrade_multipart,
 };
 pub use history::api_deploy_history;
 pub use jobs::{

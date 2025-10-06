@@ -13,6 +13,7 @@ use serde_json::json;
 use std::io::Cursor;
 use std::io::Read;
 
+#[allow(dead_code)]
 pub async fn api_deploy(
     State(state): State<WebState>,
     Json(request): Json<DeployRequest>,
@@ -85,6 +86,7 @@ pub async fn api_deploy(
     (StatusCode::OK, response_msg).into_response()
 }
 
+#[allow(dead_code)]
 pub async fn api_deploy_multipart(
     State(state): State<WebState>,
     mut multipart: Multipart,
