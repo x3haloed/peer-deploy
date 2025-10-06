@@ -5,7 +5,7 @@ use axum::{
 use futures::{sink::SinkExt, stream::StreamExt};
 use tracing::info;
 
-use super::types::{WebState, WebSocketUpdate};
+use super::types::{WebSocketUpdate, WebState};
 use super::utils::format_timestamp;
 
 // WebSocket handler for real-time updates
@@ -19,24 +19,24 @@ pub async fn websocket_handler(
 pub async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: WebState) {
     use axum::extract::ws::Message;
     use tokio::time::{interval, Duration};
-    
+
     info!("WebSocket connection established");
-    
+
     let (mut sender, mut receiver) = socket.split();
-    
+
     // Send initial data
     let initial_status = get_status_update(&state).await;
     if let Ok(msg) = serde_json::to_string(&initial_status) {
         let _ = sender.send(Message::Text(msg)).await;
     }
-    
+
     // Set up periodic updates
     let mut update_interval = interval(Duration::from_secs(2));
     // Track last sent log line count per component for this connection
     let mut last_sent: std::collections::BTreeMap<String, usize> = Default::default();
     // Track last sent P2P event index for this connection
     let mut last_sent_p2p: usize = 0;
-    
+
     // Handle incoming messages and send periodic updates
     loop {
         tokio::select! {
@@ -55,7 +55,7 @@ pub async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: WebSt
                     _ => {}
                 }
             }
-            
+
             // Send periodic updates
             _ = update_interval.tick() => {
                 let status_update = get_status_update(&state).await;
@@ -118,13 +118,13 @@ pub async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: WebSt
             }
         }
     }
-    
+
     info!("WebSocket connection closed");
 }
 
 pub async fn get_status_update(state: &WebState) -> WebSocketUpdate {
     use std::sync::atomic::Ordering;
-    
+
     let peers = state.peer_status.lock().await;
     let metrics_data = serde_json::json!({
         "nodes": peers.len().max(1),
@@ -135,7 +135,7 @@ pub async fn get_status_update(state: &WebState) -> WebSocketUpdate {
         "mem_peak_bytes": state.metrics.mem_peak_bytes.load(Ordering::Relaxed),
         "fuel_used_total": state.metrics.fuel_used_total.load(Ordering::Relaxed),
     });
-    
+
     WebSocketUpdate {
         update_type: "metrics".to_string(),
         data: metrics_data,

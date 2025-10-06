@@ -6,18 +6,18 @@ use wasmtime::{
 };
 
 use crate::p2p::metrics::{push_log, Metrics, SharedLogs};
+use bytes::Bytes;
 use common::MountSpec;
+use core::convert::Infallible;
+use http_body_util::{BodyExt, Full};
+use hyper::body::Body;
 use wasmtime_wasi::pipe::AsyncWriteStream;
 use wasmtime_wasi::AsyncStdoutStream;
 use wasmtime_wasi::{DirPerms, FilePerms};
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
-use hyper::body::Body;
-use http_body_util::{BodyExt, Full};
-use bytes::Bytes;
-use core::convert::Infallible;
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 struct MemoryLimiter {
     max_bytes: usize,
@@ -60,8 +60,12 @@ impl wasmtime_wasi::WasiView for StoreData {
 }
 
 impl WasiHttpView for StoreData {
-    fn ctx(&mut self) -> &mut WasiHttpCtx { &mut self.http }
-    fn table(&mut self) -> &mut ResourceTable { &mut self.table }
+    fn ctx(&mut self) -> &mut WasiHttpCtx {
+        &mut self.http
+    }
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
 }
 
 pub async fn run_wasm_module_with_limits(
@@ -87,8 +91,12 @@ pub async fn run_wasm_module_with_limits(
     let (stdout_r, stdout_w) = duplex(1024);
     let (stderr_r, stderr_w) = duplex(1024);
     let mut builder = wasmtime_wasi::WasiCtxBuilder::new();
-    builder.stdout(AsyncStdoutStream::new(AsyncWriteStream::new(1024, stdout_w)));
-    builder.stderr(AsyncStdoutStream::new(AsyncWriteStream::new(1024, stderr_w)));
+    builder.stdout(AsyncStdoutStream::new(AsyncWriteStream::new(
+        1024, stdout_w,
+    )));
+    builder.stderr(AsyncStdoutStream::new(AsyncWriteStream::new(
+        1024, stderr_w,
+    )));
 
     // Preopen directories as requested in spec (best-effort; logs on failure)
     if let Some(mounts) = mounts {
@@ -96,15 +104,36 @@ pub async fn run_wasm_module_with_limits(
             let (dperms, fperms) = if m.ro {
                 (DirPerms::READ, FilePerms::READ)
             } else {
-                (DirPerms::READ | DirPerms::MUTATE, FilePerms::READ | FilePerms::WRITE)
+                (
+                    DirPerms::READ | DirPerms::MUTATE,
+                    FilePerms::READ | FilePerms::WRITE,
+                )
             };
             match builder.preopened_dir(&m.host, m.guest.as_str(), dperms, fperms) {
                 Ok(_) => {
-                    if m.ro { push_log(&logs, component_name, format!("mounted {} -> {} (ro)", m.host, m.guest)).await; }
-                    else { push_log(&logs, component_name, format!("mounted {} -> {}", m.host, m.guest)).await; }
+                    if m.ro {
+                        push_log(
+                            &logs,
+                            component_name,
+                            format!("mounted {} -> {} (ro)", m.host, m.guest),
+                        )
+                        .await;
+                    } else {
+                        push_log(
+                            &logs,
+                            component_name,
+                            format!("mounted {} -> {}", m.host, m.guest),
+                        )
+                        .await;
+                    }
                 }
                 Err(e) => {
-                    push_log(&logs, component_name, format!("mount failed {} -> {}: {}", m.host, m.guest, e)).await;
+                    push_log(
+                        &logs,
+                        component_name,
+                        format!("mount failed {} -> {}: {}", m.host, m.guest, e),
+                    )
+                    .await;
                 }
             }
         }
@@ -238,13 +267,22 @@ pub async fn invoke_http_component_once(
 ) -> anyhow::Result<(u16, Vec<(String, String)>, Vec<u8>)> {
     // Create a hyper Request with a body type compatible with wasi-http new_incoming_request
     let body_full = Full::new(Bytes::from(body)).map_err(|_e: Infallible| match _e {});
-    let uri = if path.is_empty() { "http://component/".to_string() } else { format!("http://component/{}", path.trim_start_matches('/')) };
-    let mut req = hyper::Request::builder().method(method).uri(uri).body(body_full)?;
+    let uri = if path.is_empty() {
+        "http://component/".to_string()
+    } else {
+        format!("http://component/{}", path.trim_start_matches('/'))
+    };
+    let mut req = hyper::Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(body_full)?;
     {
         let h = req.headers_mut();
         for (k, v) in headers {
             if let Ok(name) = hyper::header::HeaderName::from_bytes(k.as_bytes()) {
-                if let Ok(val) = hyper::header::HeaderValue::from_str(&v) { h.append(name, val); }
+                if let Ok(val) = hyper::header::HeaderValue::from_str(&v) {
+                    h.append(name, val);
+                }
             }
         }
     }
@@ -253,7 +291,9 @@ pub async fn invoke_http_component_once(
     let collected = BodyExt::collect(body).await?;
     let bytes = collected.to_bytes();
     let mut out_headers = Vec::new();
-    for (k, v) in parts.headers.iter() { out_headers.push((k.to_string(), v.to_str().unwrap_or("").to_string())); }
+    for (k, v) in parts.headers.iter() {
+        out_headers.push((k.to_string(), v.to_str().unwrap_or("").to_string()));
+    }
     Ok((parts.status.as_u16(), out_headers, bytes.to_vec()))
 }
 
@@ -303,16 +343,29 @@ struct HttpStore {
 impl HttpStore {
     fn new(name: &str) -> Self {
         let wasi = wasmtime_wasi::WasiCtxBuilder::new().build();
-        Self { table: ResourceTable::new(), wasi, http: WasiHttpCtx::new(), _name: name.to_string() }
+        Self {
+            table: ResourceTable::new(),
+            wasi,
+            http: WasiHttpCtx::new(),
+            _name: name.to_string(),
+        }
     }
 }
 
 impl wasmtime_wasi::WasiView for HttpStore {
-    fn table(&mut self) -> &mut ResourceTable { &mut self.table }
-    fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx { &mut self.wasi }
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+    fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
+        &mut self.wasi
+    }
 }
 
 impl WasiHttpView for HttpStore {
-    fn ctx(&mut self) -> &mut WasiHttpCtx { &mut self.http }
-    fn table(&mut self) -> &mut ResourceTable { &mut self.table }
+    fn ctx(&mut self) -> &mut WasiHttpCtx {
+        &mut self.http
+    }
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
 }

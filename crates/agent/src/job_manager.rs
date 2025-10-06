@@ -1,13 +1,16 @@
 use anyhow::Result;
-use common::{JobSpec, JobInstance, JobStatus, JobArtifact, JobType};
+use common::{JobArtifact, JobInstance, JobSpec, JobStatus, JobType};
+use cron::Schedule;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::str::FromStr;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use serde::{Serialize, Deserialize};
 use tracing::{info, warn};
-use cron::Schedule;
-use std::str::FromStr;
 
 type JobId = String;
 
@@ -82,7 +85,10 @@ impl JobManager {
                 }
             }
             *self.state.lock().await = loaded_state;
-            info!("Loaded {} jobs from disk", self.state.lock().await.jobs.len());
+            info!(
+                "Loaded {} jobs from disk",
+                self.state.lock().await.jobs.len()
+            );
         }
         Ok(())
     }
@@ -133,7 +139,10 @@ impl JobManager {
         let mut state = self.state.lock().await;
         if let Some(job) = state.jobs.get_mut(job_id) {
             job.assigned_node = Some(node_id.to_string());
-            job.add_log("info".to_string(), format!("Job assigned to node {}", node_id));
+            job.add_log(
+                "info".to_string(),
+                format!("Job assigned to node {}", node_id),
+            );
             job.updated_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -156,7 +165,11 @@ impl JobManager {
     pub async fn start_job(&self, job_id: &str) -> Result<()> {
         let mut state = self.state.lock().await;
         if let Some(job) = state.jobs.get_mut(job_id) {
-            job.start(job.assigned_node.clone().unwrap_or_else(|| "unknown".to_string()));
+            job.start(
+                job.assigned_node
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+            );
             job.add_log("info".to_string(), "Job started".to_string());
         }
         drop(state);
@@ -173,7 +186,10 @@ impl JobManager {
         let mut state = self.state.lock().await;
         if let Some(job) = state.jobs.get_mut(job_id) {
             job.complete(exit_code);
-            job.add_log("info".to_string(), format!("Job completed with exit code {}", exit_code));
+            job.add_log(
+                "info".to_string(),
+                format!("Job completed with exit code {}", exit_code),
+            );
         }
         drop(state);
 
@@ -208,7 +224,7 @@ impl JobManager {
                 job.cancel();
                 job.add_log("warn".to_string(), "Job cancelled".to_string());
                 drop(state);
-                
+
                 // Send cancellation signal to running job if it exists
                 let mut running_jobs = self.running_jobs.lock().await;
                 if let Some(running_job) = running_jobs.remove(job_id) {
@@ -235,7 +251,7 @@ impl JobManager {
     pub async fn list_jobs(&self, status_filter: Option<&str>, limit: usize) -> Vec<JobInstance> {
         let state = self.state.lock().await;
         let mut jobs: Vec<JobInstance> = state.jobs.values().cloned().collect();
-        
+
         // Filter by status if specified
         if let Some(status_str) = status_filter {
             let filter_status = match status_str.to_lowercase().as_str() {
@@ -246,15 +262,15 @@ impl JobManager {
                 "cancelled" => Some(JobStatus::Cancelled),
                 _ => None,
             };
-            
+
             if let Some(status) = filter_status {
                 jobs.retain(|job| job.status == status);
             }
         }
-        
+
         // Sort by submission time (newest first)
         jobs.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
-        
+
         // Limit results
         jobs.truncate(limit);
         jobs
@@ -303,9 +319,10 @@ impl JobManager {
                 if let Some(expr) = &job.spec.schedule {
                     match Schedule::from_str(expr) {
                         Ok(schedule) => {
-                            let last_run = job.last_scheduled_at
+                            let last_run = job
+                                .last_scheduled_at
                                 .map(|ts| DateTime::from_timestamp(ts as i64, 0).unwrap_or(now));
-                            
+
                             // Check if the job is due to run based on the cron schedule
                             if let Some(next_run) = schedule.upcoming(Utc).next() {
                                 let should_run = if let Some(last) = last_run {
@@ -313,17 +330,23 @@ impl JobManager {
                                 } else {
                                     next_run <= now
                                 };
-                                
+
                                 if should_run {
                                     job.last_scheduled_at = Some(now.timestamp() as u64);
                                     job.updated_at = now.timestamp() as u64;
                                     due.push(job.spec.clone());
-                                    info!("Job '{}' is due for execution based on schedule '{}'", job.spec.name, expr);
+                                    info!(
+                                        "Job '{}' is due for execution based on schedule '{}'",
+                                        job.spec.name, expr
+                                    );
                                 }
                             }
-                        },
+                        }
                         Err(e) => {
-                            warn!("Invalid cron expression '{}' for job '{}': {}", expr, job.spec.name, e);
+                            warn!(
+                                "Invalid cron expression '{}' for job '{}': {}",
+                                expr, job.spec.name, e
+                            );
                             continue;
                         }
                     }
@@ -337,7 +360,12 @@ impl JobManager {
     }
 
     /// Add methods for tracking running jobs and artifact management
-    pub async fn register_running_job(&self, job_id: String, handle: JoinHandle<()>, cancel_tx: tokio::sync::oneshot::Sender<()>) {
+    pub async fn register_running_job(
+        &self,
+        job_id: String,
+        handle: JoinHandle<()>,
+        cancel_tx: tokio::sync::oneshot::Sender<()>,
+    ) {
         let mut running_jobs = self.running_jobs.lock().await;
         running_jobs.insert(job_id, RunningJob { handle, cancel_tx });
     }
@@ -348,22 +376,42 @@ impl JobManager {
     }
 
     /// Copy artifacts to job-specific directory
-    pub async fn stage_artifacts(&self, job_id: &str, artifacts: &[common::JobArtifact]) -> Result<()> {
-        let artifacts_dir = self.data_dir.parent().unwrap().join("artifacts").join("jobs").join(job_id);
+    pub async fn stage_artifacts(
+        &self,
+        job_id: &str,
+        artifacts: &[common::JobArtifact],
+    ) -> Result<()> {
+        let artifacts_dir = self
+            .data_dir
+            .parent()
+            .unwrap()
+            .join("artifacts")
+            .join("jobs")
+            .join(job_id);
         tokio::fs::create_dir_all(&artifacts_dir).await?;
 
         for artifact in artifacts {
             let dest_path = artifacts_dir.join(&artifact.name);
             if let Err(e) = tokio::fs::copy(&artifact.stored_path, &dest_path).await {
-                warn!("Failed to copy artifact '{}' to {}: {}", artifact.name, dest_path.display(), e);
+                warn!(
+                    "Failed to copy artifact '{}' to {}: {}",
+                    artifact.name,
+                    dest_path.display(),
+                    e
+                );
             } else {
-                info!("Staged artifact '{}' to {}", artifact.name, dest_path.display());
+                info!(
+                    "Staged artifact '{}' to {}",
+                    artifact.name,
+                    dest_path.display()
+                );
                 // Compute digest for downstream reuse (best-effort)
                 if let Ok(bytes) = tokio::fs::read(&artifact.stored_path).await {
                     let digest = common::sha256_hex(&bytes);
                     let mut state = self.state.lock().await;
                     if let Some(job) = state.jobs.get_mut(job_id) {
-                        if let Some(a) = job.artifacts.iter_mut().find(|a| a.name == artifact.name) {
+                        if let Some(a) = job.artifacts.iter_mut().find(|a| a.name == artifact.name)
+                        {
                             a.sha256_hex = Some(digest);
                             job.updated_at = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
@@ -380,7 +428,13 @@ impl JobManager {
 
     /// Get artifact path for serving
     pub fn get_artifact_path(&self, job_id: &str, artifact_name: &str) -> std::path::PathBuf {
-        self.data_dir.parent().unwrap().join("artifacts").join("jobs").join(job_id).join(artifact_name)
+        self.data_dir
+            .parent()
+            .unwrap()
+            .join("artifacts")
+            .join("jobs")
+            .join(job_id)
+            .join(artifact_name)
     }
 
     /// Merge remote job state into local store

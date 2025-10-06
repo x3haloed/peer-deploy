@@ -1,9 +1,9 @@
 use anyhow::anyhow;
 use base64::Engine;
 
-use common::{InviteToken, verify_bytes_ed25519};
+use common::{verify_bytes_ed25519, InviteToken};
 
-use super::util::{write_trusted_owner, write_bootstrap};
+use super::util::{write_bootstrap, write_trusted_owner};
 
 pub async fn enroll(token_b64: String, binary: Option<String>, system: bool) -> anyhow::Result<()> {
     let token_bytes = base64::engine::general_purpose::STANDARD.decode(token_b64)?;
@@ -18,7 +18,9 @@ pub async fn enroll(token_b64: String, binary: Option<String>, system: bool) -> 
     }
 
     if let Some(exp) = token.unsigned.exp_unix {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
         if now > exp {
             return Err(anyhow!("invite token expired"));
         }
@@ -42,4 +44,3 @@ pub async fn enroll(token_b64: String, binary: Option<String>, system: bool) -> 
     println!("configured. run 'realm install --binary <path>' to install the agent.");
     Ok(())
 }
-

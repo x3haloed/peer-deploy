@@ -1,8 +1,11 @@
 use anyhow::Context;
 
-use common::{sha256_hex, sign_bytes_ed25519, serialize_message, Command, OwnerKeypair, PushPackage, PushUnsigned, Visibility};
+use common::{
+    serialize_message, sha256_hex, sign_bytes_ed25519, Command, OwnerKeypair, PushPackage,
+    PushUnsigned, Visibility,
+};
 
-use super::util::{mdns_warmup, new_swarm, owner_dir, dial_bootstrap};
+use super::util::{dial_bootstrap, mdns_warmup, new_swarm, owner_dir};
 use base64::Engine;
 
 pub async fn deploy_component(
@@ -26,27 +29,48 @@ pub async fn deploy_component(
 
     let pkg = package.unwrap_or_else(|| String::new());
     let mut args = vec!["component", "build", "--target", "wasm32-wasip1"];
-    if profile == "release" { args.push("--release"); }
-    if !features.is_empty() { args.extend(["-F", &features]); }
-    if !pkg.is_empty() { args.extend(["-p", &pkg]); }
+    if profile == "release" {
+        args.push("--release");
+    }
+    if !features.is_empty() {
+        args.extend(["-F", &features]);
+    }
+    if !pkg.is_empty() {
+        args.extend(["-p", &pkg]);
+    }
 
     let mut cmd = std::process::Command::new("cargo");
     cmd.current_dir(&path);
     cmd.args(args);
     let status = cmd.status().context("cargo component build")?;
-    if !status.success() { anyhow::bail!("cargo component build failed"); }
+    if !status.success() {
+        anyhow::bail!("cargo component build failed");
+    }
 
     // Locate artifact path
-    let prof = if profile == "release" { "release" } else { "debug" };
+    let prof = if profile == "release" {
+        "release"
+    } else {
+        "debug"
+    };
     let pkg_name = if pkg.is_empty() {
         // read Cargo.toml package.name
         let toml_path = std::path::Path::new(&path).join("Cargo.toml");
         let text = std::fs::read_to_string(&toml_path).context("read Cargo.toml")?;
         let value: toml::Value = toml::from_str(&text)?;
-        value.get("package").and_then(|t| t.get("name")).and_then(|n| n.as_str()).unwrap_or("component").to_string()
-    } else { pkg.clone() };
+        value
+            .get("package")
+            .and_then(|t| t.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("component")
+            .to_string()
+    } else {
+        pkg.clone()
+    };
     let filename = format!("{}.wasm", pkg_name.replace('-', "_"));
-    let rel = std::path::Path::new("wasm32-wasip1").join(prof).join(&filename);
+    let rel = std::path::Path::new("wasm32-wasip1")
+        .join(prof)
+        .join(&filename);
 
     // Candidate 1: component-local target dir
     let candidate_local = std::path::Path::new(&path).join("target").join(&rel);
@@ -73,7 +97,8 @@ pub async fn deploy_component(
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(
         &mut swarm,
-        "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse::<libp2p::Multiaddr>()
             .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
     )?;
     mdns_warmup(&mut swarm).await;
@@ -86,7 +111,9 @@ pub async fn deploy_component(
     let kp: OwnerKeypair = serde_json::from_slice(&bytes)?;
 
     // Read wasm and sign
-    let bin = tokio::fs::read(&artifact).await.context("read wasm artifact")?;
+    let bin = tokio::fs::read(&artifact)
+        .await
+        .context("read wasm artifact")?;
     let digest = sha256_hex(&bin);
     let unsigned = PushUnsigned {
         alg: "ed25519".into(),
@@ -119,15 +146,15 @@ pub async fn deploy_component(
     let mut connected_peers: u32 = 0;
     let mut command_sent = false;
     let mut republish = tokio::time::interval(std::time::Duration::from_millis(2000));
-    
+
     // First wait for at least one connection
     println!("Establishing P2P connections...");
     loop {
-        if start.elapsed() >= connect_deadline { 
+        if start.elapsed() >= connect_deadline {
             if connected_peers == 0 {
                 println!("Warning: No P2P connections established, sending command anyway...");
             }
-            break; 
+            break;
         }
         tokio::select! {
             _ = republish.tick() => {
@@ -171,25 +198,25 @@ pub async fn deploy_component(
             else => { break; }
         }
     }
-    
+
     // Continue sending for a bit longer to ensure delivery
     if !command_sent {
         println!("Sending deployment command...");
-        let _ = libp2p::Swarm::behaviour_mut(&mut swarm)
-            .gossipsub
-            .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg.clone())));
+        let _ = libp2p::Swarm::behaviour_mut(&mut swarm).gossipsub.publish(
+            topic_cmd.clone(),
+            serialize_message(&Command::PushComponent(pkg.clone())),
+        );
     }
-    
+
     // Send command one more time after a short delay for extra reliability
     if command_sent {
         tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
-        let _ = libp2p::Swarm::behaviour_mut(&mut swarm)
-            .gossipsub
-            .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg.clone())));
+        let _ = libp2p::Swarm::behaviour_mut(&mut swarm).gossipsub.publish(
+            topic_cmd.clone(),
+            serialize_message(&Command::PushComponent(pkg.clone())),
+        );
     }
-    
+
     println!("Deployment command sent. Check agent status with: cargo run -p realm -- status");
     Ok(())
 }
-
-

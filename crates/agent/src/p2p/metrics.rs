@@ -97,14 +97,16 @@ impl Metrics {
         self.components_running.fetch_add(1, Ordering::Relaxed);
     }
     pub fn dec_components_running(&self) {
-        self.components_running.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| Some(x.saturating_sub(1))).ok();
+        self.components_running
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                Some(x.saturating_sub(1))
+            })
+            .ok();
     }
 
     pub fn inc_restarts_total(&self) {
         self.restarts_total.fetch_add(1, Ordering::Relaxed);
     }
-
-
 
     pub fn set_mem_current_bytes(&self, current: u64) {
         self.mem_current_bytes.store(current, Ordering::Relaxed);

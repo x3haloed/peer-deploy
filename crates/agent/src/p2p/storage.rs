@@ -26,5 +26,3 @@ impl P2PStorage {
         }
     }
 }
-
-

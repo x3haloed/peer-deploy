@@ -1,9 +1,5 @@
 #![allow(dead_code)]
-use axum::{
-    extract::Multipart,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{extract::Multipart, http::StatusCode, response::IntoResponse};
 
 #[cfg(unix)]
 pub async fn api_install_cli() -> impl IntoResponse {
@@ -31,23 +27,35 @@ pub async fn api_install_agent(mut multipart: Multipart) -> impl IntoResponse {
         while let Ok(Some(field)) = multipart.next_field().await {
             let name = field.name().unwrap_or("");
             match name {
-                "binary" => { bin_bytes = field.bytes().await.ok().map(|b| b.to_vec()); },
-                "system" => { system_flag = field.text().await.ok().map(|s| s == "true" || s == "1").unwrap_or(false); },
+                "binary" => {
+                    bin_bytes = field.bytes().await.ok().map(|b| b.to_vec());
+                }
+                "system" => {
+                    system_flag = field
+                        .text()
+                        .await
+                        .ok()
+                        .map(|s| s == "true" || s == "1")
+                        .unwrap_or(false);
+                }
                 _ => {}
             }
         }
         if let Some(bytes) = bin_bytes {
             let tmp = crate::p2p::state::agent_data_dir().join("upload-agent.bin");
             if tokio::fs::write(&tmp, &bytes).await.is_err() {
-                return (StatusCode::INTERNAL_SERVER_ERROR, "failed to stage agent").into_response();
+                return (StatusCode::INTERNAL_SERVER_ERROR, "failed to stage agent")
+                    .into_response();
             }
             bin_path = Some(tmp.display().to_string());
         }
         match crate::cmd::install(bin_path, system_flag).await {
             Ok(_) => (StatusCode::OK, "ok").into_response(),
-            Err(e) => (StatusCode::BAD_REQUEST, format!("install-agent failed: {e}")).into_response(),
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                format!("install-agent failed: {e}"),
+            )
+                .into_response(),
         }
     }
 }
-
-

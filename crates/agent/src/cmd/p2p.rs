@@ -1,8 +1,8 @@
-use crate::cmd::util::{new_swarm, mdns_warmup, dial_bootstrap, NodeBehaviourEvent};
+use crate::cmd::util::{dial_bootstrap, mdns_warmup, new_swarm, NodeBehaviourEvent};
+use anyhow::Result;
 use futures::StreamExt;
 use libp2p::swarm::SwarmEvent;
 use std::time::{SystemTime, UNIX_EPOCH};
-use anyhow::Result;
 
 /// Watch all P2P messages in real time on the CLI
 pub async fn watch() -> Result<()> {
@@ -14,7 +14,7 @@ pub async fn watch() -> Result<()> {
     let mut message_count = 0u64;
     let mut last_report = std::time::Instant::now();
     let mut rate_limiter = std::time::Instant::now();
-    
+
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -26,12 +26,12 @@ pub async fn watch() -> Result<()> {
                 if let SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) = event {
                     if let libp2p::gossipsub::Event::Message { propagation_source, message, .. } = ev {
                         message_count += 1;
-                        
+
                         // Rate limit console output to max 5 messages per second
                         let now = std::time::Instant::now();
                         if now.duration_since(rate_limiter).as_millis() >= 200 {
                             rate_limiter = now;
-                            
+
                             let topic_type = if message.topic == cmd_topic.hash() {
                                 "CMD"
                             } else if message.topic == status_topic.hash() {
@@ -39,20 +39,20 @@ pub async fn watch() -> Result<()> {
                             } else {
                                 "UNKNOWN"
                             };
-                            
+
                             let ts = SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
                                 .map(|d| d.as_secs())
                                 .unwrap_or_default();
                             let payload = String::from_utf8_lossy(&message.data);
-                            let preview = if payload.len() > 200 { 
+                            let preview = if payload.len() > 200 {
                                 format!("{}...", &payload[..200])
                             } else {
                                 payload.to_string()
                             };
                             println!("[{}][{}] from {} (#{} total): {}", ts, topic_type, propagation_source, message_count, preview);
                         }
-                        
+
                         // Report message rate every 5 seconds
                         if now.duration_since(last_report).as_secs() >= 5 {
                             let elapsed = now.duration_since(last_report).as_secs_f64();

@@ -2,20 +2,24 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::tokio::TokioIo;
-use http_body_util::{BodyExt, Full};
-use bytes::Bytes;
 use tokio::net::TcpListener;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
-use crate::supervisor::Supervisor;
-use crate::runner::invoke_http_component_once;
 use crate::p2p::metrics::Metrics;
+use crate::runner::invoke_http_component_once;
+use crate::supervisor::Supervisor;
 
-pub async fn serve_gateway(supervisor: Arc<Supervisor>, metrics: Option<Arc<Metrics>>, bind_addr: &str) {
+pub async fn serve_gateway(
+    supervisor: Arc<Supervisor>,
+    metrics: Option<Arc<Metrics>>,
+    bind_addr: &str,
+) {
     let addr: SocketAddr = match bind_addr.parse() {
         Ok(addr) => addr,
         Err(e) => {
@@ -52,10 +56,7 @@ pub async fn serve_gateway(supervisor: Arc<Supervisor>, metrics: Option<Arc<Metr
             });
 
             let io = TokioIo::new(stream);
-            if let Err(e) = http1::Builder::new()
-                .serve_connection(io, service)
-                .await
-            {
+            if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
                 warn!(error=%e, remote=%remote_addr, "HTTP connection error");
             }
         });
@@ -69,22 +70,22 @@ async fn handle_request(
     _remote_addr: SocketAddr,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let start_time = std::time::Instant::now();
-    
+
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
-    
+
     // Extract headers before consuming the request
     let headers: Vec<(String, String)> = req
         .headers()
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
-    
+
     // Parse component name from path: /component_name/rest
     let segments: Vec<&str> = path.trim_start_matches('/').splitn(2, '/').collect();
     let component_name = segments.get(0).copied().unwrap_or("");
     let rest_path = segments.get(1).copied().unwrap_or("");
-    
+
     let (status, body) = if component_name.is_empty() {
         (StatusCode::NOT_FOUND, "Component name required".into())
     } else if let Some(desired) = supervisor.get_component(component_name).await {
@@ -93,7 +94,10 @@ async fn handle_request(
             Ok(collected) => collected.to_bytes().to_vec(),
             Err(e) => {
                 warn!(error=%e, "Failed to read request body");
-                return Ok(create_response(StatusCode::BAD_REQUEST, "Failed to read request body"));
+                return Ok(create_response(
+                    StatusCode::BAD_REQUEST,
+                    "Failed to read request body",
+                ));
             }
         };
 
@@ -105,7 +109,9 @@ async fn handle_request(
             rest_path,
             headers,
             body_bytes,
-        ).await {
+        )
+        .await
+        {
             Ok((code, _response_headers, response_body)) => {
                 let status_code = StatusCode::from_u16(code).unwrap_or(StatusCode::OK);
                 (status_code, response_body)
@@ -116,14 +122,18 @@ async fn handle_request(
             }
         }
     } else {
-        (StatusCode::NOT_FOUND, format!("Component '{}' not found", component_name).into())
+        (
+            StatusCode::NOT_FOUND,
+            format!("Component '{}' not found", component_name).into(),
+        )
     };
 
     // Update metrics
     if let Some(m) = &metrics {
         use std::sync::atomic::Ordering;
         m.gateway_requests_total.fetch_add(1, Ordering::Relaxed);
-        m.gateway_last_latency_ms.store(start_time.elapsed().as_millis() as u64, Ordering::Relaxed);
+        m.gateway_last_latency_ms
+            .store(start_time.elapsed().as_millis() as u64, Ordering::Relaxed);
         if !status.is_success() {
             m.gateway_errors_total.fetch_add(1, Ordering::Relaxed);
         }

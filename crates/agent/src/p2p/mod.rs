@@ -1,13 +1,13 @@
 #![allow(clippy::collapsible_match, clippy::double_ended_iterator_last)]
 
-use std::collections::{HashMap, HashSet};
-use std::str::FromStr;
+use rand::{thread_rng, Rng};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::str::FromStr;
 use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as AsyncMutex;
-use rand::{thread_rng, Rng};
 
 use uuid::Uuid;
 // Maximum number of pending broadcasts to track (evict oldest beyond this)
@@ -16,40 +16,38 @@ const MAX_PENDING_BROADCASTS: usize = 50000;
 const PENDING_ENTRY_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 use anyhow::anyhow;
+use base64::Engine;
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, identify, identity, kad, mdns,
-    noise, yamux, tcp,
+    gossipsub, identify, identity, kad, mdns, noise,
     swarm::{Swarm, SwarmEvent},
-    Multiaddr, PeerId, SwarmBuilder,
+    tcp, yamux, Multiaddr, PeerId, SwarmBuilder,
 };
 use tracing::{debug, info, warn};
-use base64::Engine;
 
+use crate::p2p::events::P2PEvent;
 use crate::runner::run_wasm_module_with_limits;
 use common::{
     deserialize_message, serialize_message, Command, Status, REALM_CMD_TOPIC, REALM_STATUS_TOPIC,
 };
 use state::{
-    load_bootstrap_addrs, load_known_peers, add_known_peer, load_state, load_trusted_owner,
-    load_listen_port, save_listen_port,
-    load_listen_port_tcp, save_listen_port_tcp,
-    update_persistent_manifest_with_component
+    add_known_peer, load_bootstrap_addrs, load_known_peers, load_listen_port, load_listen_port_tcp,
+    load_state, load_trusted_owner, save_listen_port, save_listen_port_tcp,
 };
-use crate::p2p::events::P2PEvent;
 
-mod handlers;
 pub mod events;
-pub mod storage;
+mod gateway;
+mod handlers;
 mod jobs;
-mod jobs_wasm;
 mod jobs_native;
 mod jobs_qemu;
+mod jobs_wasm;
 pub mod metrics;
-pub mod state;  // Make state module public
-mod gateway;
+pub mod state; // Make state module public
+pub mod storage;
 
 use handlers::{handle_apply_manifest, handle_upgrade};
+pub use handlers::{handle_push_package, PushAcceptanceError};
 use jobs::{execute_oneshot_job_with_broadcast, execute_service_job};
 
 struct PendingJob {
@@ -62,26 +60,71 @@ struct PendingJob {
 
 fn job_status_key(cmd: &Command) -> Option<(String, String, String)> {
     match cmd {
-        Command::JobAccepted { job_id, message_id, .. } => Some((job_id.clone(), "accepted".to_string(), message_id.clone())),
-        Command::JobStarted { job_id, message_id, .. } => Some((job_id.clone(), "started".to_string(), message_id.clone())),
-        Command::JobCompleted { job_id, message_id, .. } => Some((job_id.clone(), "completed".to_string(), message_id.clone())),
-        Command::JobFailed { job_id, message_id, .. } => Some((job_id.clone(), "failed".to_string(), message_id.clone())),
+        Command::JobAccepted {
+            job_id, message_id, ..
+        } => Some((job_id.clone(), "accepted".to_string(), message_id.clone())),
+        Command::JobStarted {
+            job_id, message_id, ..
+        } => Some((job_id.clone(), "started".to_string(), message_id.clone())),
+        Command::JobCompleted {
+            job_id, message_id, ..
+        } => Some((job_id.clone(), "completed".to_string(), message_id.clone())),
+        Command::JobFailed {
+            job_id, message_id, ..
+        } => Some((job_id.clone(), "failed".to_string(), message_id.clone())),
         _ => None,
     }
 }
 
 fn job_status_tuple(cmd: &Command) -> Option<(String, String, String, String)> {
     match cmd {
-        Command::JobAccepted { job_id, assigned_node, message_id } => Some((job_id.clone(), "accepted".to_string(), assigned_node.clone(), message_id.clone())),
-        Command::JobStarted { job_id, assigned_node, message_id } => Some((job_id.clone(), "started".to_string(), assigned_node.clone(), message_id.clone())),
-        Command::JobCompleted { job_id, assigned_node, message_id, .. } => Some((job_id.clone(), "completed".to_string(), assigned_node.clone(), message_id.clone())),
-        Command::JobFailed { job_id, assigned_node, message_id, .. } => Some((job_id.clone(), "failed".to_string(), assigned_node.clone(), message_id.clone())),
+        Command::JobAccepted {
+            job_id,
+            assigned_node,
+            message_id,
+        } => Some((
+            job_id.clone(),
+            "accepted".to_string(),
+            assigned_node.clone(),
+            message_id.clone(),
+        )),
+        Command::JobStarted {
+            job_id,
+            assigned_node,
+            message_id,
+        } => Some((
+            job_id.clone(),
+            "started".to_string(),
+            assigned_node.clone(),
+            message_id.clone(),
+        )),
+        Command::JobCompleted {
+            job_id,
+            assigned_node,
+            message_id,
+            ..
+        } => Some((
+            job_id.clone(),
+            "completed".to_string(),
+            assigned_node.clone(),
+            message_id.clone(),
+        )),
+        Command::JobFailed {
+            job_id,
+            assigned_node,
+            message_id,
+            ..
+        } => Some((
+            job_id.clone(),
+            "failed".to_string(),
+            assigned_node.clone(),
+            message_id.clone(),
+        )),
         _ => None,
     }
 }
-use metrics::{push_log, serve_metrics, Metrics, SharedLogs};
 use crate::supervisor::Supervisor;
-
+use metrics::{push_log, serve_metrics, Metrics, SharedLogs};
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct NodeBehaviour {
@@ -130,12 +173,12 @@ pub async fn run_agent(
 
     // Start supervisor and restore persistent state
     let supervisor = std::sync::Arc::new(Supervisor::new(logs.clone(), metrics.clone()));
-    
+
     // CRITICAL: Restore persistent component state before starting reconciliation
     if let Err(e) = supervisor.restore_from_disk().await {
         warn!(error=%e, "Failed to restore component state from disk, starting fresh");
     }
-    
+
     // UI/ephemeral nodes should not reconcile desired state or schedule workloads
     if !ephemeral {
         supervisor.clone().spawn_reconcile();
@@ -210,25 +253,31 @@ pub async fn run_agent(
 
     // Use loopback-only binds for ephemeral UI nodes; persist/reuse public binds for regular agents
     let listen_addr: Multiaddr = if ephemeral {
-        "/ip4/127.0.0.1/udp/0/quic-v1".parse()
+        "/ip4/127.0.0.1/udp/0/quic-v1"
+            .parse()
             .map_err(|e| anyhow!("Failed to parse UDP multiaddr: {}", e))?
     } else if let Some(port) = load_listen_port() {
-        format!("/ip4/0.0.0.0/udp/{}/quic-v1", port).parse()
+        format!("/ip4/0.0.0.0/udp/{}/quic-v1", port)
+            .parse()
             .map_err(|e| anyhow!("Failed to parse UDP multiaddr: {}", e))?
     } else {
-        "/ip4/0.0.0.0/udp/0/quic-v1".parse()
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse()
             .map_err(|e| anyhow!("Failed to parse UDP multiaddr: {}", e))?
     };
     Swarm::listen_on(&mut swarm, listen_addr)?;
     // Also listen on TCP to support environments where UDP/QUIC is unavailable; reuse persisted port if any
     let listen_tcp: Multiaddr = if ephemeral {
-        "/ip4/127.0.0.1/tcp/0".parse()
+        "/ip4/127.0.0.1/tcp/0"
+            .parse()
             .map_err(|e| anyhow!("Failed to parse TCP multiaddr: {}", e))?
     } else if let Some(port) = load_listen_port_tcp() {
-        format!("/ip4/0.0.0.0/tcp/{}", port).parse()
+        format!("/ip4/0.0.0.0/tcp/{}", port)
+            .parse()
             .map_err(|e| anyhow!("Failed to parse TCP multiaddr: {}", e))?
     } else {
-        "/ip4/0.0.0.0/tcp/0".parse()
+        "/ip4/0.0.0.0/tcp/0"
+            .parse()
             .map_err(|e| anyhow!("Failed to parse TCP multiaddr: {}", e))?
     };
     Swarm::listen_on(&mut swarm, listen_tcp)?;
@@ -239,9 +288,14 @@ pub async fn run_agent(
             if let Some(peer_id) = ma.iter().find_map(|p| {
                 if let libp2p::multiaddr::Protocol::P2p(hash) = p {
                     PeerId::from_multihash(hash.into()).ok()
-                } else { None }
+                } else {
+                    None
+                }
             }) {
-                swarm.behaviour_mut().kademlia.add_address(&peer_id, ma.clone());
+                swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, ma.clone());
             }
             let _ = libp2p::Swarm::dial(&mut swarm, ma);
         }
@@ -253,9 +307,14 @@ pub async fn run_agent(
             if let Some(peer_id) = ma.iter().find_map(|p| {
                 if let libp2p::multiaddr::Protocol::P2p(hash) = p {
                     PeerId::from_multihash(hash.into()).ok()
-                } else { None }
+                } else {
+                    None
+                }
             }) {
-                swarm.behaviour_mut().kademlia.add_address(&peer_id, ma.clone());
+                swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, ma.clone());
             }
             let _ = libp2p::Swarm::dial(&mut swarm, ma);
         }
@@ -266,9 +325,10 @@ pub async fn run_agent(
 
     // channel for run results to publish status from the main loop
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<String, String>>();
-    
+
     // channel for job status broadcasts
-    let (job_broadcast_tx, mut job_broadcast_rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
+    let (job_broadcast_tx, mut job_broadcast_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Command>();
 
     if let Some(path) = wasm_path.clone() {
         let tx0 = tx.clone();
@@ -365,7 +425,10 @@ pub async fn run_agent(
 
     let mut pending_job_broadcasts: HashMap<(String, String, String), PendingJob> = HashMap::new();
     // TTL-based deduplication cache: message_id -> (timestamp, job_content_for_debugging)
-    let seen_cache = Arc::new(AsyncMutex::new(HashMap::<String, (Instant, (String, String, String))>::new()));
+    let seen_cache = Arc::new(AsyncMutex::new(HashMap::<
+        String,
+        (Instant, (String, String, String)),
+    >::new()));
     const DEDUP_CACHE_TTL: Duration = Duration::from_secs(10 * 60); // 10 minutes
 
     let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -373,15 +436,21 @@ pub async fn run_agent(
     let mut peer_announce_tick = tokio::time::interval(Duration::from_secs(60));
     let mut dht_bootstrap_tick = tokio::time::interval(Duration::from_secs(120));
     // Content index: digest -> set of peers that have announced it
-    let content_index: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>> =
-        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let content_index: std::sync::Arc<
+        tokio::sync::Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>,
+    > = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     // Minimal P2P storage request/response plumbing
-    let (storage_req_tx, mut storage_req_rx) = tokio::sync::mpsc::unbounded_channel::<storage::StorageRequest>();
+    let (storage_req_tx, mut storage_req_rx) =
+        tokio::sync::mpsc::unbounded_channel::<storage::StorageRequest>();
     // For reassembling incoming chunked blobs
-    let chunk_bufs: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, (u32, Vec<Vec<u8>>)>>>
-        = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-    let pending_storage: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<tokio::sync::oneshot::Sender<Option<Vec<u8>>>>>>> =
-        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let chunk_bufs: std::sync::Arc<
+        tokio::sync::Mutex<std::collections::HashMap<String, (u32, Vec<Vec<u8>>)>>,
+    > = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let pending_storage: std::sync::Arc<
+        tokio::sync::Mutex<
+            std::collections::HashMap<String, Vec<tokio::sync::oneshot::Sender<Option<Vec<u8>>>>>,
+        >,
+    > = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let mut schedule_tick = tokio::time::interval(Duration::from_secs(60));
     let mut job_sync_interval = 5u64;
     let mut job_sync_tick = tokio::time::interval(Duration::from_secs(job_sync_interval));
@@ -613,7 +682,7 @@ pub async fn run_agent(
                         job.exit_code.hash(&mut hasher);
                     }
                     let current_hash = hasher.finish();
-                    
+
                     // Only broadcast if job state has actually changed
                     if last_job_state_hash.map_or(true, |last| last != current_hash) {
                         let msg = Command::SyncJobs { node_id: local_peer_id.to_string(), jobs: trimmed };
@@ -676,7 +745,7 @@ pub async fn run_agent(
                     SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(ev)) => {
                         match ev {
                             mdns::Event::Discovered(list) => {
-                                for (peer, addr) in list { 
+                                for (peer, addr) in list {
                                     // Persist discovered MDNS peer address
                                     add_known_peer(&addr.to_string());
                                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
@@ -685,8 +754,8 @@ pub async fn run_agent(
                                 }
                             }
                             mdns::Event::Expired(list) => {
-                                for (peer, _addr) in list { 
-                                    swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer); 
+                                for (peer, _addr) in list {
+                                    swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer);
                                     // Note: Kademlia will naturally expire stale entries
                                 }
                             }
@@ -770,17 +839,17 @@ pub async fn run_agent(
                                 if let Some((job_id, status, assigned_node, message_id)) = job_status_tuple(&cmd) {
                                     let mut cache = seen_cache.lock().await;
                                     let now = Instant::now();
-                                    
+
                                     // Clean expired entries
                                     cache.retain(|_, (timestamp, _)| now.duration_since(*timestamp) < DEDUP_CACHE_TTL);
-                                    
+
                                     // Check if this exact message was already processed
                                     if cache.contains_key(&message_id) {
                                         let ack = Command::JobStatusAck { job_id, status, from: local_peer_id.to_string(), message_id: message_id.clone() };
                                         let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&ack));
                                         continue;
                                     }
-                                    
+
                                     // Store this message_id to prevent duplicate processing
                                     cache.insert(message_id.clone(), (now, (job_id.clone(), status.clone(), assigned_node.clone())));
                                 }
@@ -997,111 +1066,25 @@ pub async fn run_agent(
                                         }
                                         info!("Component {} selection result: {}", pkg.unsigned.component_name, selected);
                                         if selected {
-                                            // Verify signature and digest
-                                            info!("Starting signature verification for component {}", pkg.unsigned.component_name);
-                                            if let Ok(unsigned_bytes) = serde_json::to_vec(&pkg.unsigned) {
-                                                info!("Serialized unsigned data successfully");
-                                                if let Ok(sig_bytes) = base64::engine::general_purpose::STANDARD.decode(&pkg.signature_b64) {
-                                                    info!("Decoded signature successfully");
-                                                    let sig_valid = common::verify_bytes_ed25519(&pkg.unsigned.owner_pub_bs58, &unsigned_bytes, &sig_bytes).unwrap_or(false);
-                                                    info!("Signature verification result: {} for owner: {}", sig_valid, pkg.unsigned.owner_pub_bs58);
-                                                    if sig_valid {
-                                                        if let Ok(bin_bytes) = base64::engine::general_purpose::STANDARD.decode(&pkg.binary_b64) {
-                                                            let digest = common::sha256_hex(&bin_bytes);
-                                                            if digest == pkg.unsigned.binary_sha256_hex {
-                                                                // TOFU owner trust like other commands
-                                                                info!("Binary digest verified successfully");
-                                                                if let Some(trusted) = crate::p2p::state::load_trusted_owner() {
-                                                                    info!("Found trusted owner: {}, command owner: {}", trusted, pkg.unsigned.owner_pub_bs58);
-                                                                    if trusted != pkg.unsigned.owner_pub_bs58 {
-                                                                        warn!("push: owner mismatch");
-                                                                    } else {
-                                                                        info!("Owner verified, staging artifact for component {}", pkg.unsigned.component_name);
-                                                                        // Stage artifact
-                                                                        let stage_dir = crate::p2p::state::agent_data_dir().join("artifacts");
-                                                                        if tokio::fs::create_dir_all(&stage_dir).await.is_ok() {
-                                                                            let file_path = stage_dir.join(format!("{}-{}.wasm", pkg.unsigned.component_name, &digest[..16]));
-                                                                            if !file_path.exists() {
-                                                                                if tokio::fs::write(&file_path, &bin_bytes).await.is_err() {
-                                                                                    warn!("push: write failed");
-                                                                                }
-                                                                            }
-                                                                            push_log(&logs, &pkg.unsigned.component_name, format!("pushed {} bytes (sha256={})", bin_bytes.len(), &digest[..16])).await;
-                                                                            if pkg.unsigned.start {
-                                                                                info!("Component {} marked for start, creating spec and scheduling", pkg.unsigned.component_name);
-                                                                                let spec = common::ComponentSpec {
-                                                                                    source: format!("cached:{}", pkg.unsigned.binary_sha256_hex.clone()),
-                                                                                    sha256_hex: pkg.unsigned.binary_sha256_hex.clone(),
-                                                                                    memory_max_mb: pkg.unsigned.memory_max_mb,
-                                                                                    fuel: pkg.unsigned.fuel,
-                                                                                    epoch_ms: pkg.unsigned.epoch_ms,
-                                                                                    replicas: Some(pkg.unsigned.replicas),
-                                                                                    mounts: pkg.unsigned.mounts.clone(),
-                                                                                    ports: pkg.unsigned.ports.clone(),
-                                                                                    visibility: pkg.unsigned.visibility.clone(),
-                                                                                };
-                                                                                let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec: spec.clone() };
-                                                                                info!("Calling supervisor.upsert_component for {}", pkg.unsigned.component_name);
-                                                                                supervisor.upsert_component(desired).await;
-                                                                                
-                                                                                // CRITICAL: Persist the component to manifest for restart persistence
-                                                                                update_persistent_manifest_with_component(&pkg.unsigned.component_name, spec);
-                                                                                
-                                                                                info!("Component {} successfully scheduled and persisted", pkg.unsigned.component_name);
-                                                                                push_log(&logs, &pkg.unsigned.component_name, "scheduled (upsert)" ).await;
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                } else {
-                                                                    // TOFU: accept first signed push and trust this owner, also stage and schedule
-                                                                    info!("No trusted owner found, performing TOFU for owner: {}", pkg.unsigned.owner_pub_bs58);
-                                                                    crate::p2p::state::save_trusted_owner(&pkg.unsigned.owner_pub_bs58);
-                                                                    let stage_dir = crate::p2p::state::agent_data_dir().join("artifacts");
-                                                                    if tokio::fs::create_dir_all(&stage_dir).await.is_ok() {
-                                                                        let file_path = stage_dir.join(format!("{}-{}.wasm", pkg.unsigned.component_name, &digest[..16]));
-                                                                        if !file_path.exists() {
-                                                                            if tokio::fs::write(&file_path, &bin_bytes).await.is_err() {
-                                                                                warn!("push: write failed (TOFU)");
-                                                                            }
-                                                                        }
-                                                                        push_log(&logs, &pkg.unsigned.component_name, format!("pushed {} bytes (sha256={})", bin_bytes.len(), &digest[..16])).await;
-                                                                        if pkg.unsigned.start {
-                                                                            let spec = common::ComponentSpec {
-                                                                                source: format!("cached:{}", pkg.unsigned.binary_sha256_hex.clone()),
-                                                                                sha256_hex: pkg.unsigned.binary_sha256_hex.clone(),
-                                                                                memory_max_mb: pkg.unsigned.memory_max_mb,
-                                                                                fuel: pkg.unsigned.fuel,
-                                                                                epoch_ms: pkg.unsigned.epoch_ms,
-                                                                                replicas: Some(pkg.unsigned.replicas),
-                                                                                mounts: pkg.unsigned.mounts.clone(),
-                                                                                ports: pkg.unsigned.ports.clone(),
-                                                                                visibility: pkg.unsigned.visibility.clone(),
-                                                                            };
-                                                                            let desired = crate::supervisor::DesiredComponent { name: pkg.unsigned.component_name.clone(), path: file_path.clone(), spec: spec.clone() };
-                                                                            supervisor.upsert_component(desired).await;
-                                                                            
-                                                                            // CRITICAL: Persist the component to manifest for restart persistence
-                                                                            update_persistent_manifest_with_component(&pkg.unsigned.component_name, spec);
-                                                                            
-                                                                            push_log(&logs, &pkg.unsigned.component_name, "scheduled (upsert)" ).await;
-                                                                        }
-                                                                    }
-                                                                }
-                                                            } else {
-                                                                warn!("push: digest mismatch");
-                                                            }
-                                                        } else {
-                                                            warn!("push: bad binary_b64");
-                                                        }
-                                                    } else {
-                                                        warn!("push: signature verify failed");
+                                            let logs_push = logs.clone();
+                                            let supervisor_push = supervisor.clone();
+                                            let component_name = pkg.unsigned.component_name.clone();
+                                            tokio::spawn(async move {
+                                                match crate::p2p::handle_push_package(
+                                                    pkg,
+                                                    logs_push,
+                                                    supervisor_push,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(_) => {
+                                                        info!(component=%component_name, "PushComponent accepted");
                                                     }
-                                                } else {
-                                                    warn!("push: bad signature_b64");
+                                                    Err(err) => {
+                                                        warn!(component=%component_name, error=%err, "PushComponent rejected");
+                                                    }
                                                 }
-                                            } else {
-                                                warn!("push: unsigned serialize err");
-                                            }
+                                            });
                                         }
                                     }
                                     Command::UpdateRoles { target_peer_ids, roles: new_roles } => {
@@ -1154,20 +1137,20 @@ pub async fn run_agent(
                                             // Accept the job and broadcast acceptance
                                             // Mark this node as the assigned executor
                                             let _ = job_mgr.assign_job(&job_id, &node_id).await;
-                                            
+
                                             // Broadcast job acceptance to prevent other nodes from taking it
-                                            let acceptance_msg = Command::JobAccepted { 
-                                                job_id: job_id.clone(), 
-                                                assigned_node: node_id.clone(), 
+                                            let acceptance_msg = Command::JobAccepted {
+                                                job_id: job_id.clone(),
+                                                assigned_node: node_id.clone(),
                                                 message_id: Uuid::new_v4().to_string(),
                                             };
                                             let _ = job_broadcast_tx_clone.send(acceptance_msg);
-                                            
+
                                             let _ = push_log(&logsj, "system", format!("Job accepted: {} ({})", job.name, job_id)).await;
-                                            
+
                                             // This node is executing the job
                                             let selected = true;
-                                            
+
                                             // Locality preference: if job has digest and others have it, delay start here
                                             let mut locality_delay_ms: u64 = 0;
                                             let job_digest: Option<String> = match &job.runtime {
@@ -1194,18 +1177,18 @@ pub async fn run_agent(
                                                 // Mark job as started
                                                 let _ = job_mgr.start_job(&job_id).await;
                                                 let _ = job_mgr.add_job_log(&job_id, "info".to_string(), "Job execution started on this node".to_string()).await;
-                                                
+
                                                 // Broadcast job started status
-                                                let start_msg = Command::JobStarted { 
-                                                    job_id: job_id.clone(), 
-                                                    assigned_node: node_id.clone(), 
+                                                let start_msg = Command::JobStarted {
+                                                    job_id: job_id.clone(),
+                                                    assigned_node: node_id.clone(),
                                                     message_id: Uuid::new_v4().to_string(),
                                                 };
                                                 let _ = job_broadcast_tx_clone.send(start_msg);
-                                                
+
                                                 // Observability: log start
                                                 let _ = push_log(&logsj, "system", format!("job started: {}", job_id)).await;
-                                                
+
                                                 // Handle different job types
                                                 match &job.job_type {
                                                     common::JobType::OneShot => {
@@ -1218,7 +1201,7 @@ pub async fn run_agent(
                                                         let oneshot_storage_tx = storage_tx.clone();
                                                         let oneshot_broadcast_tx = job_broadcast_tx_clone.clone();
                                                         let oneshot_node_id = node_id.clone();
-                                                        
+
                                                         tokio::spawn(async move {
                                                             if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
                                                             execute_oneshot_job_with_broadcast(oneshot_job_mgr, oneshot_job_id, oneshot_job, oneshot_logs, oneshot_tx, Some(storage::P2PStorage::new(oneshot_storage_tx)), oneshot_broadcast_tx, oneshot_node_id).await;
@@ -1234,7 +1217,7 @@ pub async fn run_agent(
                                                         let recurring_storage_tx = storage_tx.clone();
                                                         let recurring_broadcast_tx = job_broadcast_tx_clone.clone();
                                                         let recurring_node_id = node_id.clone();
-                                                        
+
                                                         tokio::spawn(async move {
                                                             if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
                                                             execute_oneshot_job_with_broadcast(recurring_job_mgr, recurring_job_id, recurring_job, recurring_logs, recurring_tx, Some(storage::P2PStorage::new(recurring_storage_tx)), recurring_broadcast_tx, recurring_node_id).await;
@@ -1243,18 +1226,18 @@ pub async fn run_agent(
                                                     common::JobType::Service => {
                                                         // Create cancellation channel for service jobs
                                                         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-                                                        
+
                                                         let service_job_mgr = job_mgr.clone();
                                                         let service_job_id = job_id.clone();
                                                         let service_job = job.clone();
                                                         let service_logs = logsj.clone();
                                                         let service_tx = tx_clone.clone();
-                                                        
+
                                                         let handle = tokio::spawn(async move {
                                                             if locality_delay_ms > 0 { tokio::time::sleep(Duration::from_millis(locality_delay_ms)).await; }
                                                             execute_service_job(service_job_mgr, service_job_id, service_job, service_logs, service_tx, cancel_rx, Some(storage::P2PStorage::new(storage_tx.clone()))).await;
                                                         });
-                                                        
+
                                                         // Register the running job for cancellation support
                                                         job_mgr.register_running_job(job_id.clone(), handle, cancel_tx).await;
                                                     }
@@ -1402,7 +1385,7 @@ pub async fn run_agent(
             }
         }
     }
-    
+
     // This code is unreachable since the main loop runs forever
     // The cleanup will be handled by the graceful shutdown in main.rs
 }

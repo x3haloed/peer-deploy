@@ -5,10 +5,10 @@ use std::{
     time::SystemTime,
 };
 
+use crate::p2p::events::P2PEvent;
 use crate::p2p::metrics::{Metrics, SharedLogs};
 use crate::supervisor::Supervisor;
-use common::Status;
-use crate::p2p::events::P2PEvent;  // Import P2PEvent for capturing P2P messages
+use common::Status; // Import P2PEvent for capturing P2P messages
 
 // Session management types
 #[derive(Clone)]
@@ -74,13 +74,13 @@ impl WebState {
     pub fn create_session(&self) -> String {
         let session = Session::new();
         let session_id = session.id.clone();
-        
+
         let mut sessions = self.sessions.lock().unwrap();
         sessions.insert(session_id.clone(), session);
-        
+
         // Clean up expired sessions
         sessions.retain(|_, session| !session.is_expired());
-        
+
         session_id
     }
 
@@ -159,12 +159,18 @@ pub struct LogQuery {
 #[derive(Deserialize)]
 pub struct DeployRequest {
     pub name: String,
-    pub source: String,  // URL or file path
+    pub source: String, // URL or file path
     pub sha256_hex: String,
     pub replicas: Option<u32>,
     pub memory_max_mb: Option<u64>,
     pub fuel: Option<u64>,
     pub epoch_ms: Option<u64>,
+    #[serde(default)]
+    pub target_peer_ids: Vec<String>,
+    #[serde(default)]
+    pub target_tags: Vec<String>,
+    #[serde(default)]
+    pub start: Option<bool>,
 }
 
 #[derive(Deserialize)]

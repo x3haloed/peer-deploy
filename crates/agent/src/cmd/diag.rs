@@ -1,8 +1,8 @@
 use anyhow::Context;
 use futures::StreamExt;
-use libp2p::{gossipsub, identity, mdns, noise, yamux, tcp, swarm::SwarmEvent, Multiaddr, SwarmBuilder};
-
-
+use libp2p::{
+    gossipsub, identity, mdns, noise, swarm::SwarmEvent, tcp, yamux, Multiaddr, SwarmBuilder,
+};
 
 #[derive(libp2p::swarm::NetworkBehaviour)]
 pub struct NodeBehaviour {
@@ -18,8 +18,14 @@ pub async fn diag_quic(addr: String) -> anyhow::Result<()> {
         gossip_config,
     )
     .map_err(|e| anyhow::anyhow!(e))?;
-    let mdns_beh = mdns::tokio::Behaviour::new(mdns::Config::default(), libp2p::PeerId::from(id_keys.public()))?;
-    let behaviour = NodeBehaviour { gossipsub, mdns: mdns_beh };
+    let mdns_beh = mdns::tokio::Behaviour::new(
+        mdns::Config::default(),
+        libp2p::PeerId::from(id_keys.public()),
+    )?;
+    let behaviour = NodeBehaviour {
+        gossipsub,
+        mdns: mdns_beh,
+    };
     let mut swarm = SwarmBuilder::with_existing_identity(id_keys.clone())
         .with_tokio()
         .with_tcp(
@@ -28,7 +34,7 @@ pub async fn diag_quic(addr: String) -> anyhow::Result<()> {
             yamux::Config::default,
         )?
         .with_quic()
-        .with_dns()? 
+        .with_dns()?
         .with_behaviour(|_| Ok(behaviour))?
         .build();
 
@@ -50,7 +56,10 @@ pub async fn diag_quic(addr: String) -> anyhow::Result<()> {
                     break;
                 }
                 SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                    println!("diag: outgoing connection error to {:?}: {}", peer_id, error);
+                    println!(
+                        "diag: outgoing connection error to {:?}: {}",
+                        peer_id, error
+                    );
                     break;
                 }
                 SwarmEvent::NewListenAddr { address, .. } => {
@@ -58,7 +67,7 @@ pub async fn diag_quic(addr: String) -> anyhow::Result<()> {
                 }
                 other => {
                     // verbose surface for debugging
-                    println!("diag: swarm event: {:?}", other); 
+                    println!("diag: swarm event: {:?}", other);
                 }
             }
         }
@@ -68,5 +77,3 @@ pub async fn diag_quic(addr: String) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
-

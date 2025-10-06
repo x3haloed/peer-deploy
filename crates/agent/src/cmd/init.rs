@@ -53,4 +53,3 @@ pub async fn key_show() -> anyhow::Result<()> {
     println!("{}", kp.public_bs58);
     Ok(())
 }
-

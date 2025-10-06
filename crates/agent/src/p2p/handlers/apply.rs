@@ -5,7 +5,9 @@ use crate::supervisor::DesiredComponent;
 use common::{verify_bytes_ed25519, Manifest, SignedManifest};
 
 use super::super::metrics::{push_log, Metrics};
-use super::super::state::{load_state, load_trusted_owner, save_desired_manifest, save_state, save_trusted_owner};
+use super::super::state::{
+    load_state, load_trusted_owner, save_desired_manifest, save_state, save_trusted_owner,
+};
 use super::util::verify_and_stage_artifacts;
 
 /// Handle an ApplyManifest command from the network.
@@ -61,12 +63,17 @@ pub async fn handle_apply_manifest(
                 // Persist desired manifest
                 save_desired_manifest(&signed.manifest_toml);
                 // Build desired set for supervisor
-                let mut desired: std::collections::BTreeMap<String, DesiredComponent> = Default::default();
+                let mut desired: std::collections::BTreeMap<String, DesiredComponent> =
+                    Default::default();
                 for (name, spec) in mf.components.iter() {
                     if let Some(path) = staged.get(name) {
                         desired.insert(
                             name.clone(),
-                            DesiredComponent { name: name.clone(), path: path.clone(), spec: spec.clone() },
+                            DesiredComponent {
+                                name: name.clone(),
+                                path: path.clone(),
+                                spec: spec.clone(),
+                            },
                         );
                     }
                 }
@@ -90,5 +97,3 @@ pub async fn handle_apply_manifest(
         }
     }
 }
-
-

@@ -1,7 +1,10 @@
 use anyhow::Context;
 use base64::Engine;
 
-use common::{sha256_hex, sign_bytes_ed25519, serialize_message, Command, OwnerKeypair, PushPackage, PushUnsigned, MountSpec, ServicePort, Protocol, Visibility};
+use common::{
+    serialize_message, sha256_hex, sign_bytes_ed25519, Command, MountSpec, OwnerKeypair, Protocol,
+    PushPackage, PushUnsigned, ServicePort, Visibility,
+};
 
 use super::util::{mdns_warmup, new_swarm, owner_dir};
 
@@ -23,7 +26,9 @@ pub async fn push(
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(
         &mut swarm,
-        "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>().unwrap(),
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse::<libp2p::Multiaddr>()
+            .unwrap(),
     )?;
 
     mdns_warmup(&mut swarm).await;
@@ -57,25 +62,45 @@ pub async fn push(
                 }
             }
             if let (Some(h), Some(g)) = (host, guest) {
-                list.push(MountSpec { host: h, guest: g, ro });
+                list.push(MountSpec {
+                    host: h,
+                    guest: g,
+                    ro,
+                });
             }
         }
-        if !list.is_empty() { mounts = Some(list); }
+        if !list.is_empty() {
+            mounts = Some(list);
+        }
     }
 
     // Parse ports 8080/tcp style
-    let ports: Option<Vec<ServicePort>> = if ports_cli.is_empty() { None } else {
+    let ports: Option<Vec<ServicePort>> = if ports_cli.is_empty() {
+        None
+    } else {
         let mut out = Vec::new();
         for p in ports_cli.iter() {
             let mut it = p.split('/');
             if let (Some(num), Some(proto)) = (it.next(), it.next()) {
                 if let Ok(port) = num.parse::<u16>() {
-                    let protocol = if proto.eq_ignore_ascii_case("udp") { Protocol::Udp } else { Protocol::Tcp };
-                    out.push(ServicePort { name: None, port, protocol });
+                    let protocol = if proto.eq_ignore_ascii_case("udp") {
+                        Protocol::Udp
+                    } else {
+                        Protocol::Tcp
+                    };
+                    out.push(ServicePort {
+                        name: None,
+                        port,
+                        protocol,
+                    });
                 }
             }
         }
-        if out.is_empty() { None } else { Some(out) }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
     };
 
     // Static routes removed; WASI HTTP handles requests inside components now.
@@ -110,9 +135,10 @@ pub async fn push(
         signature_b64: base64::engine::general_purpose::STANDARD.encode(sig),
     };
 
-    libp2p::Swarm::behaviour_mut(&mut swarm)
-        .gossipsub
-        .publish(topic_cmd.clone(), serialize_message(&Command::PushComponent(pkg)))?;
+    libp2p::Swarm::behaviour_mut(&mut swarm).gossipsub.publish(
+        topic_cmd.clone(),
+        serialize_message(&Command::PushComponent(pkg)),
+    )?;
 
     // brief wait to let it propagate
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -124,7 +150,8 @@ pub async fn push_package(file: String, name_override: Option<String>) -> anyhow
     let bytes = tokio::fs::read(&file).await.context("read package")?;
     // Connect to management web state directly (local agent)
     let state = crate::web::connect_to_agent().await?;
-    let (_name, _digest) = crate::web::install_package_from_bytes(&state, bytes, name_override).await
+    let (_name, _digest) = crate::web::install_package_from_bytes(&state, bytes, name_override)
+        .await
         .map_err(|e: String| anyhow::anyhow!(e))?;
     println!("Package deployed");
     Ok(())

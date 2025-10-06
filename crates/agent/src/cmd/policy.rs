@@ -8,11 +8,13 @@ pub async fn policy_show() -> anyhow::Result<()> {
 
 pub async fn policy_set(native: Option<bool>, qemu: Option<bool>) -> anyhow::Result<()> {
     let mut pol = load_policy();
-    if let Some(n) = native { pol.allow_native_execution = n; }
-    if let Some(q) = qemu { pol.allow_emulation = q; }
+    if let Some(n) = native {
+        pol.allow_native_execution = n;
+    }
+    if let Some(q) = qemu {
+        pol.allow_emulation = q;
+    }
     save_policy(&pol).map_err(|e| anyhow::anyhow!(e))?;
     println!("policy saved");
     Ok(())
 }
-
-

@@ -1,18 +1,30 @@
 use anyhow::Context;
 use base64::Engine as _;
-use common::{serialize_message, Command, JobSpec, OwnerKeypair, JobInstance, PreStageSpec};
-use std::time::Duration;
+use common::{serialize_message, Command, JobInstance, JobSpec, OwnerKeypair, PreStageSpec};
 use futures::StreamExt;
+use std::time::Duration;
 
-use super::util::{new_swarm, mdns_warmup, owner_dir, dial_bootstrap};
+use super::util::{dial_bootstrap, mdns_warmup, new_swarm, owner_dir};
 use crate::job_manager::JobManager;
 
-pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifacts: Vec<String>) -> anyhow::Result<()> {
+pub async fn submit_job(
+    job_toml_path: String,
+    assets: Vec<String>,
+    use_artifacts: Vec<String>,
+) -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/tcp/0".parse::<libp2p::Multiaddr>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    libp2p::Swarm::listen_on(
+        &mut swarm,
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+    )?;
+    libp2p::Swarm::listen_on(
+        &mut swarm,
+        "/ip4/0.0.0.0/tcp/0"
+            .parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+    )?;
 
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
@@ -29,26 +41,55 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
     // Inline-upload small assets via P2P and inject pre_stage entries
     // Each asset flag format: name=local_path or just local_path
     for asset in assets.into_iter() {
-        let (name, path) = if let Some((k, v)) = asset.split_once('=') { (k.to_string(), v.to_string()) } else { let p = std::path::Path::new(&asset); (p.file_name().and_then(|s| s.to_str()).unwrap_or("asset").to_string(), asset) };
+        let (name, path) = if let Some((k, v)) = asset.split_once('=') {
+            (k.to_string(), v.to_string())
+        } else {
+            let p = std::path::Path::new(&asset);
+            (
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("asset")
+                    .to_string(),
+                asset,
+            )
+        };
         let bytes = tokio::fs::read(&path).await.context("read asset file")?;
         let digest = common::sha256_hex(&bytes);
         // Publish StoragePut or chunked depending on size
         let (mut swarm, topic_cmd, _topic_status) = super::util::new_swarm().await?;
-        libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
-            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+        libp2p::Swarm::listen_on(
+            &mut swarm,
+            "/ip4/0.0.0.0/udp/0/quic-v1"
+                .parse::<libp2p::Multiaddr>()
+                .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+        )?;
         super::util::mdns_warmup(&mut swarm).await;
         super::util::dial_bootstrap(&mut swarm).await;
         let max = 8 * 1024 * 1024; // 8 MiB inline
         if bytes.len() <= max {
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::StoragePut { digest: digest.clone(), bytes_b64: b64 }));
+            let _ = swarm.behaviour_mut().gossipsub.publish(
+                topic_cmd.clone(),
+                serialize_message(&Command::StoragePut {
+                    digest: digest.clone(),
+                    bytes_b64: b64,
+                }),
+            );
         } else {
             let chunk_size = 6 * 1024 * 1024;
             let mut idx: u32 = 0;
             let total = ((bytes.len() + chunk_size - 1) / chunk_size) as u32;
             for chunk in bytes.chunks(chunk_size) {
                 let b64 = base64::engine::general_purpose::STANDARD.encode(chunk);
-                let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::StoragePutChunk { digest: digest.clone(), chunk_index: idx, total_chunks: total, bytes_b64: b64 }));
+                let _ = swarm.behaviour_mut().gossipsub.publish(
+                    topic_cmd.clone(),
+                    serialize_message(&Command::StoragePutChunk {
+                        digest: digest.clone(),
+                        chunk_index: idx,
+                        total_chunks: total,
+                        bytes_b64: b64,
+                    }),
+                );
                 idx += 1;
             }
         }
@@ -57,7 +98,10 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
         let _ = store.put_bytes(&bytes);
         // Inject pre_stage to write to /tmp/assets/<name>
         let dest = format!("/tmp/assets/{}", name);
-        spec.execution.pre_stage.push(PreStageSpec { source: format!("cas:{}", digest), dest });
+        spec.execution.pre_stage.push(PreStageSpec {
+            source: format!("cas:{}", digest),
+            dest,
+        });
     }
 
     // Reuse artifacts from previous jobs: format jobId:name
@@ -69,13 +113,20 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
             if let Some(prev) = job_manager.get_job(jid).await {
                 if let Some(art) = prev.artifacts.iter().find(|a| a.name == name) {
                     if let Some(d) = &art.sha256_hex {
-                        spec.execution.pre_stage.push(PreStageSpec { source: format!("cas:{}", d), dest: format!("/tmp/assets/{}", name) });
+                        spec.execution.pre_stage.push(PreStageSpec {
+                            source: format!("cas:{}", d),
+                            dest: format!("/tmp/assets/{}", name),
+                        });
                     } else {
                         // If digest missing, compute and add
                         if let Ok(bytes) = tokio::fs::read(&art.stored_path).await {
                             let digest = common::sha256_hex(&bytes);
-                            let store = crate::storage::ContentStore::open(); let _ = store.put_bytes(&bytes);
-                            spec.execution.pre_stage.push(PreStageSpec { source: format!("cas:{}", digest), dest: format!("/tmp/assets/{}", name) });
+                            let store = crate::storage::ContentStore::open();
+                            let _ = store.put_bytes(&bytes);
+                            spec.execution.pre_stage.push(PreStageSpec {
+                                source: format!("cas:{}", digest),
+                                dest: format!("/tmp/assets/{}", name),
+                            });
                         }
                     }
                 }
@@ -87,11 +138,20 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, node_id.clone());
     let _ = job_manager.load_from_disk().await;
-    let job_id = job_manager.submit_job(spec.clone(), Some(node_id.clone()), None).await?;
-    let msg = Command::SubmitJob { origin_node_id: node_id.clone(), job_id: job_id.clone(), spec: spec.clone() };
+    let job_id = job_manager
+        .submit_job(spec.clone(), Some(node_id.clone()), None)
+        .await?;
+    let msg = Command::SubmitJob {
+        origin_node_id: node_id.clone(),
+        job_id: job_id.clone(),
+        spec: spec.clone(),
+    };
 
     // publish job command
-    swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg))?;
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .publish(topic_cmd.clone(), serialize_message(&msg))?;
 
     // drive the swarm to flush the message (wait up to 2s for gossip propagation)
     let _ = tokio::time::timeout(Duration::from_secs(2), swarm.select_next_some()).await;
@@ -100,39 +160,54 @@ pub async fn submit_job(job_toml_path: String, assets: Vec<String>, use_artifact
     Ok(())
 }
 
-pub async fn list_jobs(status_filter: Option<String>, limit: usize, fresh: bool) -> anyhow::Result<()> {
+pub async fn list_jobs(
+    status_filter: Option<String>,
+    limit: usize,
+    fresh: bool,
+) -> anyhow::Result<()> {
     if fresh {
         let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
-        libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
-            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+        libp2p::Swarm::listen_on(
+            &mut swarm,
+            "/ip4/0.0.0.0/udp/0/quic-v1"
+                .parse::<libp2p::Multiaddr>()
+                .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+        )?;
         mdns_warmup(&mut swarm).await;
         dial_bootstrap(&mut swarm).await;
-        let msg = Command::JobSyncRequest { node_id: swarm.local_peer_id().to_string() };
-        swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg))?;
+        let msg = Command::JobSyncRequest {
+            node_id: swarm.local_peer_id().to_string(),
+        };
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .publish(topic_cmd.clone(), serialize_message(&msg))?;
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, "unknown".to_string());
-    
+
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
     }
 
     let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
-    
+
     if jobs.is_empty() {
         println!("No jobs found");
     } else {
         print_job_table(&jobs);
     }
-    
+
     Ok(())
 }
 
 pub async fn list_jobs_json(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, "unknown".to_string());
-    if let Err(e) = job_manager.load_from_disk().await { eprintln!("Warning: Failed to load job state: {}", e); }
+    if let Err(e) = job_manager.load_from_disk().await {
+        eprintln!("Warning: Failed to load job state: {}", e);
+    }
     let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
     println!("{}", serde_json::to_string_pretty(&jobs)?);
     Ok(())
@@ -141,8 +216,14 @@ pub async fn list_jobs_json(status_filter: Option<String>, limit: usize) -> anyh
 pub async fn job_status_json(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, "unknown".to_string());
-    if let Err(e) = job_manager.load_from_disk().await { eprintln!("Warning: Failed to load job state: {}", e); }
-    if let Some(job) = job_manager.get_job(&job_id).await { println!("{}", serde_json::to_string_pretty(&job)?); } else { eprintln!("Job '{}' not found", job_id); }
+    if let Err(e) = job_manager.load_from_disk().await {
+        eprintln!("Warning: Failed to load job state: {}", e);
+    }
+    if let Some(job) = job_manager.get_job(&job_id).await {
+        println!("{}", serde_json::to_string_pretty(&job)?);
+    } else {
+        eprintln!("Job '{}' not found", job_id);
+    }
     Ok(())
 }
 
@@ -150,12 +231,22 @@ pub async fn job_status_json(job_id: String) -> anyhow::Result<()> {
 pub async fn net_list_jobs_json(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
     use futures::StreamExt;
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    libp2p::Swarm::listen_on(
+        &mut swarm,
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+    )?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
     let status_filter_owned = status_filter.clone();
-    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobs { status_filter: status_filter_owned, limit }));
+    let _ = swarm.behaviour_mut().gossipsub.publish(
+        topic_cmd.clone(),
+        serialize_message(&Command::QueryJobs {
+            status_filter: status_filter_owned,
+            limit,
+        }),
+    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         tokio::select! {
@@ -188,11 +279,20 @@ pub async fn net_list_jobs_json(status_filter: Option<String>, limit: usize) -> 
 pub async fn net_status_job_json(job_id: String) -> anyhow::Result<()> {
     use futures::StreamExt;
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    libp2p::Swarm::listen_on(
+        &mut swarm,
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+    )?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
-    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobStatus { job_id: job_id.clone() }));
+    let _ = swarm.behaviour_mut().gossipsub.publish(
+        topic_cmd.clone(),
+        serialize_message(&Command::QueryJobStatus {
+            job_id: job_id.clone(),
+        }),
+    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         tokio::select! {
@@ -229,16 +329,26 @@ pub async fn net_status_job_json(job_id: String) -> anyhow::Result<()> {
 pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
     use futures::StreamExt;
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    libp2p::Swarm::listen_on(
+        &mut swarm,
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+    )?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
-    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobStatus { job_id: job_id.clone() }));
-    
+    let _ = swarm.behaviour_mut().gossipsub.publish(
+        topic_cmd.clone(),
+        serialize_message(&Command::QueryJobStatus {
+            job_id: job_id.clone(),
+        }),
+    );
+
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
-    let mut responses: std::collections::HashMap<String, JobInstance> = std::collections::HashMap::new();
+    let mut responses: std::collections::HashMap<String, JobInstance> =
+        std::collections::HashMap::new();
     let mut nodes_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    
+
     loop {
         tokio::select! {
             _ = tokio::time::sleep_until(deadline.into()) => {
@@ -249,7 +359,7 @@ pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
                 if let Some(local_job) = job_manager.get_job(&job_id).await {
                     responses.insert("local".to_string(), local_job);
                 }
-                
+
                 // Print aggregated response
                 let aggregated = AggregatedJobStatus {
                     job_id: job_id.clone(),
@@ -267,7 +377,7 @@ pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
                                 let node_id = propagation_source.to_string();
                                 nodes_seen.insert(node_id.clone());
                                 responses.insert(node_id, item);
-                                
+
                                 // Continue collecting for a bit longer to get more responses
                             }
                         }
@@ -280,20 +390,34 @@ pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
 
 /// Query jobs over the network and collect responses from all nodes
 #[allow(dead_code)]
-pub async fn net_list_jobs_json_all(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
+pub async fn net_list_jobs_json_all(
+    status_filter: Option<String>,
+    limit: usize,
+) -> anyhow::Result<()> {
     use futures::StreamExt;
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    libp2p::Swarm::listen_on(
+        &mut swarm,
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+    )?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
     let status_filter_owned = status_filter.clone();
-    let _ = swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&Command::QueryJobs { status_filter: status_filter_owned, limit }));
-    
+    let _ = swarm.behaviour_mut().gossipsub.publish(
+        topic_cmd.clone(),
+        serialize_message(&Command::QueryJobs {
+            status_filter: status_filter_owned,
+            limit,
+        }),
+    );
+
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
-    let mut responses: std::collections::HashMap<String, Vec<JobInstance>> = std::collections::HashMap::new();
+    let mut responses: std::collections::HashMap<String, Vec<JobInstance>> =
+        std::collections::HashMap::new();
     let mut nodes_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    
+
     loop {
         tokio::select! {
             _ = tokio::time::sleep_until(deadline.into()) => {
@@ -303,7 +427,7 @@ pub async fn net_list_jobs_json_all(status_filter: Option<String>, limit: usize)
                 let _ = job_manager.load_from_disk().await;
                 let local_jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
                 responses.insert("local".to_string(), local_jobs);
-                
+
                 // Print aggregated response
                 let aggregated = AggregatedJobList {
                     status_filter,
@@ -322,7 +446,7 @@ pub async fn net_list_jobs_json_all(status_filter: Option<String>, limit: usize)
                                 let node_id = propagation_source.to_string();
                                 nodes_seen.insert(node_id.clone());
                                 responses.insert(node_id, list);
-                                
+
                                 // Continue collecting for a bit longer to get more responses
                             }
                         }
@@ -353,7 +477,7 @@ struct AggregatedJobList {
 pub async fn job_status(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, "unknown".to_string());
-    
+
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
     }
@@ -363,43 +487,52 @@ pub async fn job_status(job_id: String) -> anyhow::Result<()> {
     } else {
         println!("Job '{}' not found", job_id);
     }
-    
+
     Ok(())
 }
 
 pub async fn cancel_job(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, "unknown".to_string());
-    
+
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
     }
 
     if job_manager.cancel_job(&job_id).await? {
         println!("Job '{}' cancelled successfully", job_id);
-        
+
         // Also send network cancel command
         let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
-        libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
-            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+        libp2p::Swarm::listen_on(
+            &mut swarm,
+            "/ip4/0.0.0.0/udp/0/quic-v1"
+                .parse::<libp2p::Multiaddr>()
+                .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+        )?;
         mdns_warmup(&mut swarm).await;
 
-        let msg = Command::CancelJob { job_id: job_id.clone() };
+        let msg = Command::CancelJob {
+            job_id: job_id.clone(),
+        };
         swarm
             .behaviour_mut()
             .gossipsub
             .publish(topic_cmd.clone(), serialize_message(&msg))?;
     } else {
-        println!("Job '{}' not found or cannot be cancelled (already completed)", job_id);
+        println!(
+            "Job '{}' not found or cannot be cancelled (already completed)",
+            job_id
+        );
     }
-    
+
     Ok(())
 }
 
 pub async fn job_logs(job_id: String, tail: usize, follow: bool) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, "unknown".to_string());
-    
+
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
     }
@@ -408,7 +541,7 @@ pub async fn job_logs(job_id: String, tail: usize, follow: bool) -> anyhow::Resu
         if follow {
             println!("Following logs for job '{}' (Ctrl+C to stop)...", job_id);
             print_job_logs(&job, tail);
-            
+
             // For follow mode, poll for updates every 2 seconds
             let mut interval = tokio::time::interval(Duration::from_secs(2));
             loop {
@@ -419,15 +552,22 @@ pub async fn job_logs(job_id: String, tail: usize, follow: bool) -> anyhow::Resu
                             // Print new logs
                             let new_logs = &updated_job.logs[job.logs.len()..];
                             for log_entry in new_logs {
-                                println!("{} [{}] {}", 
-                                         format_timestamp(log_entry.timestamp),
-                                         log_entry.level.to_uppercase(),
-                                         log_entry.message);
+                                println!(
+                                    "{} [{}] {}",
+                                    format_timestamp(log_entry.timestamp),
+                                    log_entry.level.to_uppercase(),
+                                    log_entry.message
+                                );
                             }
                         }
-                        
+
                         // Break if job is completed
-                        if matches!(updated_job.status, common::JobStatus::Completed | common::JobStatus::Failed | common::JobStatus::Cancelled) {
+                        if matches!(
+                            updated_job.status,
+                            common::JobStatus::Completed
+                                | common::JobStatus::Failed
+                                | common::JobStatus::Cancelled
+                        ) {
                             break;
                         }
                     }
@@ -439,17 +579,25 @@ pub async fn job_logs(job_id: String, tail: usize, follow: bool) -> anyhow::Resu
     } else {
         println!("Job '{}' not found", job_id);
     }
-    
+
     Ok(())
 }
 
 // Helper function for web API
 pub async fn submit_job_from_spec(spec: JobSpec) -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, _topic_status) = new_swarm().await?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/udp/0/quic-v1".parse::<libp2p::Multiaddr>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
-    libp2p::Swarm::listen_on(&mut swarm, "/ip4/0.0.0.0/tcp/0".parse::<libp2p::Multiaddr>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?)?;
+    libp2p::Swarm::listen_on(
+        &mut swarm,
+        "/ip4/0.0.0.0/udp/0/quic-v1"
+            .parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+    )?;
+    libp2p::Swarm::listen_on(
+        &mut swarm,
+        "/ip4/0.0.0.0/tcp/0"
+            .parse::<libp2p::Multiaddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse multiaddr: {}", e))?,
+    )?;
 
     mdns_warmup(&mut swarm).await;
 
@@ -463,10 +611,19 @@ pub async fn submit_job_from_spec(spec: JobSpec) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, node_id.clone());
     let _ = job_manager.load_from_disk().await;
-    let job_id = job_manager.submit_job(spec.clone(), Some(node_id.clone()), None).await?;
-    let msg = Command::SubmitJob { origin_node_id: node_id.clone(), job_id: job_id.clone(), spec: spec.clone() };
+    let job_id = job_manager
+        .submit_job(spec.clone(), Some(node_id.clone()), None)
+        .await?;
+    let msg = Command::SubmitJob {
+        origin_node_id: node_id.clone(),
+        job_id: job_id.clone(),
+        spec: spec.clone(),
+    };
     // publish job command
-    swarm.behaviour_mut().gossipsub.publish(topic_cmd.clone(), serialize_message(&msg))?;
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .publish(topic_cmd.clone(), serialize_message(&msg))?;
     // drive the swarm to flush the message (wait up to 2s for gossip propagation)
     let _ = tokio::time::timeout(Duration::from_secs(2), swarm.select_next_some()).await;
     println!("Job '{}' submitted successfully", job_id);
@@ -476,18 +633,32 @@ pub async fn submit_job_from_spec(spec: JobSpec) -> anyhow::Result<()> {
 // Helper functions for formatting output
 
 fn print_job_table(jobs: &[JobInstance]) {
-    println!("{:<15} {:<20} {:<10} {:<10} {:<20}", "ID", "NAME", "STATUS", "NODE", "SUBMITTED");
+    println!(
+        "{:<15} {:<20} {:<10} {:<10} {:<20}",
+        "ID", "NAME", "STATUS", "NODE", "SUBMITTED"
+    );
     println!("{}", "-".repeat(80));
-    
-    for job in jobs.iter().take(50) { // Limit display
+
+    for job in jobs.iter().take(50) {
+        // Limit display
         let status = format!("{:?}", job.status);
         let node = job.assigned_node.as_deref().unwrap_or("-");
         let submitted = format_timestamp(job.submitted_at);
-        let id_short = if job.id.len() > 12 { &job.id[..12] } else { &job.id };
-        let name_short = if job.spec.name.len() > 18 { &job.spec.name[..18] } else { &job.spec.name };
-        
-        println!("{:<15} {:<20} {:<10} {:<10} {:<20}", 
-                 id_short, name_short, status, node, submitted);
+        let id_short = if job.id.len() > 12 {
+            &job.id[..12]
+        } else {
+            &job.id
+        };
+        let name_short = if job.spec.name.len() > 18 {
+            &job.spec.name[..18]
+        } else {
+            &job.spec.name
+        };
+
+        println!(
+            "{:<15} {:<20} {:<10} {:<10} {:<20}",
+            id_short, name_short, status, node, submitted
+        );
     }
 }
 
@@ -497,35 +668,35 @@ fn print_job_details(job: &JobInstance) {
     println!("  Name: {}", job.spec.name);
     println!("  Status: {:?}", job.status);
     println!("  Type: {:?}", job.spec.job_type);
-    
+
     if let Some(schedule) = &job.spec.schedule {
         println!("  Schedule: {}", schedule);
     }
-    
+
     println!("  Submitted: {}", format_timestamp(job.submitted_at));
-    
+
     if let Some(started) = job.started_at {
         println!("  Started: {}", format_timestamp(started));
     }
-    
+
     if let Some(completed) = job.completed_at {
         println!("  Completed: {}", format_timestamp(completed));
     }
-    
+
     if let Some(node) = &job.assigned_node {
         println!("  Node: {}", node);
     }
-    
+
     if let Some(exit_code) = job.exit_code {
         println!("  Exit Code: {}", exit_code);
     }
-    
+
     if let Some(error) = &job.error_message {
         println!("  Error: {}", error);
     }
-    
+
     println!("  Runtime: {:?}", job.spec.runtime);
-    
+
     if let Some(targeting) = &job.spec.targeting {
         if let Some(platform) = &targeting.platform {
             println!("  Platform: {}", platform);
@@ -545,21 +716,23 @@ fn print_job_logs(job: &JobInstance, tail: usize) {
     } else {
         &job.logs
     };
-    
+
     for log_entry in logs_to_show {
-        println!("{} [{}] {}", 
-                 format_timestamp(log_entry.timestamp),
-                 log_entry.level.to_uppercase(),
-                 log_entry.message);
+        println!(
+            "{} [{}] {}",
+            format_timestamp(log_entry.timestamp),
+            log_entry.level.to_uppercase(),
+            log_entry.message
+        );
     }
 }
 
 fn format_timestamp(unix_timestamp: u64) -> String {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    
+
     let datetime = UNIX_EPOCH + Duration::from_secs(unix_timestamp);
     let now = SystemTime::now();
-    
+
     match now.duration_since(datetime) {
         Ok(elapsed) => {
             let secs = elapsed.as_secs();
@@ -580,7 +753,7 @@ fn format_timestamp(unix_timestamp: u64) -> String {
 pub async fn job_artifacts(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, "unknown".to_string());
-    
+
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
     }
@@ -592,27 +765,34 @@ pub async fn job_artifacts(job_id: String) -> anyhow::Result<()> {
             println!("Artifacts for job '{}':", job_id);
             println!("{:<20} {:<15} {:<30}", "NAME", "SIZE", "STORED PATH");
             println!("{}", "-".repeat(70));
-            
+
             for artifact in &job.artifacts {
                 let size_str = if let Some(size) = artifact.size_bytes {
                     format!("{} bytes", size)
                 } else {
                     "unknown".to_string()
                 };
-                println!("{:<20} {:<15} {:<30}", artifact.name, size_str, artifact.stored_path);
+                println!(
+                    "{:<20} {:<15} {:<30}",
+                    artifact.name, size_str, artifact.stored_path
+                );
             }
         }
     } else {
         println!("Job '{}' not found", job_id);
     }
-    
+
     Ok(())
 }
 
-pub async fn job_download(job_id: String, artifact_name: String, output: Option<String>) -> anyhow::Result<()> {
+pub async fn job_download(
+    job_id: String,
+    artifact_name: String,
+    output: Option<String>,
+) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, "unknown".to_string());
-    
+
     if let Err(e) = job_manager.load_from_disk().await {
         eprintln!("Warning: Failed to load job state: {}", e);
     }
@@ -621,30 +801,38 @@ pub async fn job_download(job_id: String, artifact_name: String, output: Option<
         if let Some(_artifact) = job.artifacts.iter().find(|a| a.name == artifact_name) {
             // Get staged artifact path
             let staged_path = job_manager.get_artifact_path(&job_id, &artifact_name);
-            
+
             if !staged_path.exists() {
                 eprintln!("Artifact '{}' not found in staged location", artifact_name);
                 return Ok(());
             }
-            
+
             let output_path = output.unwrap_or_else(|| artifact_name.clone());
-            
+
             tokio::fs::copy(&staged_path, &output_path).await?;
-            println!("Downloaded artifact '{}' to '{}'", artifact_name, output_path);
+            println!(
+                "Downloaded artifact '{}' to '{}'",
+                artifact_name, output_path
+            );
         } else {
-            println!("Artifact '{}' not found for job '{}'", artifact_name, job_id);
+            println!(
+                "Artifact '{}' not found for job '{}'",
+                artifact_name, job_id
+            );
         }
     } else {
         println!("Job '{}' not found", job_id);
     }
-    
+
     Ok(())
 }
 
 pub async fn job_artifacts_json(job_id: String) -> anyhow::Result<()> {
     let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
     let job_manager = JobManager::new(data_dir, "unknown".to_string());
-    if let Err(e) = job_manager.load_from_disk().await { eprintln!("Warning: Failed to load job state: {}", e); }
+    if let Err(e) = job_manager.load_from_disk().await {
+        eprintln!("Warning: Failed to load job state: {}", e);
+    }
     if let Some(job) = job_manager.get_job(&job_id).await {
         println!("{}", serde_json::to_string_pretty(&job.artifacts)?);
     } else {

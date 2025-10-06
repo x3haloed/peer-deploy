@@ -10,7 +10,7 @@ mod bindings;
 #[cfg(feature = "component")]
 mod component_impl {
     #[allow(unused_imports)]
-    use crate::bindings as bindings;
+    use crate::bindings;
 
     use bindings::exports::wasi::http::incoming_handler::Guest;
     use bindings::wasi::http::types as http;
@@ -36,7 +36,4 @@ mod component_impl {
 #[cfg(not(feature = "component"))]
 mod non_component_stub {
     // No-op library to keep workspace `cargo build` happy when not building the component target.
-
 }
-
-

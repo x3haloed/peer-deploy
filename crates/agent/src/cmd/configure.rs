@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 
-use super::util::{write_trusted_owner, write_bootstrap, agent_data_dir_cli};
+use super::util::{agent_data_dir_cli, write_bootstrap, write_trusted_owner};
 
 pub async fn configure(owner: String, bootstrap: Vec<String>) -> anyhow::Result<()> {
     if owner.is_empty() {
@@ -23,4 +23,3 @@ pub async fn configure(owner: String, bootstrap: Vec<String>) -> anyhow::Result<
     println!("configuration written");
     Ok(())
 }
-

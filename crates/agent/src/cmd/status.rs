@@ -6,7 +6,7 @@ use futures::StreamExt;
 
 use common::{serialize_message, Command};
 
-use super::util::{mdns_warmup, new_swarm, NodeBehaviourEvent, dial_bootstrap};
+use super::util::{dial_bootstrap, mdns_warmup, new_swarm, NodeBehaviourEvent};
 
 pub async fn status() -> anyhow::Result<()> {
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;

@@ -6,9 +6,9 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, mdns, noise, yamux, tcp,
+    gossipsub, mdns, noise,
     swarm::{Swarm, SwarmEvent},
-    PeerId, SwarmBuilder,
+    tcp, yamux, PeerId, SwarmBuilder,
 };
 
 use common::{REALM_CMD_TOPIC, REALM_STATUS_TOPIC};

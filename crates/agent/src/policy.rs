@@ -10,7 +10,10 @@ pub struct ExecutionPolicy {
 
 impl Default for ExecutionPolicy {
     fn default() -> Self {
-        Self { allow_native_execution: false, allow_emulation: false }
+        Self {
+            allow_native_execution: false,
+            allow_emulation: false,
+        }
     }
 }
 
@@ -69,12 +72,7 @@ pub fn save_policy(policy: &ExecutionPolicy) -> Result<(), String> {
 }
 
 pub fn find_any_qemu_user() -> Option<String> {
-    let candidates = [
-        "qemu-x86_64",
-        "qemu-aarch64",
-        "qemu-arm",
-        "qemu-riscv64",
-    ];
+    let candidates = ["qemu-x86_64", "qemu-aarch64", "qemu-arm", "qemu-riscv64"];
     for name in candidates.iter() {
         if let Ok(path) = which::which(name) {
             return Some(path.display().to_string());
@@ -82,5 +80,3 @@ pub fn find_any_qemu_user() -> Option<String> {
     }
     None
 }
-
-

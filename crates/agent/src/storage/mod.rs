@@ -31,7 +31,10 @@ impl ContentStore {
         let base_dir = data.join("artifacts").join("blobs").join("sha256");
         let _ = std::fs::create_dir_all(&base_dir);
         let index_path = data.join("artifacts").join("index.json");
-        Self { base_dir, index_path }
+        Self {
+            base_dir,
+            index_path,
+        }
     }
 
     fn path_for_digest(&self, digest: &str) -> PathBuf {
@@ -73,7 +76,9 @@ impl ContentStore {
         let digest = common::sha256_hex(bytes);
         let path = self.path_for_digest(&digest);
         if !path.exists() {
-            if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
         }
         // Update index
@@ -124,13 +129,21 @@ impl ContentStore {
     /// Garbage collect until total size <= target_total_bytes. Never deletes pinned.
     pub fn gc_to_target(&self, target_total_bytes: u64) -> Result<(), String> {
         let mut idx = self.load_index();
-        let mut items: Vec<(String, IndexEntry)> = idx.entries.iter().map(|(d, e)| (d.clone(), e.clone())).collect();
+        let mut items: Vec<(String, IndexEntry)> = idx
+            .entries
+            .iter()
+            .map(|(d, e)| (d.clone(), e.clone()))
+            .collect();
         // Sort by last_accessed ascending (LRU)
         items.sort_by_key(|(_, e)| e.last_accessed_unix);
         let mut current: u64 = items.iter().map(|(_, e)| e.size_bytes).sum();
         for (digest, entry) in items {
-            if current <= target_total_bytes { break; }
-            if entry.pinned { continue; }
+            if current <= target_total_bytes {
+                break;
+            }
+            if entry.pinned {
+                continue;
+            }
             let path = self.path_for_digest(&digest);
             let _ = std::fs::remove_file(&path);
             current = current.saturating_sub(entry.size_bytes);
@@ -139,5 +152,3 @@ impl ContentStore {
         self.save_index(&idx)
     }
 }
-
-

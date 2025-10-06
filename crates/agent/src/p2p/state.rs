@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 /// Resolve the agent data directory in a platform-appropriate location.
 pub fn agent_data_dir() -> PathBuf {
-    dirs::data_dir().unwrap_or(std::env::temp_dir()).join("realm-agent")
+    dirs::data_dir()
+        .unwrap_or(std::env::temp_dir())
+        .join("realm-agent")
 }
 
 fn trusted_owner_path() -> PathBuf {
@@ -47,7 +49,9 @@ pub fn save_trusted_owner(pub_bs58: &str) {
 /// Load a persisted UDP listen port for QUIC if present.
 pub fn load_listen_port() -> Option<u16> {
     if let Ok(s) = fs::read_to_string(listen_port_path()) {
-        if let Ok(p) = s.trim().parse::<u16>() { return Some(p); }
+        if let Ok(p) = s.trim().parse::<u16>() {
+            return Some(p);
+        }
     }
     None
 }
@@ -61,7 +65,9 @@ pub fn save_listen_port(port: u16) {
 /// Load a persisted TCP listen port if present.
 pub fn load_listen_port_tcp() -> Option<u16> {
     if let Ok(s) = fs::read_to_string(listen_port_tcp_path()) {
-        if let Ok(p) = s.trim().parse::<u16>() { return Some(p); }
+        if let Ok(p) = s.trim().parse::<u16>() {
+            return Some(p);
+        }
     }
     None
 }
@@ -122,7 +128,10 @@ pub fn save_desired_manifest(toml: &str) {
 
 /// Update the persistent manifest with a new component from PushComponent.
 /// This allows PushComponent commands to be restored on agent restart.
-pub fn update_persistent_manifest_with_component(component_name: &str, spec: common::ComponentSpec) {
+pub fn update_persistent_manifest_with_component(
+    component_name: &str,
+    spec: common::ComponentSpec,
+) {
     let mut manifest = if let Some(toml_str) = load_desired_manifest() {
         // Try to parse existing manifest
         toml::from_str::<common::Manifest>(&toml_str).unwrap_or_else(|_| {

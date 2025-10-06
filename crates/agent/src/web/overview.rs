@@ -12,8 +12,16 @@ pub async fn api_status(State(state): State<WebState>) -> Json<ApiStatus> {
     let peers = state.peer_status.lock().await;
     let node_count = peers.len() as u32;
     let component_count = state.metrics.components_running.load(Ordering::Relaxed) as u32;
-    let cpu_avg = if peers.is_empty() { 0 } else { peers.values().map(|p| p.cpu_percent as u32).sum::<u32>() / node_count };
-    Json(ApiStatus { nodes: node_count.max(1), components: component_count, cpu_avg })
+    let cpu_avg = if peers.is_empty() {
+        0
+    } else {
+        peers.values().map(|p| p.cpu_percent as u32).sum::<u32>() / node_count
+    };
+    Json(ApiStatus {
+        nodes: node_count.max(1),
+        components: component_count,
+        cpu_avg,
+    })
 }
 
 pub async fn api_nodes(State(state): State<WebState>) -> Json<Vec<ApiNode>> {
@@ -55,18 +63,43 @@ pub async fn api_components(State(state): State<WebState>) -> Json<Vec<ApiCompon
         let memory_mb = desired.spec.memory_max_mb.unwrap_or(64);
         let replicas_running = {
             let logs_map = state.logs.lock().await;
-            let has_recent_logs = logs_map.get(name).map(|logs| !logs.is_empty()).unwrap_or(false);
-            if has_recent_logs { replicas_desired } else { if replicas_desired > 0 { 1 } else { 0 } }
+            let has_recent_logs = logs_map
+                .get(name)
+                .map(|logs| !logs.is_empty())
+                .unwrap_or(false);
+            if has_recent_logs {
+                replicas_desired
+            } else {
+                if replicas_desired > 0 {
+                    1
+                } else {
+                    0
+                }
+            }
         };
         let running = replicas_running > 0;
         let peers = state.peer_status.lock().await;
-        let nodes: Vec<String> = if peers.is_empty() { vec!["local-node".to_string()] } else { peers.keys().cloned().collect() };
-        components.push(ApiComponent { name: name.clone(), running, replicas_running, replicas_desired, memory_mb: memory_mb as u32, nodes });
+        let nodes: Vec<String> = if peers.is_empty() {
+            vec!["local-node".to_string()]
+        } else {
+            peers.keys().cloned().collect()
+        };
+        components.push(ApiComponent {
+            name: name.clone(),
+            running,
+            replicas_running,
+            replicas_desired,
+            memory_mb: memory_mb as u32,
+            nodes,
+        });
     }
     Json(components)
 }
 
-pub async fn api_logs(State(state): State<WebState>, Query(params): Query<LogQuery>) -> Json<Vec<ApiLog>> {
+pub async fn api_logs(
+    State(state): State<WebState>,
+    Query(params): Query<LogQuery>,
+) -> Json<Vec<ApiLog>> {
     let tail = params.tail.unwrap_or(100) as usize;
     let component = params.component.unwrap_or_else(|| "__all__".to_string());
     let logs_map = state.logs.lock().await;
@@ -85,20 +118,41 @@ pub async fn api_logs(State(state): State<WebState>, Query(params): Query<LogQue
         all_logs.sort_by_key(|(timestamp, _, _)| *timestamp);
         let start_idx = all_logs.len().saturating_sub(tail);
         for (timestamp, comp_name, message) in all_logs.into_iter().skip(start_idx) {
-            api_logs.push(ApiLog { timestamp: format_timestamp(timestamp), component: comp_name, message });
+            api_logs.push(ApiLog {
+                timestamp: format_timestamp(timestamp),
+                component: comp_name,
+                message,
+            });
         }
     } else if let Some(log_buffer) = logs_map.get(&component) {
         let start_idx = log_buffer.len().saturating_sub(tail);
         for log_line in log_buffer.iter().skip(start_idx) {
             if let Some((timestamp_str, message)) = log_line.split_once(" | ") {
                 if let Ok(timestamp) = timestamp_str.trim().parse::<u64>() {
-                    api_logs.push(ApiLog { timestamp: format_timestamp(timestamp), component: component.clone(), message: message.trim().to_string() });
+                    api_logs.push(ApiLog {
+                        timestamp: format_timestamp(timestamp),
+                        component: component.clone(),
+                        message: message.trim().to_string(),
+                    });
                 }
             }
         }
     }
     if api_logs.is_empty() {
-        api_logs.push(ApiLog { timestamp: format_timestamp(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()), component: "system".to_string(), message: if component == "__all__" { "No logs available yet".to_string() } else { format!("No logs found for component '{}'", component) } });
+        api_logs.push(ApiLog {
+            timestamp: format_timestamp(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
+            component: "system".to_string(),
+            message: if component == "__all__" {
+                "No logs available yet".to_string()
+            } else {
+                format!("No logs found for component '{}'", component)
+            },
+        });
     }
     Json(api_logs)
 }
@@ -109,5 +163,3 @@ pub async fn api_log_components(State(state): State<WebState>) -> Json<Vec<Strin
     out.sort();
     Json(out)
 }
-
-

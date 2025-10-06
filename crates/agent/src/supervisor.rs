@@ -1,14 +1,17 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{atomic::{AtomicUsize, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use tokio::task::JoinHandle;
 
 use tracing::{info, warn};
 
 use crate::p2p::metrics::{push_log, Metrics, SharedLogs};
-use crate::p2p::state::{load_desired_manifest, agent_data_dir};
+use crate::p2p::state::{agent_data_dir, load_desired_manifest};
 use crate::runner::run_wasm_module_with_limits;
-use common::{ComponentSpec, Manifest, sha256_hex};
+use common::{sha256_hex, ComponentSpec, Manifest};
 
 #[derive(Clone, Debug)]
 pub struct DesiredComponent {
@@ -41,26 +44,30 @@ impl Supervisor {
     pub async fn restore_from_disk(&self) -> anyhow::Result<()> {
         if let Some(manifest_toml) = load_desired_manifest() {
             info!("Restoring component state from persistent manifest");
-            
+
             match toml::from_str::<Manifest>(&manifest_toml) {
                 Ok(manifest) => {
                     let mut desired = BTreeMap::new();
                     let stage_dir = agent_data_dir().join("artifacts");
-                    
+
                     for (name, spec) in manifest.components {
                         // Resolve artifact path from cache using the pattern from handlers.rs
-                        let artifact_path = stage_dir.join(format!("{}-{}.wasm", name, &spec.sha256_hex[..16]));
-                        
+                        let artifact_path =
+                            stage_dir.join(format!("{}-{}.wasm", name, &spec.sha256_hex[..16]));
+
                         if artifact_path.exists() {
                             // Verify the cached artifact still matches the expected hash
                             if let Ok(cached_bytes) = std::fs::read(&artifact_path) {
                                 let cached_digest = sha256_hex(&cached_bytes);
                                 if cached_digest == spec.sha256_hex {
-                                    desired.insert(name.clone(), DesiredComponent {
-                                        name: name.clone(),
-                                        path: artifact_path.clone(),
-                                        spec,
-                                    });
+                                    desired.insert(
+                                        name.clone(),
+                                        DesiredComponent {
+                                            name: name.clone(),
+                                            path: artifact_path.clone(),
+                                            spec,
+                                        },
+                                    );
                                     info!(component=%name, path=%artifact_path.display(), "Restored component from cache");
                                 } else {
                                     warn!(component=%name, expected=%spec.sha256_hex, actual=%cached_digest, "Cached artifact hash mismatch, skipping");
@@ -72,13 +79,18 @@ impl Supervisor {
                             warn!(component=%name, path=%artifact_path.display(), "Cached artifact not found, component will be unavailable until re-deployed");
                         }
                     }
-                    
+
                     if !desired.is_empty() {
                         self.set_desired(desired.clone()).await;
                         info!(count=%desired.len(), "Successfully restored components from disk");
-                        
+
                         for name in desired.keys() {
-                            push_log(&self.logs, name, "restored from persistent state".to_string()).await;
+                            push_log(
+                                &self.logs,
+                                name,
+                                "restored from persistent state".to_string(),
+                            )
+                            .await;
                         }
                     } else {
                         info!("No components could be restored from cache");
@@ -101,7 +113,9 @@ impl Supervisor {
         // ensure counters exist
         let mut counts = self.counts.lock().await;
         for name in d.keys() {
-            counts.entry(name.clone()).or_insert_with(|| Arc::new(AtomicUsize::new(0)));
+            counts
+                .entry(name.clone())
+                .or_insert_with(|| Arc::new(AtomicUsize::new(0)));
         }
     }
 
@@ -113,7 +127,9 @@ impl Supervisor {
         self.metrics.set_components_desired(d.len() as u64);
         // ensure counter exists
         let mut counts = self.counts.lock().await;
-        counts.entry(name).or_insert_with(|| Arc::new(AtomicUsize::new(0)));
+        counts
+            .entry(name)
+            .or_insert_with(|| Arc::new(AtomicUsize::new(0)));
     }
 
     pub fn spawn_reconcile(self: Arc<Self>) {
@@ -151,7 +167,8 @@ impl Supervisor {
             if running < want {
                 let to_add = want.saturating_sub(running);
                 for _ in 0..to_add {
-                    self.launch_replica(desired.clone(), count_arc.clone()).await;
+                    self.launch_replica(desired.clone(), count_arc.clone())
+                        .await;
                 }
             }
         }
@@ -199,21 +216,26 @@ impl Supervisor {
         let mem = desired.spec.memory_max_mb.unwrap_or(64);
         let fuel = desired.spec.fuel.unwrap_or(5_000_000);
         let epoch = desired.spec.epoch_ms.unwrap_or(100);
-        
+
         // Check if this is an HTTP component by inspecting the binary for HTTP handler exports
         if let Ok(wasm_bytes) = std::fs::read(&path) {
             // Simple string search in the binary for HTTP handler export signature
             let wasm_string = String::from_utf8_lossy(&wasm_bytes);
             if wasm_string.contains("wasi:http/incoming-handler") {
-                                    info!(component=%name, "HTTP component detected - will be invoked on-demand via gateway");
+                info!(component=%name, "HTTP component detected - will be invoked on-demand via gateway");
                 // For HTTP components, just mark as "running" but don't actually start a persistent process
                 metrics.inc_components_running();
                 count.fetch_add(1, Ordering::Relaxed);
-                push_log(&logs, &name, format!("HTTP component staged from {path}, ready for gateway invocation")).await;
+                push_log(
+                    &logs,
+                    &name,
+                    format!("HTTP component staged from {path}, ready for gateway invocation"),
+                )
+                .await;
                 return;
             }
         }
-        
+
         // Resolve per-replica work mount directory. Package 'work' mounts are resolved to
         // agent_data_dir()/work/components/{name}. Here we allocate a unique subdirectory
         // per replica and rewrite any matching mount host paths to that subdir. The subdir
@@ -247,11 +269,16 @@ impl Supervisor {
                     }
                 }
                 if let Some(dir_log) = replica_work_dir.as_ref() {
-                    push_log(&logs, &name, format!("allocated work dir {}", dir_log.display())).await;
+                    push_log(
+                        &logs,
+                        &name,
+                        format!("allocated work dir {}", dir_log.display()),
+                    )
+                    .await;
                 }
             }
         }
-        
+
         push_log(&logs, &name, format!("launching replica from {path}")).await;
         metrics.inc_components_running();
         count.fetch_add(1, Ordering::Relaxed);
@@ -259,8 +286,20 @@ impl Supervisor {
         let mounts_for_run = effective_mounts.clone();
         let cleanup_work_dir = replica_work_dir.clone();
         let task_handle = tokio::spawn(async move {
-            let res = run_wasm_module_with_limits(&path, &name_run, logs.clone(), mem, fuel, epoch, Some(metrics.clone()), mounts_for_run).await;
-            if let Err(e) = &res { warn!(component=%name_run, error=%e, "replica crashed"); }
+            let res = run_wasm_module_with_limits(
+                &path,
+                &name_run,
+                logs.clone(),
+                mem,
+                fuel,
+                epoch,
+                Some(metrics.clone()),
+                mounts_for_run,
+            )
+            .await;
+            if let Err(e) = &res {
+                warn!(component=%name_run, error=%e, "replica crashed");
+            }
             // Best-effort cleanup of per-replica work directory after exit
             if let Some(dir) = cleanup_work_dir.as_ref() {
                 let _ = std::fs::remove_dir_all(dir);
@@ -270,11 +309,14 @@ impl Supervisor {
             metrics.inc_restarts_total();
             count.fetch_sub(1, Ordering::Relaxed);
         });
-        
+
         // Track the task for cleanup
         let mut tasks = self.tasks.lock().await;
-        tasks.entry(name.clone()).or_insert_with(Vec::new).push(task_handle);
-        
+        tasks
+            .entry(name.clone())
+            .or_insert_with(Vec::new)
+            .push(task_handle);
+
         info!(component=%name, "Component replica started");
     }
 }

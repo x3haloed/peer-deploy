@@ -3,7 +3,8 @@ use crate::storage::ContentStore;
 pub async fn storage_ls() -> anyhow::Result<()> {
     let store = ContentStore::open();
     for (digest, entry) in store.list() {
-        println!("{}\t{} bytes\t{}\t{}",
+        println!(
+            "{}\t{} bytes\t{}\t{}",
             digest,
             entry.size_bytes,
             entry.last_accessed_unix,
@@ -28,5 +29,3 @@ pub async fn storage_gc(target_total_bytes: u64) -> anyhow::Result<()> {
     println!("ok");
     Ok(())
 }
-
-

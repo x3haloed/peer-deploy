@@ -1,11 +1,11 @@
-mod p2p;
-mod runner;
-mod supervisor;
 mod cmd;
-mod web;
 mod job_manager;
+mod p2p;
 mod policy;
+mod runner;
 mod storage;
+mod supervisor;
+mod web;
 
 use clap::{Parser, Subcommand};
 use tracing::{info, warn};
@@ -222,7 +222,11 @@ enum Commands {
     /// List stored blobs (CAS)
     StorageLs,
     /// Pin or unpin a blob
-    StoragePin { digest: String, #[arg(long)] pinned: bool },
+    StoragePin {
+        digest: String,
+        #[arg(long)]
+        pinned: bool,
+    },
     /// Garbage collect storage to target total size (bytes)
     StorageGc { target_total_bytes: u64 },
 }
@@ -365,27 +369,113 @@ async fn main() -> anyhow::Result<()> {
                     Ok(())
                 }
             }
-        },
+        }
         Some(Commands::Init) => cmd::init().await,
         Some(Commands::KeyShow) => cmd::key_show().await,
-        Some(Commands::Apply { wasm, file, version }) => cmd::apply(wasm, file, version).await,
+        Some(Commands::Apply {
+            wasm,
+            file,
+            version,
+        }) => cmd::apply(wasm, file, version).await,
         Some(Commands::Status) => cmd::status().await,
         #[cfg(unix)]
         Some(Commands::Install { binary, system }) => cmd::install(binary, system).await,
         #[cfg(not(unix))]
-        Some(Commands::Install { .. }) => Err(anyhow::anyhow!("install is only supported on Unix-like systems with systemd")),
-        Some(Commands::Upgrade { bins, file, target_platform, all_platforms, version, target_peers, target_tags }) =>
-            cmd::upgrade_multi(bins, file, target_platform, all_platforms, version, target_peers, target_tags).await,
-        Some(Commands::Invite { bootstrap, realm_id, exp_mins }) => cmd::invite(bootstrap, realm_id, exp_mins).await,
-        Some(Commands::Enroll { token, binary, system }) => cmd::enroll(token, binary, system).await,
+        Some(Commands::Install { .. }) => Err(anyhow::anyhow!(
+            "install is only supported on Unix-like systems with systemd"
+        )),
+        Some(Commands::Upgrade {
+            bins,
+            file,
+            target_platform,
+            all_platforms,
+            version,
+            target_peers,
+            target_tags,
+        }) => {
+            cmd::upgrade_multi(
+                bins,
+                file,
+                target_platform,
+                all_platforms,
+                version,
+                target_peers,
+                target_tags,
+            )
+            .await
+        }
+        Some(Commands::Invite {
+            bootstrap,
+            realm_id,
+            exp_mins,
+        }) => cmd::invite(bootstrap, realm_id, exp_mins).await,
+        Some(Commands::Enroll {
+            token,
+            binary,
+            system,
+        }) => cmd::enroll(token, binary, system).await,
         Some(Commands::Configure { owner, bootstrap }) => cmd::configure(owner, bootstrap).await,
         Some(Commands::DiagQuic { addr }) => cmd::diag_quic(addr).await,
         Some(Commands::Whoami) => cmd::whoami().await,
-        Some(Commands::Push { name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start }) => cmd::push(name, file, replicas, memory_max_mb, fuel, epoch_ms, mounts, ports, routes_static, visibility, target_peers, target_tags, start).await,
-        Some(Commands::DeployComponent { path, package, profile, features, target_peers, target_tags, name, start }) => cmd::deploy_component(path, package, profile, features, target_peers, target_tags, name, start).await,
+        Some(Commands::Push {
+            name,
+            file,
+            replicas,
+            memory_max_mb,
+            fuel,
+            epoch_ms,
+            mounts,
+            ports,
+            routes_static,
+            visibility,
+            target_peers,
+            target_tags,
+            start,
+        }) => {
+            cmd::push(
+                name,
+                file,
+                replicas,
+                memory_max_mb,
+                fuel,
+                epoch_ms,
+                mounts,
+                ports,
+                routes_static,
+                visibility,
+                target_peers,
+                target_tags,
+                start,
+            )
+            .await
+        }
+        Some(Commands::DeployComponent {
+            path,
+            package,
+            profile,
+            features,
+            target_peers,
+            target_tags,
+            name,
+            start,
+        }) => {
+            cmd::deploy_component(
+                path,
+                package,
+                profile,
+                features,
+                target_peers,
+                target_tags,
+                name,
+                start,
+            )
+            .await
+        }
         Some(Commands::DeployPackage { file, name }) => cmd::push_package(file, name).await,
         Some(Commands::Package(pkg_cmd)) => match pkg_cmd {
-            PackageCommands::Create { dir, name, output } => cmd::package_create(dir, name, output).await,
+            PackageCommands::Create { dir, name, output } => {
+                cmd::package_create(dir, name, output).await
+            }
         },
         Some(Commands::Manage { owner_key, timeout }) => {
             use std::time::Duration;
@@ -401,35 +491,71 @@ async fn main() -> anyhow::Result<()> {
             }
             // Spawn ephemeral agent and tie its lifetime to the manage session
             // Shared peer status map between ephemeral agent and web session
-            let shared_status: std::sync::Arc<tokio::sync::Mutex<std::collections::BTreeMap<String, common::Status>>> =
-                std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
+            let shared_status: std::sync::Arc<
+                tokio::sync::Mutex<std::collections::BTreeMap<String, common::Status>>,
+            > = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
             let status_for_agent = shared_status.clone();
             let shared_p2p: std::sync::Arc<tokio::sync::Mutex<Vec<crate::p2p::events::P2PEvent>>> =
                 std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
             let p2p_for_agent = shared_p2p.clone();
             let agent_handle = tokio::spawn(async move {
-                if let Err(e) = p2p::run_agent(wasm, memory_max_mb, fuel, epoch_ms, roles, true, Some(status_for_agent), Some(p2p_for_agent)).await {
+                if let Err(e) = p2p::run_agent(
+                    wasm,
+                    memory_max_mb,
+                    fuel,
+                    epoch_ms,
+                    roles,
+                    true,
+                    Some(status_for_agent),
+                    Some(p2p_for_agent),
+                )
+                .await
+                {
                     warn!(error=%e, "temporary agent exited");
                 }
             });
-            let res = web::start_management_session(owner_key, timeout_duration, Some(shared_status), Some(shared_p2p)).await;
+            let res = web::start_management_session(
+                owner_key,
+                timeout_duration,
+                Some(shared_status),
+                Some(shared_p2p),
+            )
+            .await;
             // On manage exit (timeout/CTRL-C), cancel the ephemeral agent task
             agent_handle.abort();
             let _ = agent_handle.await;
             res
-        },
+        }
         Some(Commands::Job(job_cmd)) => match job_cmd {
-            JobCommands::Submit { file, assets, use_artifacts } => cmd::submit_job(file, assets, use_artifacts).await,
-            JobCommands::List { status, limit, fresh } => cmd::list_jobs(status, limit, fresh).await,
+            JobCommands::Submit {
+                file,
+                assets,
+                use_artifacts,
+            } => cmd::submit_job(file, assets, use_artifacts).await,
+            JobCommands::List {
+                status,
+                limit,
+                fresh,
+            } => cmd::list_jobs(status, limit, fresh).await,
             JobCommands::ListJson { status, limit } => cmd::list_jobs_json(status, limit).await,
-            JobCommands::NetListJson { status, limit } => cmd::net_list_jobs_json(status, limit).await,
+            JobCommands::NetListJson { status, limit } => {
+                cmd::net_list_jobs_json(status, limit).await
+            }
             JobCommands::Status { job_id } => cmd::job_status(job_id).await,
             JobCommands::StatusJson { job_id } => cmd::job_status_json(job_id).await,
             JobCommands::NetStatusJson { job_id } => cmd::net_status_job_json(job_id).await,
             JobCommands::Cancel { job_id } => cmd::cancel_job(job_id).await,
-            JobCommands::Logs { job_id, tail, follow } => cmd::job_logs(job_id, tail, follow).await,
+            JobCommands::Logs {
+                job_id,
+                tail,
+                follow,
+            } => cmd::job_logs(job_id, tail, follow).await,
             JobCommands::Artifacts { job_id } => cmd::job_artifacts(job_id).await,
-            JobCommands::Download { job_id, artifact_name, output } => cmd::job_download(job_id, artifact_name, output).await,
+            JobCommands::Download {
+                job_id,
+                artifact_name,
+                output,
+            } => cmd::job_download(job_id, artifact_name, output).await,
             JobCommands::ArtifactsJson { job_id } => cmd::job_artifacts_json(job_id).await,
         },
         Some(Commands::P2p(p2p_cmd)) => match p2p_cmd {
@@ -439,7 +565,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::PolicySet { native, qemu }) => cmd::policy_set(native, qemu).await,
         Some(Commands::StorageLs) => cmd::storage_ls().await,
         Some(Commands::StoragePin { digest, pinned }) => cmd::storage_pin(digest, pinned).await,
-        Some(Commands::StorageGc { target_total_bytes }) => cmd::storage_gc(target_total_bytes).await,
+        Some(Commands::StorageGc { target_total_bytes }) => {
+            cmd::storage_gc(target_total_bytes).await
+        }
     }
 }
 
