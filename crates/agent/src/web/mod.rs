@@ -255,8 +255,8 @@ pub async fn start_management_session(
 
     // Print session info immediately
     println!("\n🌐 Management Interface Started");
-    println!("   URL: http://127.0.0.1:{}", port);
-    println!("   Session ID: {}", session_id);
+    println!("   URL: http://127.0.0.1:{}/?token={}", port, session_id);
+    println!("   Session token: {}", session_id);
     println!("   Timeout: {} minutes", timeout_duration.as_secs() / 60);
     println!("   Press Ctrl+C to stop\n");
 
