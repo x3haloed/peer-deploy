@@ -50,7 +50,6 @@ use axum::{
 use include_dir::{include_dir, Dir};
 use std::time::Duration;
 use tower::ServiceBuilder;
-use tower_http::cors::CorsLayer;
 use tracing::info;
 
 // Embed web assets at compile time
@@ -118,11 +117,7 @@ fn create_app(state: WebState, session_id: String) -> Router {
         .route("/api/alerts/acknowledge", post(api_acknowledge_alert))
         // WebSocket for real-time updates
         .route("/ws", get(websocket_handler))
-        .layer(
-            ServiceBuilder::new()
-                .layer(from_fn_with_state(auth_state, auth_middleware))
-                .layer(CorsLayer::permissive()),
-        )
+        .layer(ServiceBuilder::new().layer(from_fn_with_state(auth_state, auth_middleware)))
         .with_state(state)
 }
 
