@@ -23,6 +23,13 @@ fi
 echo "=== Building project ==="
 cargo build --release --bin realm
 
+echo "=== Capturing build artifact ==="
+mkdir -p /tmp/artifacts
+rm -f /tmp/artifacts/realm-linux-x86_64
+cp target/release/realm /tmp/artifacts/realm-linux-x86_64
+chmod +x /tmp/artifacts/realm-linux-x86_64
+ls -la /tmp/artifacts/realm-linux-x86_64
+
 echo "=== Build complete! ==="
 ls -la target/release/realm
 """]
@@ -33,7 +40,7 @@ working_dir = "/tmp"
 timeout_minutes = 45
 # Capture the built binary as an artifact
 artifacts = [
-    { path = "/tmp/workspace/target/release/realm", name = "realm-linux-x86_64" }
+    { path = "/tmp/artifacts/realm-linux-x86_64", name = "realm-linux-x86_64" }
 ]
 
 [targeting]

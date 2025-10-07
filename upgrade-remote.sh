@@ -67,6 +67,54 @@ sleep_with_dots() {
   printf '\n'
 }
 
+# Helper: read local job JSON if present
+job_json_local() {
+  local id="$1"
+  local out
+  out=$($REALM_BIN job status-json "$id" 2>/dev/null || true)
+  if [[ $out == \{* ]]; then
+    printf '%s\n' "$out"
+  fi
+}
+
+# Helper: read job JSON via network query
+job_json_network() {
+  local id="$1"
+  local out
+  out=$($REALM_BIN job net-status-json "$id" 2>/dev/null || true)
+  if [[ $out == \{* ]]; then
+    printf '%s\n' "$out"
+  fi
+}
+
+# Helper: get current job status with fallback
+job_status() {
+  local id="$1"
+  local json
+  json=$(job_json_local "$id")
+  if [ -z "$json" ]; then
+    json=$(job_json_network "$id")
+  fi
+  if [ -n "$json" ]; then
+    printf '%s' "$json" | jq -r '.status // "pending"'
+  else
+    echo "pending"
+  fi
+}
+
+# Helper: get first artifact name from job
+job_artifact_name() {
+  local id="$1"
+  local json
+  json=$(job_json_local "$id")
+  if [ -z "$json" ]; then
+    json=$(job_json_network "$id")
+  fi
+  if [ -n "$json" ]; then
+    printf '%s' "$json" | jq -r '.artifacts[0].name // empty'
+  fi
+}
+
 # Step 3: Submit the build job (attach source tarball)
 echo ""
 echo "🏗️  Submitting build job..."
@@ -96,7 +144,7 @@ echo "⏳ Waiting for build to complete..."
 echo "   (You can also run: $REALM_BIN job logs $BUILD_JOB_ID)"
 
 while true; do
-    STATUS=$($REALM_BIN job status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+    STATUS=$(job_status "$BUILD_JOB_ID")
 
     case "$STATUS" in
         "completed")
@@ -122,7 +170,7 @@ done
 echo ""
 echo "🔄 Submitting self-upgrade job..."
 # Discover the built artifact name and reuse it (via network status)
-ART_NAME=$($REALM_BIN job status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.artifacts[0].name // empty')
+ART_NAME=$(job_artifact_name "$BUILD_JOB_ID")
 if [ -z "$ART_NAME" ]; then ART_NAME="realm-linux-x86_64"; fi
 UPGRADE_JOB_OUTPUT=$($REALM_BIN job submit upgrade-job.toml --use-artifact "$BUILD_JOB_ID:$ART_NAME")
 echo "$UPGRADE_JOB_OUTPUT"
@@ -149,7 +197,7 @@ echo ""
 echo "⏳ Waiting for self-upgrade to complete..."
 
 while true; do
-    STATUS=$($REALM_BIN job status-json "$UPGRADE_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+    STATUS=$(job_status "$UPGRADE_JOB_ID")
     
     case "$STATUS" in
         "completed")
@@ -174,9 +222,17 @@ done
 # Step 7: Verify the upgrade
 echo ""
 echo "🔍 Verifying remote agent status..."
-sleep 3
+UP_OK=false
+for attempt in $(seq 1 12); do
+    if $REALM_BIN status >/dev/null 2>&1; then
+        UP_OK=true
+        break
+    fi
+    echo "   Agent not responding yet (attempt $attempt/12); waiting 5s..."
+    sleep 5
+done
 
-if realm status >/dev/null 2>&1; then
+if [ "$UP_OK" = true ]; then
     echo "✅ Remote agent is responding!"
     echo ""
     echo "🎉 UPGRADE COMPLETE! 🎉"
@@ -190,8 +246,8 @@ if realm status >/dev/null 2>&1; then
     echo "   • Download artifacts: $REALM_BIN job download $BUILD_JOB_ID realm-linux-x86_64"
     echo "   • Check status: realm status"
 else
-    echo "⚠️  Remote agent may still be restarting..."
-    echo "   Wait a moment and try: realm status"
+    echo "⚠️  Remote agent did not come back within the expected window."
+    echo "   Please check the host directly (e.g., systemctl --user status realm-agent)."
 fi
 
 # Cleanup

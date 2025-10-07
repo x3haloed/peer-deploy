@@ -46,8 +46,7 @@ case "$OS" in
     mkdir -p "$DEST_ROOT"
     SHA=$(sha256sum "$BIN_SRC" | cut -d' ' -f1)
     DEST_PATH="$DEST_ROOT/realm-agent-$SHA"
-    cp "$BIN_SRC" "$DEST_PATH"
-    chmod +x "$DEST_PATH"
+    install -m 0755 "$BIN_SRC" "$DEST_PATH"
     ln -sf "realm-agent-$SHA" "$DEST_ROOT/current"
     BIN_LINK_DIR="${HOME:-/root}/.local/bin"
     mkdir -p "$BIN_LINK_DIR"
@@ -57,12 +56,13 @@ case "$OS" in
     else
       echo "Realm CLI not currently on PATH"
     fi
-    if command -v systemctl >/dev/null 2>&1; then
-      echo "Restarting user service via systemctl --user..."
-      systemctl --user daemon-reload 2>/dev/null || true
-      systemctl --user restart realm-agent.service 2>/dev/null || true
+    echo "Scheduling agent restart via systemd-run (or fallback)..."
+    if command -v systemd-run >/dev/null 2>&1; then
+      systemd-run --user --on-active=5 /usr/bin/systemctl --user restart realm-agent.service >/dev/null 2>&1 || true
+    elif command -v systemctl >/dev/null 2>&1; then
+      nohup /bin/sh -c 'sleep 5 && systemctl --user restart realm-agent.service' >/dev/null 2>&1 &
     else
-      echo "systemctl not available; skipping service restart"
+      echo "systemctl not available; please restart realm-agent manually"
     fi
     ;;
   Darwin)
@@ -71,7 +71,7 @@ case "$OS" in
     mkdir -p "$DEST_ROOT"
     SHA=$(shasum -a 256 "$BIN_SRC" | cut -d' ' -f1)
     DEST_PATH="$DEST_ROOT/realm-agent-$SHA"
-    cp "$BIN_SRC" "$DEST_PATH"
+    cp -f "$BIN_SRC" "$DEST_PATH"
     chmod +x "$DEST_PATH"
     ln -sf "realm-agent-$SHA" "$DEST_ROOT/current"
     BIN_LINK_DIR="${HOME}/.local/bin"
@@ -83,11 +83,10 @@ case "$OS" in
       echo "Realm CLI not currently on PATH"
     fi
     if command -v launchctl >/dev/null 2>&1; then
-      echo "Reloading launchd agent..."
-      launchctl unload "${HOME}/Library/LaunchAgents/realm-agent.plist" 2>/dev/null || true
-      launchctl load "${HOME}/Library/LaunchAgents/realm-agent.plist" 2>/dev/null || true
+      echo "Scheduling launchd reload..."
+      nohup /bin/sh -c 'sleep 5 && launchctl unload "${HOME}/Library/LaunchAgents/realm-agent.plist" && launchctl load "${HOME}/Library/LaunchAgents/realm-agent.plist"' >/dev/null 2>&1 &
     else
-      echo "launchctl not available; skipping agent reload"
+      echo "launchctl not available; please reload agent manually"
     fi
     ;;
   *)
@@ -96,15 +95,7 @@ case "$OS" in
     ;;
 esac
 
-echo "=== Verifying upgrade ==="
-for attempt in 1 2 3; do
-  if realm status >/dev/null 2>&1; then
-    echo "realm status succeeded"
-    break
-  fi
-  echo "realm status attempt $attempt failed; retrying..."
-  sleep 5
-done
+# Verification will be handled by the orchestration script after restart
 echo "=== Self-upgrade complete! ==="
 """]
 memory_mb = 512
