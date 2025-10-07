@@ -227,9 +227,8 @@ pub async fn job_status_json(job_id: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Query jobs over the network and print JSON of the first response
+/// Query jobs over the network and print JSON using the status stream.
 pub async fn net_list_jobs_json(status_filter: Option<String>, limit: usize) -> anyhow::Result<()> {
-    use futures::StreamExt;
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(
         &mut swarm,
@@ -239,33 +238,69 @@ pub async fn net_list_jobs_json(status_filter: Option<String>, limit: usize) -> 
     )?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
-    let status_filter_owned = status_filter.clone();
+
+    // Ask peers to broadcast an up-to-date snapshot.
+    let sync_node_id = swarm.local_peer_id().to_string();
     let _ = swarm.behaviour_mut().gossipsub.publish(
         topic_cmd.clone(),
-        serialize_message(&Command::QueryJobs {
-            status_filter: status_filter_owned,
-            limit,
+        serialize_message(&Command::JobSyncRequest {
+            node_id: sync_node_id,
         }),
     );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    let status_filter_lower = status_filter.as_ref().map(|s| s.to_lowercase());
+    let matches_filter = |job: &JobInstance| {
+        status_filter_lower
+            .as_ref()
+            .map(|filter| format!("{:?}", job.status).to_lowercase() == *filter)
+            .unwrap_or(true)
+    };
+
+    let mut jobs_by_id: std::collections::HashMap<String, JobInstance> =
+        std::collections::HashMap::new();
+    let mut shortened_once = false;
+    let timeout = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(timeout);
+
     loop {
         tokio::select! {
-            _ = tokio::time::sleep_until(deadline.into()) => {
-                // No network response; fallback to local job list
-                let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-                let job_manager = JobManager::new(data_dir, "unknown".to_string());
-                let _ = job_manager.load_from_disk().await;
-                let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
-                println!("{}", serde_json::to_string_pretty(&jobs)?);
-                return Ok(());
+            _ = &mut timeout => {
+                break;
             }
             event = swarm.select_next_some() => {
                 if let libp2p::swarm::SwarmEvent::Behaviour(super::util::NodeBehaviourEvent::Gossipsub(ev)) = event {
                     if let libp2p::gossipsub::Event::Message { message, .. } = ev {
                         if message.topic == topic_status.hash() {
-                            if let Ok(list) = common::deserialize_message::<Vec<JobInstance>>(&message.data) {
-                                println!("{}", serde_json::to_string_pretty(&list)?);
-                                return Ok(());
+                            if let Ok(cmd) = common::deserialize_message::<Command>(&message.data) {
+                                if let Command::SyncJobs { jobs, .. } = cmd {
+                                    for job in jobs {
+                                        match jobs_by_id.entry(job.id.clone()) {
+                                            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                                if job.updated_at >= entry.get().updated_at {
+                                                    entry.insert(job);
+                                                }
+                                            }
+                                            std::collections::hash_map::Entry::Vacant(entry) => {
+                                                entry.insert(job);
+                                            }
+                                        }
+                                    }
+
+                                    // Once we've received data, shrink the timeout to collect a few more updates.
+                                    if !shortened_once {
+                                        timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(500));
+                                        shortened_once = true;
+                                    }
+
+                                    let matched_count = jobs_by_id
+                                        .values()
+                                        .filter(|job| matches_filter(job))
+                                        .take(limit)
+                                        .count();
+                                    if matched_count >= limit {
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
@@ -273,11 +308,29 @@ pub async fn net_list_jobs_json(status_filter: Option<String>, limit: usize) -> 
             }
         }
     }
+
+    if jobs_by_id.is_empty() {
+        // No network response; fallback to local job list
+        let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+        let job_manager = JobManager::new(data_dir, "unknown".to_string());
+        let _ = job_manager.load_from_disk().await;
+        let jobs = job_manager.list_jobs(status_filter.as_deref(), limit).await;
+        println!("{}", serde_json::to_string_pretty(&jobs)?);
+        return Ok(());
+    }
+
+    let mut jobs: Vec<JobInstance> = jobs_by_id.into_values().collect();
+    jobs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    if status_filter_lower.is_some() {
+        jobs.retain(|job| matches_filter(job));
+    }
+    let trimmed: Vec<JobInstance> = jobs.into_iter().take(limit).collect();
+    println!("{}", serde_json::to_string_pretty(&trimmed)?);
+    Ok(())
 }
 
-/// Query a specific job over the network and print JSON of the first response
+/// Query a specific job over the network and print JSON using the status stream.
 pub async fn net_status_job_json(job_id: String) -> anyhow::Result<()> {
-    use futures::StreamExt;
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(
         &mut swarm,
@@ -287,47 +340,71 @@ pub async fn net_status_job_json(job_id: String) -> anyhow::Result<()> {
     )?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
+    let sync_node_id = swarm.local_peer_id().to_string();
     let _ = swarm.behaviour_mut().gossipsub.publish(
         topic_cmd.clone(),
-        serialize_message(&Command::QueryJobStatus {
-            job_id: job_id.clone(),
+        serialize_message(&Command::JobSyncRequest {
+            node_id: sync_node_id,
         }),
     );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut job_result: Option<JobInstance> = None;
+    let mut shortened_once = false;
+    let timeout = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(timeout);
+
     loop {
         tokio::select! {
-            _ = tokio::time::sleep_until(deadline.into()) => {
-                // No network response; fallback to local job status
-                let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-                let job_manager = JobManager::new(data_dir, "unknown".to_string());
-                let _ = job_manager.load_from_disk().await;
-                if let Some(job) = job_manager.get_job(&job_id).await {
-                    println!("{}", serde_json::to_string_pretty(&job)?);
-                } else {
-                    println!("null");
-                }
-                return Ok(());
-            }
+            _ = &mut timeout => break,
             event = swarm.select_next_some() => {
                 if let libp2p::swarm::SwarmEvent::Behaviour(super::util::NodeBehaviourEvent::Gossipsub(ev)) = event {
                     if let libp2p::gossipsub::Event::Message { message, .. } = ev {
                         if message.topic == topic_status.hash() {
-                            if let Ok(item) = common::deserialize_message::<JobInstance>(&message.data) {
-                                println!("{}", serde_json::to_string_pretty(&item)?);
-                                return Ok(());
+                            if let Ok(cmd) = common::deserialize_message::<Command>(&message.data) {
+                                if let Command::SyncJobs { jobs, .. } = cmd {
+                                    if !shortened_once {
+                                        timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(500));
+                                        shortened_once = true;
+                                    }
+                                    for job in jobs {
+                                        if job.id == job_id {
+                                            match &job_result {
+                                                Some(existing) if existing.updated_at >= job.updated_at => {}
+                                                _ => job_result = Some(job),
+                                            }
+                                        }
+                                    }
+                                    if job_result.is_some() {
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    if let Some(job) = job_result {
+        println!("{}", serde_json::to_string_pretty(&job)?);
+        Ok(())
+    } else {
+        // Fallback to local job status
+        let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+        let job_manager = JobManager::new(data_dir, "unknown".to_string());
+        let _ = job_manager.load_from_disk().await;
+        if let Some(job) = job_manager.get_job(&job_id).await {
+            println!("{}", serde_json::to_string_pretty(&job)?);
+        } else {
+            println!("null");
+        }
+        Ok(())
     }
 }
 
 /// Query a specific job over the network and collect responses from all nodes
 #[allow(dead_code)]
 pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
-    use futures::StreamExt;
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await?;
     libp2p::Swarm::listen_on(
         &mut swarm,
@@ -337,48 +414,48 @@ pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
     )?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
+    let sync_node_id = swarm.local_peer_id().to_string();
     let _ = swarm.behaviour_mut().gossipsub.publish(
         topic_cmd.clone(),
-        serialize_message(&Command::QueryJobStatus {
-            job_id: job_id.clone(),
+        serialize_message(&Command::JobSyncRequest {
+            node_id: sync_node_id,
         }),
     );
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     let mut responses: std::collections::HashMap<String, JobInstance> =
         std::collections::HashMap::new();
     let mut nodes_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let timeout = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(timeout);
+    let mut shortened_once = false;
 
     loop {
         tokio::select! {
-            _ = tokio::time::sleep_until(deadline.into()) => {
-                // Include local job status if not already seen
-                let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
-                let job_manager = JobManager::new(data_dir, "unknown".to_string());
-                let _ = job_manager.load_from_disk().await;
-                if let Some(local_job) = job_manager.get_job(&job_id).await {
-                    responses.insert("local".to_string(), local_job);
-                }
-
-                // Print aggregated response
-                let aggregated = AggregatedJobStatus {
-                    job_id: job_id.clone(),
-                    responses,
-                    total_nodes: nodes_seen.len(),
-                };
-                println!("{}", serde_json::to_string_pretty(&aggregated)?);
-                return Ok(());
-            }
+            _ = &mut timeout => break,
             event = swarm.select_next_some() => {
                 if let libp2p::swarm::SwarmEvent::Behaviour(super::util::NodeBehaviourEvent::Gossipsub(ev)) = event {
-                    if let libp2p::gossipsub::Event::Message { propagation_source, message, .. } = ev {
+                    if let libp2p::gossipsub::Event::Message { message, .. } = ev {
                         if message.topic == topic_status.hash() {
-                            if let Ok(item) = common::deserialize_message::<JobInstance>(&message.data) {
-                                let node_id = propagation_source.to_string();
-                                nodes_seen.insert(node_id.clone());
-                                responses.insert(node_id, item);
-
-                                // Continue collecting for a bit longer to get more responses
+                            if let Ok(cmd) = common::deserialize_message::<Command>(&message.data) {
+                                if let Command::SyncJobs { node_id, jobs } = cmd {
+                                    nodes_seen.insert(node_id.clone());
+                                    if !shortened_once {
+                                        timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(500));
+                                        shortened_once = true;
+                                    }
+                                    if let Some(job) = jobs.into_iter().find(|j| j.id == job_id) {
+                                        match responses.entry(node_id.clone()) {
+                                            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                                if job.updated_at >= entry.get().updated_at {
+                                                    entry.insert(job);
+                                                }
+                                            }
+                                            std::collections::hash_map::Entry::Vacant(entry) => {
+                                                entry.insert(job);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -386,6 +463,23 @@ pub async fn net_status_job_json_all(job_id: String) -> anyhow::Result<()> {
             }
         }
     }
+
+    if responses.is_empty() {
+        let data_dir = crate::p2p::state::agent_data_dir().join("jobs");
+        let job_manager = JobManager::new(data_dir, "unknown".to_string());
+        let _ = job_manager.load_from_disk().await;
+        if let Some(local_job) = job_manager.get_job(&job_id).await {
+            responses.insert("local".to_string(), local_job);
+        }
+    }
+
+    let aggregated = AggregatedJobStatus {
+        job_id,
+        responses,
+        total_nodes: nodes_seen.len(),
+    };
+    println!("{}", serde_json::to_string_pretty(&aggregated)?);
+    Ok(())
 }
 
 /// Query jobs over the network and collect responses from all nodes

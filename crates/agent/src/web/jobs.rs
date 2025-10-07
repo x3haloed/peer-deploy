@@ -255,6 +255,8 @@ pub async fn api_jobs_artifact_download(
 // ======= P2P helpers for network-backed job discovery =======
 
 async fn net_query_jobs(status: Option<String>, limit: usize) -> Result<Vec<JobInstance>, String> {
+    use std::collections::HashMap;
+
     let (mut swarm, topic_cmd, topic_status) = new_swarm().await.map_err(|e| e.to_string())?;
     libp2p::Swarm::listen_on(
         &mut swarm,
@@ -265,23 +267,59 @@ async fn net_query_jobs(status: Option<String>, limit: usize) -> Result<Vec<JobI
     .map_err(|e| e.to_string())?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
-    let _ = swarm.behaviour_mut().gossipsub.publish(
-        topic_cmd.clone(),
-        common::serialize_message(&Command::QueryJobs {
-            status_filter: status.clone(),
-            limit,
-        }),
-    );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let sync_node_id = swarm.local_peer_id().to_string();
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .publish(
+            topic_cmd.clone(),
+            common::serialize_message(&Command::JobSyncRequest {
+                node_id: sync_node_id,
+            }),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let status_lower = status.as_ref().map(|s| s.to_lowercase());
+    let matches_filter = |job: &JobInstance| {
+        status_lower
+            .as_ref()
+            .map(|filter| format!("{:?}", job.status).to_lowercase() == *filter)
+            .unwrap_or(true)
+    };
+
+    let mut jobs_by_id: HashMap<String, JobInstance> = HashMap::new();
+    let mut shortened_once = false;
+    let timeout = tokio::time::sleep(std::time::Duration::from_secs(5));
+    tokio::pin!(timeout);
+    let mut received_any = false;
+
     loop {
         tokio::select! {
-            _ = tokio::time::sleep_until(deadline.into()) => { return Err("timeout".into()); }
+            _ = &mut timeout => break,
             event = swarm.select_next_some() => {
                 if let libp2p::swarm::SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) = event {
                     if let libp2p::gossipsub::Event::Message { message, .. } = ev {
                         if message.topic == topic_status.hash() {
-                            if let Ok(list) = common::deserialize_message::<Vec<JobInstance>>(&message.data) {
-                                return Ok(list);
+                            if let Ok(cmd) = common::deserialize_message::<Command>(&message.data) {
+                                if let Command::SyncJobs { jobs, .. } = cmd {
+                                    received_any = true;
+                                    if !shortened_once {
+                                        timeout.as_mut().reset(tokio::time::Instant::now() + std::time::Duration::from_millis(500));
+                                        shortened_once = true;
+                                    }
+                                    for job in jobs {
+                                        match jobs_by_id.entry(job.id.clone()) {
+                                            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                                if job.updated_at >= entry.get().updated_at {
+                                                    entry.insert(job);
+                                                }
+                                            }
+                                            std::collections::hash_map::Entry::Vacant(entry) => {
+                                                entry.insert(job);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -289,6 +327,18 @@ async fn net_query_jobs(status: Option<String>, limit: usize) -> Result<Vec<JobI
             }
         }
     }
+
+    if !received_any {
+        return Err("timeout".into());
+    }
+
+    let mut jobs: Vec<JobInstance> = jobs_by_id.into_values().collect();
+    jobs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    if status_lower.is_some() {
+        jobs.retain(|job| matches_filter(job));
+    }
+    jobs.truncate(limit);
+    Ok(jobs)
 }
 
 async fn net_query_job_status(job_id: String) -> Result<Option<JobInstance>, String> {
@@ -302,22 +352,47 @@ async fn net_query_job_status(job_id: String) -> Result<Option<JobInstance>, Str
     .map_err(|e| e.to_string())?;
     mdns_warmup(&mut swarm).await;
     dial_bootstrap(&mut swarm).await;
-    let _ = swarm.behaviour_mut().gossipsub.publish(
-        topic_cmd.clone(),
-        common::serialize_message(&Command::QueryJobStatus {
-            job_id: job_id.clone(),
-        }),
-    );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let sync_node_id = swarm.local_peer_id().to_string();
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .publish(
+            topic_cmd.clone(),
+            common::serialize_message(&Command::JobSyncRequest {
+                node_id: sync_node_id,
+            }),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut job_result: Option<JobInstance> = None;
+    let mut shortened_once = false;
+    let timeout = tokio::time::sleep(std::time::Duration::from_secs(5));
+    tokio::pin!(timeout);
+    let mut received_any = false;
+
     loop {
         tokio::select! {
-            _ = tokio::time::sleep_until(deadline.into()) => { return Ok(None); }
+            _ = &mut timeout => break,
             event = swarm.select_next_some() => {
                 if let libp2p::swarm::SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(ev)) = event {
                     if let libp2p::gossipsub::Event::Message { message, .. } = ev {
                         if message.topic == topic_status.hash() {
-                            if let Ok(item) = common::deserialize_message::<JobInstance>(&message.data) {
-                                return Ok(Some(item));
+                            if let Ok(cmd) = common::deserialize_message::<Command>(&message.data) {
+                                if let Command::SyncJobs { jobs, .. } = cmd {
+                                    received_any = true;
+                                    if !shortened_once {
+                                        timeout.as_mut().reset(tokio::time::Instant::now() + std::time::Duration::from_millis(500));
+                                        shortened_once = true;
+                                    }
+                                    for job in jobs {
+                                        if job.id == job_id {
+                                            match &job_result {
+                                                Some(existing) if existing.updated_at >= job.updated_at => {}
+                                                _ => job_result = Some(job),
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -325,4 +400,10 @@ async fn net_query_job_status(job_id: String) -> Result<Option<JobInstance>, Str
             }
         }
     }
+
+    if !received_any {
+        return Err("timeout".into());
+    }
+
+    Ok(job_result)
 }

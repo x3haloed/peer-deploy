@@ -32,7 +32,7 @@ use common::{
 };
 use state::{
     add_known_peer, load_bootstrap_addrs, load_known_peers, load_listen_port, load_listen_port_tcp,
-    load_state, load_trusted_owner, save_listen_port, save_listen_port_tcp,
+    load_roles, load_state, load_trusted_owner, save_listen_port, save_listen_port_tcp, save_roles,
 };
 
 pub mod events;
@@ -170,6 +170,24 @@ pub async fn run_agent(
     let logs: SharedLogs =
         std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
     let sys = std::sync::Arc::new(tokio::sync::Mutex::new(sysinfo::System::new_all()));
+
+    // Normalize CLI-provided roles and persist/restore as needed.
+    if !roles.is_empty() {
+        roles.sort();
+        roles.dedup();
+        if !ephemeral {
+            let persisted = load_roles();
+            if persisted != roles {
+                save_roles(&roles);
+            }
+        }
+    } else if !ephemeral {
+        let persisted = load_roles();
+        if !persisted.is_empty() {
+            info!(roles=?persisted, "Restoring persisted agent roles");
+            roles = persisted;
+        }
+    }
 
     let id_keys = if ephemeral {
         identity::Keypair::generate_ed25519()
@@ -1105,8 +1123,14 @@ pub async fn run_agent(
                                     Command::UpdateRoles { target_peer_ids, roles: new_roles } => {
                                         let applies = target_peer_ids.is_empty() || target_peer_ids.iter().any(|s| s == &local_peer_id.to_string());
                                         if applies {
-                                            info!("received UpdateRoles; updating roles to {:?}", new_roles);
-                                            roles = new_roles.clone();
+                                            let mut normalized = new_roles.clone();
+                                            normalized.sort();
+                                            normalized.dedup();
+                                            info!("received UpdateRoles; updating roles to {:?}", normalized);
+                                            roles = normalized.clone();
+                                            if !ephemeral {
+                                                save_roles(&roles);
+                                            }
                                         }
                                     }
                                     Command::SubmitJob { origin_node_id, job_id, spec: job } => {

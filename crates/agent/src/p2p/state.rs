@@ -86,6 +86,8 @@ pub struct AgentState {
     pub agent_version: u64,
     #[serde(default)]
     pub previous_agent_version: u64,
+    #[serde(default)]
+    pub roles: Vec<String>,
     /// Optional human-friendly aliases and notes per known node
     #[serde(default)]
     pub node_annotations: std::collections::BTreeMap<String, NodeAnnotation>,
@@ -113,6 +115,18 @@ pub fn save_state(state: &AgentState) {
     if let Ok(bytes) = serde_json::to_vec(state) {
         let _ = fs::write(state_path(), bytes);
     }
+}
+
+/// Convenience helper: fetch persisted agent roles/tags (may be empty).
+pub fn load_roles() -> Vec<String> {
+    load_state().roles
+}
+
+/// Persist the provided roles/tags into the agent state file.
+pub fn save_roles(roles: &[String]) {
+    let mut state = load_state();
+    state.roles = roles.to_vec();
+    save_state(&state);
 }
 
 /// Load desired manifest TOML if present.
