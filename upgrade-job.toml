@@ -6,7 +6,8 @@ job_type = "one-shot"
 type = "native"
 binary = "/usr/bin/bash"
 args = ["-c", """
-set -e
+set -euo pipefail
+uname -a
 echo "=== Preparing self-upgrade ==="
 
 # Check if we have a freshly built binary
@@ -25,19 +26,85 @@ ls -la /tmp/assets/realm-linux-x86_64 || true
 ls -la /tmp/artifacts/realm-linux-x86_64 || true
 
 echo "=== Performing self-upgrade ==="
-# Prefer artifact path if present, else fall back to pre-staged attachment path
+BIN_SRC=""
 if [ -f /tmp/artifacts/realm-linux-x86_64 ]; then
-  /tmp/artifacts/realm-linux-x86_64 install
+  BIN_SRC="/tmp/artifacts/realm-linux-x86_64"
 elif [ -f /tmp/assets/realm-linux-x86_64 ]; then
-  /tmp/assets/realm-linux-x86_64 install
+  BIN_SRC="/tmp/assets/realm-linux-x86_64"
 else
   echo "No upgrade binary found in /tmp/artifacts or /tmp/assets" >&2
   exit 1
 fi
 
+OS=$(uname -s)
+ARCH=$(uname -m)
+
+case "$OS" in
+  Linux)
+    echo "=== Linux detected; installing to ~/.local/share/realm-agent/bin ==="
+    DEST_ROOT="${HOME:-/root}/.local/share/realm-agent/bin"
+    mkdir -p "$DEST_ROOT"
+    SHA=$(sha256sum "$BIN_SRC" | cut -d' ' -f1)
+    DEST_PATH="$DEST_ROOT/realm-agent-$SHA"
+    cp "$BIN_SRC" "$DEST_PATH"
+    chmod +x "$DEST_PATH"
+    ln -sf "realm-agent-$SHA" "$DEST_ROOT/current"
+    BIN_LINK_DIR="${HOME:-/root}/.local/bin"
+    mkdir -p "$BIN_LINK_DIR"
+    ln -sf "$DEST_PATH" "$BIN_LINK_DIR/realm"
+    if command -v realm >/dev/null 2>&1; then
+      echo "Existing realm binary: $(command -v realm)"
+    else
+      echo "Realm CLI not currently on PATH"
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+      echo "Restarting user service via systemctl --user..."
+      systemctl --user daemon-reload 2>/dev/null || true
+      systemctl --user restart realm-agent.service 2>/dev/null || true
+    else
+      echo "systemctl not available; skipping service restart"
+    fi
+    ;;
+  Darwin)
+    echo "=== macOS detected; installing to ~/Library/Application Support/realm-agent/bin ==="
+    DEST_ROOT="${HOME}/Library/Application Support/realm-agent/bin"
+    mkdir -p "$DEST_ROOT"
+    SHA=$(shasum -a 256 "$BIN_SRC" | cut -d' ' -f1)
+    DEST_PATH="$DEST_ROOT/realm-agent-$SHA"
+    cp "$BIN_SRC" "$DEST_PATH"
+    chmod +x "$DEST_PATH"
+    ln -sf "realm-agent-$SHA" "$DEST_ROOT/current"
+    BIN_LINK_DIR="${HOME}/.local/bin"
+    mkdir -p "$BIN_LINK_DIR"
+    ln -sf "$DEST_PATH" "$BIN_LINK_DIR/realm"
+    if command -v realm >/dev/null 2>&1; then
+      echo "Existing realm binary: $(command -v realm)"
+    else
+      echo "Realm CLI not currently on PATH"
+    fi
+    if command -v launchctl >/dev/null 2>&1; then
+      echo "Reloading launchd agent..."
+      launchctl unload "${HOME}/Library/LaunchAgents/realm-agent.plist" 2>/dev/null || true
+      launchctl load "${HOME}/Library/LaunchAgents/realm-agent.plist" 2>/dev/null || true
+    else
+      echo "launchctl not available; skipping agent reload"
+    fi
+    ;;
+  *)
+    echo "Unsupported OS: $OS" >&2
+    exit 1
+    ;;
+esac
+
 echo "=== Verifying upgrade ==="
-sleep 2
-realm status
+for attempt in 1 2 3; do
+  if realm status >/dev/null 2>&1; then
+    echo "realm status succeeded"
+    break
+  fi
+  echo "realm status attempt $attempt failed; retrying..."
+  sleep 5
+done
 echo "=== Self-upgrade complete! ==="
 """]
 memory_mb = 512

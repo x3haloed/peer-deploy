@@ -54,7 +54,7 @@ sleep 2
 # Helper: extract job id from `realm job submit` output
 extract_job_id() {
   local output="$1"
-  printf '%s\n' "$output" | sed -n "s/Job '\([^']*\)' submitted successfully/\1/p" | head -n1
+  printf '%s\n' "$output" | grep -o "12D3KooW[a-zA-Z0-9]*-6" | head -n1
 }
 
 # Helper: pretty sleep with dots
@@ -96,7 +96,7 @@ echo "⏳ Waiting for build to complete..."
 echo "   (You can also run: $REALM_BIN job logs $BUILD_JOB_ID)"
 
 while true; do
-    STATUS=$($REALM_BIN job net-status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+    STATUS=$($REALM_BIN job status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
 
     case "$STATUS" in
         "completed")
@@ -122,7 +122,7 @@ done
 echo ""
 echo "🔄 Submitting self-upgrade job..."
 # Discover the built artifact name and reuse it (via network status)
-ART_NAME=$($REALM_BIN job net-status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.artifacts[0].name // empty')
+ART_NAME=$($REALM_BIN job status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.artifacts[0].name // empty')
 if [ -z "$ART_NAME" ]; then ART_NAME="realm-linux-x86_64"; fi
 UPGRADE_JOB_OUTPUT=$($REALM_BIN job submit upgrade-job.toml --use-artifact "$BUILD_JOB_ID:$ART_NAME")
 echo "$UPGRADE_JOB_OUTPUT"
@@ -149,7 +149,7 @@ echo ""
 echo "⏳ Waiting for self-upgrade to complete..."
 
 while true; do
-    STATUS=$($REALM_BIN job net-status-json "$UPGRADE_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+    STATUS=$($REALM_BIN job status-json "$UPGRADE_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
     
     case "$STATUS" in
         "completed")
