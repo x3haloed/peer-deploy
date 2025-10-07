@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Realm Remote CI/CD Upgrade Script
 # Automatically builds and deploys the latest peer-deploy to a remote Debian server
@@ -51,24 +51,40 @@ $REALM_BIN status >/dev/null 2>&1 || true
 # Wait a moment for connection to establish
 sleep 2
 
+# Helper: extract job id from `realm job submit` output
+extract_job_id() {
+  local output="$1"
+  printf '%s\n' "$output" | sed -n "s/Job '\([^']*\)' submitted successfully/\1/p" | head -n1
+}
+
+# Helper: pretty sleep with dots
+sleep_with_dots() {
+  local seconds="$1"
+  for _ in $(seq 1 "$seconds"); do
+    printf '.'
+    sleep 1
+  done
+  printf '\n'
+}
+
 # Step 3: Submit the build job (attach source tarball)
 echo ""
 echo "🏗️  Submitting build job..."
 BUILD_JOB_OUTPUT=$($REALM_BIN job submit build-job.toml --asset workspace.tar.gz)
 echo "$BUILD_JOB_OUTPUT"
-# Resolve job ID by querying the network (retry with longer timeout for network sync)
-echo "🔎 Resolving build job ID from network..."
-BUILD_JOB_ID=""
-for i in $(seq 1 30); do
-  # Look for the most recently submitted build job that's still active (exclude completed/failed/cancelled)
-  BUILD_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy" and (.status == "pending" or .status == "running" or .status == "started"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
-  [ -n "$BUILD_JOB_ID" ] && break
-  echo "   Waiting for active job to appear in network... (attempt $i/30)"
-  sleep 2
-done
+BUILD_JOB_ID=$(extract_job_id "$BUILD_JOB_OUTPUT")
+if [ -z "$BUILD_JOB_ID" ]; then
+    echo "🔄 Falling back to network job discovery (build job id not parsed)..."
+    for i in $(seq 1 30); do
+        BUILD_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="build-peer-deploy")) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
+        [ -n "$BUILD_JOB_ID" ] && break
+        echo "   Waiting for build job to propagate... (attempt $i/30)"
+        sleep 2
+    done
+fi
 
 if [ -z "$BUILD_JOB_ID" ]; then
-    echo "❌ Failed to resolve build job ID from network."
+    echo "❌ Failed to determine build job ID"
     exit 1
 fi
 
@@ -81,14 +97,14 @@ echo "   (You can also run: $REALM_BIN job logs $BUILD_JOB_ID)"
 
 while true; do
     STATUS=$($REALM_BIN job net-status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
-    
+
     case "$STATUS" in
         "completed")
             echo "✅ Build completed successfully!"
             break
             ;;
         "failed")
-            echo "❌ Build failed. Check logs with: realm job logs $BUILD_JOB_ID"
+            echo "❌ Build failed. Check logs with: $REALM_BIN job logs $BUILD_JOB_ID"
             exit 1
             ;;
         "cancelled")
@@ -96,8 +112,8 @@ while true; do
             exit 1
             ;;
         *)
-            echo "⏳ Build status: $STATUS (waiting...)"
-            sleep 10
+            printf "⏳ Build status: %s " "$STATUS"
+            sleep_with_dots 10
             ;;
     esac
 done
@@ -110,18 +126,19 @@ ART_NAME=$($REALM_BIN job net-status-json "$BUILD_JOB_ID" 2>/dev/null | jq -r '.
 if [ -z "$ART_NAME" ]; then ART_NAME="realm-linux-x86_64"; fi
 UPGRADE_JOB_OUTPUT=$($REALM_BIN job submit upgrade-job.toml --use-artifact "$BUILD_JOB_ID:$ART_NAME")
 echo "$UPGRADE_JOB_OUTPUT"
-# Resolve upgrade job ID by querying the network (retry with longer timeout)
-UPGRADE_JOB_ID=""
-for i in $(seq 1 30); do
-  # Look for the most recently submitted upgrade job that's still active (exclude completed/failed/cancelled)
-  UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent" and (.status == "pending" or .status == "running" or .status == "started"))) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
-  [ -n "$UPGRADE_JOB_ID" ] && break
-  echo "   Waiting for active upgrade job to appear in network... (attempt $i/30)"
-  sleep 2
-done
+UPGRADE_JOB_ID=$(extract_job_id "$UPGRADE_JOB_OUTPUT")
+if [ -z "$UPGRADE_JOB_ID" ]; then
+    echo "🔄 Falling back to network job discovery (upgrade job id not parsed)..."
+    for i in $(seq 1 30); do
+        UPGRADE_JOB_ID=$($REALM_BIN job net-list-json --limit 100 2>/dev/null | jq -r 'map(select(.spec.name=="self-upgrade-agent")) | sort_by(.submitted_at) | reverse | (.[0].id // empty)')
+        [ -n "$UPGRADE_JOB_ID" ] && break
+        echo "   Waiting for upgrade job to propagate... (attempt $i/30)"
+        sleep 2
+    done
+fi
 
 if [ -z "$UPGRADE_JOB_ID" ]; then
-    echo "❌ Failed to extract upgrade job ID from: $UPGRADE_JOB_OUTPUT"
+    echo "❌ Failed to determine upgrade job ID"
     exit 1
 fi
 
@@ -148,8 +165,8 @@ while true; do
             exit 1
             ;;
         *)
-            echo "⏳ Upgrade status: $STATUS (waiting...)"
-            sleep 5
+            printf "⏳ Upgrade status: %s " "$STATUS"
+            sleep_with_dots 5
             ;;
     esac
 done
@@ -185,4 +202,3 @@ echo "✅ Cleanup complete"
 
 echo ""
 echo "🚀 Remote CI/CD upgrade workflow completed!"
-
