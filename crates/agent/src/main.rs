@@ -23,8 +23,8 @@ struct Cli {
     #[arg(long, default_value_t = 64)]
     memory_max_mb: u64,
 
-    /// Initial fuel units to provide to WASM
-    #[arg(long, default_value_t = 5_000_000)]
+    /// Initial fuel units to provide to WASM (0 = unlimited)
+    #[arg(long, default_value_t = 0)]
     fuel: u64,
 
     /// Epoch deadline interval in milliseconds
@@ -97,7 +97,8 @@ enum Commands {
         replicas: u32,
         #[arg(long, default_value_t = 64)]
         memory_max_mb: u64,
-        #[arg(long, default_value_t = 5_000_000)]
+        /// Fuel units per replica (0 = unlimited)
+        #[arg(long, default_value_t = 0)]
         fuel: u64,
         #[arg(long, default_value_t = 100)]
         epoch_ms: u64,

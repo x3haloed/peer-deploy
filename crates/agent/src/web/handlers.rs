@@ -360,6 +360,7 @@ pub async fn api_deploy(
             return (StatusCode::BAD_REQUEST, "Component file does not exist").into_response()
         }
     };
+    let fuel = request.fuel.filter(|f| *f > 0);
     let digest = common::sha256_hex(&bin);
     if digest != request.sha256_hex {
         return (StatusCode::BAD_REQUEST, "Digest mismatch").into_response();
@@ -422,7 +423,7 @@ pub async fn api_deploy(
         target_peer_ids: request.target_peer_ids.clone(),
         target_tags: request.target_tags.clone(),
         memory_max_mb: request.memory_max_mb,
-        fuel: request.fuel,
+        fuel: fuel,
         epoch_ms: request.epoch_ms,
         replicas,
         start: start_flag,

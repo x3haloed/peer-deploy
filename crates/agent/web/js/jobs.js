@@ -59,7 +59,6 @@ job_type = "one-shot"
 type = "wasm"
 source = "file:///path/to/task.wasm"
 memory_mb = 64
-fuel = 5000000
 epoch_ms = 100
 
 [execution]
@@ -79,7 +78,6 @@ schedule = "0 2 * * *"  # Daily at 2 AM
 type = "wasm"
 source = "file:///path/to/backup.wasm"
 memory_mb = 128
-fuel = 10000000
 epoch_ms = 100
 
 [execution]
@@ -94,7 +92,6 @@ job_type = "service"
 type = "wasm" 
 source = "file:///path/to/service.wasm"
 memory_mb = 256
-fuel = 50000000
 epoch_ms = 1000
 
 [targeting]
@@ -282,4 +279,3 @@ window.setJobTemplate = function(templateType) {
 		textarea.value = window.jobExamples[templateType];
 	}
 };
-

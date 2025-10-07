@@ -226,7 +226,7 @@ impl Supervisor {
         let name = desired.name.clone();
         let path = desired.path.to_string_lossy().to_string();
         let mem = desired.spec.memory_max_mb.unwrap_or(64);
-        let fuel = desired.spec.fuel.unwrap_or(5_000_000);
+        let fuel = desired.spec.fuel.unwrap_or(0);
         let epoch = desired.spec.epoch_ms.unwrap_or(100);
 
         // Check if this is an HTTP component by inspecting the binary for HTTP handler exports

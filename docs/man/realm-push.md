@@ -22,7 +22,7 @@ realm push --name <NAME> --file <PATH> [--replicas <INT>] [--memory-max-mb <INT>
 - `--file <PATH>`: Path to component `.wasm`.
 - `--replicas <INT>`: Number of replicas. Default: 1.
 - `--memory-max-mb <INT>`: Memory limit in MB. Default: 64.
-- `--fuel <INT>`: WASM fuel. Default: 5000000.
+- `--fuel <INT>`: WASM fuel (0 = unlimited). Default: 0.
 - `--epoch-ms <INT>`: Epoch deadline interval in ms. Default: 100.
 - `--mount <SPEC>`: Repeatable preopen mount: `host=/abs/path,guest=/www[,ro=true]`.
 - `--port <SPEC>`: Repeatable service port, e.g. `8080/tcp` or `9090/udp`.
@@ -60,5 +60,4 @@ realm push --name www --file ./www.wasm --mount host=/srv/www,guest=/www,ro=true
 
 - `realm-deploy-component(1)` to build and push from Cargo
 - `realm-deploy-package(1)` to install a packaged bundle
-
 

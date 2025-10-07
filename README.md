@@ -170,7 +170,6 @@ realm push \
   --file /path/to/hello.wasm \
   --replicas 1 \
   --memory-max-mb 64 \
-  --fuel 5000000 \
   --epoch-ms 100 \
   --tag dev \
   --start
@@ -287,7 +286,7 @@ realm job submit build-job.toml --use-artifact build-peer-deploy-1:realm-linux-x
 ## Agent command‑line options
 - `--role <tag>`: repeatable; advertised via libp2p identify
 - `--wasm <file>`: start a single WASI component immediately (ad‑hoc)
-- `--memory-max-mb`, `--fuel`, `--epoch-ms`: execution limits for ad‑hoc run
+- `--memory-max-mb`, `--fuel` (optional, default unlimited), `--epoch-ms`: execution limits for ad‑hoc run
 
 ## Metrics and logs
 - Metrics (Prometheus): `http://127.0.0.1:9920/metrics`

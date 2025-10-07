@@ -226,7 +226,7 @@ pub async fn api_deploy_package_multipart(
         sha256_hex: wasm_digest.clone(),
         replicas: Some(1),
         memory_max_mb: Some(64),
-        fuel: Some(5_000_000),
+        fuel: None,
         epoch_ms: Some(100),
         mounts: if resolved_mounts.is_empty() {
             None
@@ -422,7 +422,7 @@ pub async fn install_package_from_bytes(
         sha256_hex: wasm_digest.clone(),
         replicas: Some(1),
         memory_max_mb: Some(64),
-        fuel: Some(5_000_000),
+        fuel: None,
         epoch_ms: Some(100),
         mounts: if resolved_mounts.is_empty() {
             None

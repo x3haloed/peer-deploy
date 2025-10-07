@@ -34,7 +34,7 @@ pub async fn apply(wasm: Option<String>, file: Option<String>, version: u64) -> 
         let run = Command::Run {
             wasm_path: path,
             memory_max_mb: 64,
-            fuel: 5_000_000,
+            fuel: 0,
             epoch_ms: 100,
         };
         swarm

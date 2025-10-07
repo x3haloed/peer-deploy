@@ -122,7 +122,7 @@ pub async fn deploy_component(
         target_peer_ids: target_peers,
         target_tags,
         memory_max_mb: Some(64),
-        fuel: Some(5_000_000),
+        fuel: None,
         epoch_ms: Some(100),
         replicas: 1,
         start,

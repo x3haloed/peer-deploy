@@ -46,7 +46,7 @@ realm [OPTIONS] [COMMAND]
 
 - `--wasm <PATH>`: Optional WASM module path to run at startup.
 - `--memory-max-mb <INT>`: Maximum memory in MB for WASM. Default: 64.
-- `--fuel <INT>`: Initial fuel units for WASM. Default: 5000000.
+- `--fuel <INT>`: Initial fuel units for WASM. Default: 0 (unlimited).
 - `--epoch-ms <INT>`: Epoch deadline interval in milliseconds. Default: 100.
 - `--role <STRING>`: Role/tag to advertise. Repeatable.
 
@@ -102,7 +102,7 @@ See individual pages for detailed options.
 Run the agent with stricter limits and a UI tag:
 
 ```
-realm --memory-max-mb 32 --fuel 2000000 --role ui
+realm --memory-max-mb 32 --role ui
 ```
 
 Deploy a component with mounts and a TCP port:
@@ -139,5 +139,3 @@ realm storage-gc 2147483648
   `realm-job-status(1)`, `realm-job-status-json(1)`, `realm-job-net-status-json(1)`,
   `realm-job-cancel(1)`, `realm-job-logs(1)`, `realm-job-artifacts(1)`, `realm-job-download(1)`,
   `realm-job-artifacts-json(1)`, `realm-p2p-watch(1)`
-
-

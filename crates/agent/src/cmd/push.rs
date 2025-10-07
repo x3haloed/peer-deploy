@@ -118,7 +118,7 @@ pub async fn push(
         target_peer_ids: target_peers,
         target_tags,
         memory_max_mb: Some(memory_max_mb),
-        fuel: Some(fuel),
+        fuel: if fuel > 0 { Some(fuel) } else { None },
         epoch_ms: Some(epoch_ms),
         replicas,
         start,

@@ -36,7 +36,7 @@ pub async fn init() -> anyhow::Result<()> {
         let bytes = tokio::fs::read(hello_path).await.unwrap_or_default();
         let digest = sha256_hex(&bytes);
         let sample = format!(
-            "[components.hello]\nsource = \"file:{}\"\nsha256_hex = \"{}\"\nmemory_max_mb = 64\nfuel = 5000000\nepoch_ms = 100\n",
+            "[components.hello]\nsource = \"file:{}\"\nsha256_hex = \"{}\"\nmemory_max_mb = 64\nepoch_ms = 100\n",
             hello_path.display(), digest
         );
         let sample_path = dir.join("realm.sample.toml");

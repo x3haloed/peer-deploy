@@ -31,7 +31,6 @@ realm push \
   --file target/wasm32-wasi/release/ci_controller.wasm \
   --replicas 1 \
   --memory-max-mb 64 \
-  --fuel 5000000 \
   --epoch-ms 100 \
   --tag dev \
   --start
@@ -45,7 +44,6 @@ realm push \
   --visibility public \
   --replicas 1 \
   --memory-max-mb 64 \
-  --fuel 5000000 \
   --epoch-ms 100 \
   --tag edge \
   --start
@@ -100,5 +98,4 @@ You can customize `components/ci-controller/src/lib.rs` to:
     - If `platforms` is omitted, it uses `/config/platforms.json` or `/config/platforms.txt` (defaults to `linux/x86_64`).
 - HMAC verification is enforced only if `/config/secret` is mounted
 - Consider running behind a reverse proxy with TLS if internet-exposed
-
 

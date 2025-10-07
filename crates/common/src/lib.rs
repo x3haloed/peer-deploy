@@ -538,7 +538,7 @@ fn default_mem_mb() -> u64 {
     64
 }
 fn default_fuel() -> u64 {
-    5_000_000
+    0
 }
 fn default_epoch_ms() -> u64 {
     100
