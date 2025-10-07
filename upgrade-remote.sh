@@ -54,7 +54,7 @@ sleep 2
 # Helper: extract job id from `realm job submit` output
 extract_job_id() {
   local output="$1"
-  printf '%s\n' "$output" | grep -o "12D3KooW[a-zA-Z0-9]*-6" | head -n1
+  printf '%s\n' "$output" | sed -n "s/.*Job '\\([^']\\+\\)' submitted successfully.*/\\1/p" | head -n1
 }
 
 # Helper: pretty sleep with dots
